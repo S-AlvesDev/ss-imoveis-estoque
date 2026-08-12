@@ -5,8 +5,8 @@ import helmet from 'helmet';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
-import { supabaseServer } from '../lib/supabaseServer.ts';
-import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants.ts';
+import { supabaseServer } from '../lib/supabaseServer';
+import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {

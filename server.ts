@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import http from 'http';
 import { createServer as createViteServer } from 'vite';
-import { createApp } from './src/server/app.ts';
+import { createApp } from './src/server/app';
 
 const PORT = Number(process.env.PORT) || 3001;
 
