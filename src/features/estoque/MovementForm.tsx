@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/shared/ui/Button';
-import { Input, Select, Textarea } from '@/shared/ui/Field';
+import { Input, Textarea } from '@/shared/ui/Field';
+import { MaterialPicker } from '@/shared/ui/MaterialPicker';
 import type { Material } from '@/shared/types';
 import { formatNumber } from './utils';
 
@@ -70,14 +71,7 @@ export function MovementForm({ materials, operations, onSubmit, allowNegative }:
         </div>
       </div>
 
-      <Select label="Material" required value={materialId} onChange={(e) => setMaterialId(e.target.value)}>
-        <option value="">Selecione um material...</option>
-        {materials.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.nome} — Central: {formatNumber(m.saldo_central)} | Obra: {formatNumber(m.saldo_obra)} {m.unidade_medida}
-          </option>
-        ))}
-      </Select>
+      <MaterialPicker label="Material" required materials={materials} value={materialId} onChange={setMaterialId} />
 
       {selected && (
         <div className="flex gap-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">

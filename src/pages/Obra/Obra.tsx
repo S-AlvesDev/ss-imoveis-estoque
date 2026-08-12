@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ClipboardCheck, ClipboardList, Clock, HardHat, LayoutGrid } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, ClipboardList, Clock, HardHat, LayoutGrid, Search } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { StatCard } from '@/shared/ui/StatCard';
 import { Badge } from '@/shared/ui/Badge';
@@ -33,6 +33,7 @@ const OPERATIONS = [
 export function Obra({ materials, materialMovements, staff, refetch }: ObraProps) {
   const [category, setCategory] = useState<string>('TODAS');
   const [view, setView] = useState<'OBRA' | 'CENTRAL'>('OBRA');
+  const [stockSearch, setStockSearch] = useState('');
   const [historyMaterial, setHistoryMaterial] = useState<Material | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);
   const [recontagemOpen, setRecontagemOpen] = useState(false);
@@ -54,6 +55,11 @@ export function Obra({ materials, materialMovements, staff, refetch }: ObraProps
     () => (category === 'TODAS' ? materials : materials.filter((m) => m.categoria === category)),
     [materials, category]
   );
+
+  const stockListMaterials = useMemo(() => {
+    const q = stockSearch.trim().toLowerCase();
+    return q ? filteredMaterials.filter((m) => m.nome.toLowerCase().includes(q)) : filteredMaterials;
+  }, [filteredMaterials, stockSearch]);
 
   async function handleMovement(payload: { material_id: number; tipo_operacao: string; quantidade: number; justificativa: string }) {
     await api.post(`/api/materials/${payload.material_id}/movement`, payload);
@@ -130,8 +136,18 @@ export function Obra({ materials, materialMovements, staff, refetch }: ObraProps
             />
           </div>
 
+          <div className="relative mb-3">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              value={stockSearch}
+              onChange={(e) => setStockSearch(e.target.value)}
+              placeholder="Buscar material no estoque..."
+              className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+            />
+          </div>
+
           <div className="max-h-[420px] space-y-1.5 overflow-y-auto">
-            {filteredMaterials.map((m) => {
+            {stockListMaterials.map((m) => {
               const saldo = view === 'OBRA' ? m.saldo_obra : m.saldo_central;
               const critical = isCritical(m, view === 'OBRA' ? 'obra' : 'central');
               return (
@@ -158,8 +174,8 @@ export function Obra({ materials, materialMovements, staff, refetch }: ObraProps
                 </div>
               );
             })}
-            {filteredMaterials.length === 0 && (
-              <EmptyState icon={<HardHat size={20} />} title="Nenhum material nesta categoria" />
+            {stockListMaterials.length === 0 && (
+              <EmptyState icon={<HardHat size={20} />} title="Nenhum material encontrado" />
             )}
           </div>
         </Card>
