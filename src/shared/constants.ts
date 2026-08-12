@@ -24,4 +24,5 @@ export const OPERATION_LABELS: Record<string, string> = {
   DEVOLUCAO: 'Devolução (legado)',
   'AJUSTE MANUAL': 'Ajuste Manual (legado)',
   EXCLUSÃO: 'Exclusão de Material',
+  UNIFICACAO: 'Unificação de Materiais',
 };

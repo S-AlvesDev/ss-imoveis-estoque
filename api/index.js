@@ -209,6 +209,78 @@ function createApp() {
       res.status(500).json({ error: "Erro ao excluir material." });
     }
   });
+  app.patch("/api/materials/bulk-minimo", authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { ids, estoque_minimo } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: "Selecione ao menos um material." });
+      }
+      const minimo = Number(estoque_minimo);
+      if (Number.isNaN(minimo) || minimo < 0) {
+        return res.status(400).json({ error: "Informe um estoque m\xEDnimo v\xE1lido." });
+      }
+      const { error } = await supabaseServer.from("materials").update({ estoque_minimo: minimo, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).in("id", ids);
+      if (error) throw error;
+      res.json({ success: true, updated: ids.length });
+    } catch (err) {
+      console.error("[PATCH /api/materials/bulk-minimo] erro:", err.message);
+      res.status(500).json({ error: "Erro ao atualizar estoque m\xEDnimo em lote." });
+    }
+  });
+  app.post("/api/materials/merge", authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { targetId, sourceIds } = req.body || {};
+      const sources = Array.isArray(sourceIds) ? sourceIds.filter((id) => id !== targetId) : [];
+      if (!targetId || sources.length === 0) {
+        return res.status(400).json({ error: "Selecione um material principal e ao menos mais um para unificar." });
+      }
+      const { data: allSelected, error: fetchError } = await supabaseServer.from("materials").select("*").in("id", [targetId, ...sources]);
+      if (fetchError || !allSelected || allSelected.length !== sources.length + 1) {
+        return res.status(404).json({ error: "Um ou mais materiais selecionados n\xE3o foram encontrados." });
+      }
+      const target = allSelected.find((m) => m.id === targetId);
+      const donors = allSelected.filter((m) => m.id !== targetId);
+      const unidadesDiferentes = donors.some((d) => d.unidade_medida !== target.unidade_medida);
+      if (unidadesDiferentes) {
+        return res.status(400).json({
+          error: `As unidades de medida n\xE3o coincidem (${target.unidade_medida} vs. outras). Ajuste antes de unificar.`
+        });
+      }
+      const somaCentral = donors.reduce((s, d) => s + Number(d.saldo_central), 0);
+      const somaObra = donors.reduce((s, d) => s + Number(d.saldo_obra), 0);
+      const novoSaldoCentral = Number(target.saldo_central) + somaCentral;
+      const novoSaldoObra = Number(target.saldo_obra) + somaObra;
+      const { error: updateError } = await supabaseServer.from("materials").update({ saldo_central: novoSaldoCentral, saldo_obra: novoSaldoObra, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", targetId);
+      if (updateError) throw updateError;
+      if (somaCentral !== 0 || somaObra !== 0) {
+        await supabaseServer.from("material_movements").insert({
+          material_id: targetId,
+          tipo_operacao: "UNIFICACAO",
+          quantidade: somaCentral + somaObra,
+          funcionario_matricula: req.user.matricula,
+          justificativa: `Unifica\xE7\xE3o: incorporou o saldo de ${donors.map((d) => `'${d.nome}'`).join(", ")} (Central +${somaCentral}, Obra +${somaObra}).`
+        });
+      }
+      for (const donor of donors) {
+        const { data: relatedMovements } = await supabaseServer.from("material_movements").select("id, justificativa").eq("material_id", donor.id);
+        for (const mov of relatedMovements || []) {
+          await supabaseServer.from("material_movements").update({ material_id: null, justificativa: `[${donor.nome}] ${mov.justificativa || ""}`.trim() }).eq("id", mov.id);
+        }
+        await supabaseServer.from("material_movements").insert({
+          material_id: null,
+          tipo_operacao: "EXCLUS\xC3O",
+          quantidade: donor.saldo_central + donor.saldo_obra,
+          funcionario_matricula: req.user.matricula,
+          justificativa: `UNIFICA\xC7\xC3O: o material '${donor.nome}' foi unificado com '${target.nome}' e removido do sistema por ${req.user.nome}.`
+        });
+        await supabaseServer.from("materials").delete().eq("id", donor.id);
+      }
+      res.json({ success: true, targetId, novoSaldoCentral, novoSaldoObra });
+    } catch (err) {
+      console.error("[POST /api/materials/merge] erro:", err.message);
+      res.status(500).json({ error: "Erro ao unificar materiais." });
+    }
+  });
   app.post("/api/materials/:id/movement", authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       const { id } = req.params;
