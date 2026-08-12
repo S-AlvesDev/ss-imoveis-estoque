@@ -48,15 +48,16 @@ function ViewTransition({ viewKey, children }: { viewKey: string; children: Reac
 
 function AdminApp() {
   const [view, setView] = useState<AdminView>('dashboard');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { materials, materialMovements, staff, loading, refetch } = useEstoqueData();
 
   if (loading) return <LoadingScreen />;
 
   return (
     <div className="flex">
-      <Sidebar active={view} onChange={setView} />
-      <div className="flex-1">
-        <TopBar title="Painel Administrativo" />
+      <Sidebar active={view} onChange={setView} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
+      <div className="min-w-0 flex-1">
+        <TopBar title="Painel Administrativo" onMenuClick={() => setMobileNavOpen(true)} />
         <main className="p-6">
           <ViewTransition viewKey={view}>
             {view === 'dashboard' && <Dashboard materials={materials} materialMovements={materialMovements} />}

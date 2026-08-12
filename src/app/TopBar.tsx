@@ -1,4 +1,4 @@
-import { LogOut } from 'lucide-react';
+import { LogOut, Menu } from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { Logo } from '@/shared/ui/Logo';
 
@@ -10,12 +10,26 @@ const ROLE_LABELS: Record<string, string> = {
   ALMOXARIFE_OBRA: 'Almoxarife de Obra',
 };
 
-export function TopBar({ title }: { title: string }) {
+interface TopBarProps {
+  title: string;
+  onMenuClick?: () => void;
+}
+
+export function TopBar({ title, onMenuClick }: TopBarProps) {
   const { user, logout } = useAuth();
 
   return (
     <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200/80 bg-white/80 px-4 backdrop-blur-md sm:px-6">
       <div className="flex items-center gap-2.5">
+        {onMenuClick && (
+          <button
+            onClick={onMenuClick}
+            className="-ml-1.5 flex h-9 w-9 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 lg:hidden"
+            title="Menu"
+          >
+            <Menu size={20} />
+          </button>
+        )}
         <Logo size={28} />
         <span className="font-display text-sm font-bold text-slate-800">{title}</span>
       </div>
