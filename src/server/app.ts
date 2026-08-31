@@ -26,6 +26,25 @@ async function getTransporter() {
   return transporter;
 }
 
+// O PostgREST (Supabase) limita cada resposta a 1000 linhas por padrão. Esta
+// função pagina via .range() até trazer todos os registros, evitando que a
+// auditoria "pare de contar" ao atingir 1000 movimentações.
+const SUPABASE_PAGE_SIZE = 1000;
+
+async function fetchAllRows<T = any>(buildQuery: () => any): Promise<T[]> {
+  const all: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await buildQuery().range(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (error) throw error;
+    const batch = (data || []) as T[];
+    all.push(...batch);
+    if (batch.length < SUPABASE_PAGE_SIZE) break;
+    from += SUPABASE_PAGE_SIZE;
+  }
+  return all;
+}
+
 // Operações de movimentação de estoque e quais papéis podem executá-las.
 const OPERATION_ROLES: Record<string, string[]> = {
   ENTRADA_CENTRAL: CENTRAL_ROLES,
@@ -143,21 +162,23 @@ export function createApp() {
   // --------------------------- DATA ---------------------------
   app.get('/api/data', authenticate, requireRole(ALL_INVENTORY_ROLES), async (_req, res) => {
     try {
-      const [materialsRes, movementsRes, staffRes] = await Promise.all([
+      const [materialsRes, movements, staffRes] = await Promise.all([
         supabaseServer.from('materials').select('*').order('nome', { ascending: true }),
-        supabaseServer
-          .from('material_movements')
-          .select('*, materials(nome)')
-          .order('created_at', { ascending: false }),
+        fetchAllRows(() =>
+          supabaseServer
+            .from('material_movements')
+            .select('*, materials(nome)')
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false }),
+        ),
         supabaseServer.from('users').select('id, nome, matricula, role').neq('role', 'CLIENTE'),
       ]);
 
       if (materialsRes.error) throw materialsRes.error;
-      if (movementsRes.error) throw movementsRes.error;
 
       res.json({
         materials: materialsRes.data || [],
-        materialMovements: movementsRes.data || [],
+        materialMovements: movements,
         staff: staffRes.data || [],
       });
     } catch (err: any) {

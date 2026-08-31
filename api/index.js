@@ -41,6 +41,20 @@ async function getTransporter() {
   });
   return transporter;
 }
+var SUPABASE_PAGE_SIZE = 1e3;
+async function fetchAllRows(buildQuery) {
+  const all = [];
+  let from = 0;
+  for (; ; ) {
+    const { data, error } = await buildQuery().range(from, from + SUPABASE_PAGE_SIZE - 1);
+    if (error) throw error;
+    const batch = data || [];
+    all.push(...batch);
+    if (batch.length < SUPABASE_PAGE_SIZE) break;
+    from += SUPABASE_PAGE_SIZE;
+  }
+  return all;
+}
 var OPERATION_ROLES = {
   ENTRADA_CENTRAL: CENTRAL_ROLES,
   SAIDA: CENTRAL_ROLES,
@@ -119,16 +133,17 @@ function createApp() {
   });
   app.get("/api/data", authenticate, requireRole(ALL_INVENTORY_ROLES), async (_req, res) => {
     try {
-      const [materialsRes, movementsRes, staffRes] = await Promise.all([
+      const [materialsRes, movements, staffRes] = await Promise.all([
         supabaseServer.from("materials").select("*").order("nome", { ascending: true }),
-        supabaseServer.from("material_movements").select("*, materials(nome)").order("created_at", { ascending: false }),
+        fetchAllRows(
+          () => supabaseServer.from("material_movements").select("*, materials(nome)").order("created_at", { ascending: false }).order("id", { ascending: false })
+        ),
         supabaseServer.from("users").select("id, nome, matricula, role").neq("role", "CLIENTE")
       ]);
       if (materialsRes.error) throw materialsRes.error;
-      if (movementsRes.error) throw movementsRes.error;
       res.json({
         materials: materialsRes.data || [],
-        materialMovements: movementsRes.data || [],
+        materialMovements: movements,
         staff: staffRes.data || []
       });
     } catch (err) {
