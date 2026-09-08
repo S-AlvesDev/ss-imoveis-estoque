@@ -1,6 +1,6 @@
 import type { Material } from '@/shared/types';
 import { CATEGORIES } from '@/shared/constants';
-import { formatNumber, isCritical } from '@/features/estoque/utils';
+import { formatNumber, needsPurchase } from '@/features/estoque/utils';
 
 export function exportMaterialsToWord(materials: Material[]) {
   const generatedAt = new Date().toLocaleString('pt-BR');
@@ -10,7 +10,7 @@ export function exportMaterialsToWord(materials: Material[]) {
     if (items.length === 0) return '';
     const rows = items
       .map((m) => {
-        const critical = isCritical(m, 'central');
+        const critical = needsPurchase(m);
         return `<tr style="${critical ? 'background:#fee2e2;' : ''}">
           <td>${m.nome}${critical ? ' &#9888;' : ''}</td>
           <td style="text-align:right">${formatNumber(m.saldo_central)}</td>

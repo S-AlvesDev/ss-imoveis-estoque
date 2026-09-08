@@ -2,22 +2,39 @@ import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Check, CheckSquare, Clock, FileDown, Merge, Pencil, Plus, Search, ShieldAlert, SlidersHorizontal, Trash2, X } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
-import { Badge } from '@/shared/ui/Badge';
-import { StockBar } from '@/shared/ui/StockBar';
 import { EmptyState } from '@/shared/ui/EmptyState';
-import { SegmentedControl } from '@/shared/ui/SegmentedControl';
 import { Button } from '@/shared/ui/Button';
 import { Input, Select } from '@/shared/ui/Field';
 import { AuditModal } from '@/features/estoque/AuditModal';
 import { HistoryModal } from '@/features/estoque/HistoryModal';
+import { MaterialsTable } from '@/features/estoque/MaterialsTable';
 import { ManageModal } from './ManageModal';
 import { BulkMinimoModal } from './BulkMinimoModal';
 import { MergeModal } from './MergeModal';
 import { exportMaterialsToWord } from './exportWord';
 import { api } from '@/lib/api';
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
-import { formatNumber, isCritical } from '@/features/estoque/utils';
+import { formatNumber, stockStatus } from '@/features/estoque/utils';
 import { CATEGORIES } from '@/shared/constants';
+
+/**
+ * Filtros por situação. TRANSFERIR é avaliado da ótica da Obra: são os itens
+ * que faltam lá mas existem na Central — resolvem-se com remessa, não com compra.
+ */
+type StatusFilter = 'TODOS' | 'RUPTURA' | 'ABAIXO' | 'TRANSFERIR';
+
+const STATUS_FILTERS: { value: StatusFilter; label: string; tone: string }[] = [
+  { value: 'TODOS', label: 'Todos', tone: 'text-[var(--text)]' },
+  { value: 'RUPTURA', label: 'Sem estoque', tone: 'text-rose-500' },
+  { value: 'ABAIXO', label: 'Abaixo do mínimo', tone: 'text-[var(--brand)]' },
+  { value: 'TRANSFERIR', label: 'Tem na Central', tone: 'text-sky-500' },
+];
+
+function matchesStatusFilter(m: Material, filter: StatusFilter): boolean {
+  if (filter === 'TODOS') return true;
+  if (filter === 'TRANSFERIR') return stockStatus(m, 'obra') === 'TRANSFERIR';
+  return stockStatus(m, 'empresa') === filter;
+}
 
 interface AdminProps {
   materials: Material[];
@@ -39,7 +56,8 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
   const [form, setForm] = useState(emptyForm);
   const [allowDuplicate, setAllowDuplicate] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [filter, setFilter] = useState<'TODOS' | 'CRITICO'>('TODOS');
+  const [filter, setFilter] = useState<StatusFilter>('TODOS');
+  const [categoria, setCategoria] = useState('TODAS');
   const [search, setSearch] = useState('');
   const [manageMaterial, setManageMaterial] = useState<Material | null>(null);
   const [historyMaterial, setHistoryMaterial] = useState<Material | null>(null);
@@ -58,13 +76,25 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
 
   const visibleMaterials = useMemo(() => {
     let list = materials;
-    if (filter === 'CRITICO') list = list.filter((m) => isCritical(m, 'central'));
+    if (categoria !== 'TODAS') list = list.filter((m) => m.categoria === categoria);
+    list = list.filter((m) => matchesStatusFilter(m, filter));
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((m) => m.nome.toLowerCase().includes(q) || m.categoria.toLowerCase().includes(q));
     }
     return list;
-  }, [materials, filter, search]);
+  }, [materials, filter, categoria, search]);
+
+  /** Contagem por situação, respeitando a categoria escolhida mas não o filtro atual. */
+  const statusCounts = useMemo(() => {
+    const base = categoria === 'TODAS' ? materials : materials.filter((m) => m.categoria === categoria);
+    return {
+      TODOS: base.length,
+      RUPTURA: base.filter((m) => stockStatus(m, 'empresa') === 'RUPTURA').length,
+      ABAIXO: base.filter((m) => stockStatus(m, 'empresa') === 'ABAIXO').length,
+      TRANSFERIR: base.filter((m) => stockStatus(m, 'obra') === 'TRANSFERIR').length,
+    } satisfies Record<StatusFilter, number>;
+  }, [materials, categoria]);
 
   const saldoCalculado = (Number(form.qtd_volumes) || 0) * (Number(form.fator_multiplicador) || 0);
 
@@ -138,8 +168,8 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-bold text-slate-900">Materiais</h1>
-          <p className="text-sm text-slate-500">{materials.length} produto(s) cadastrado(s).</p>
+          <h1 className="font-display text-2xl font-bold text-[var(--text)]">Materiais</h1>
+          <p className="text-sm text-[var(--text-muted)]">{materials.length} produto(s) cadastrado(s).</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -159,8 +189,8 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
       </div>
 
       {selectMode && selectedIds.size > 0 && (
-        <div className="sticky top-[72px] z-30 flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
-          <span className="text-sm font-bold text-blue-800">{selectedIds.size} selecionado(s)</span>
+        <div className="sticky top-[72px] z-30 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--brand)]/30 bg-[var(--brand)]/10 px-4 py-3 shadow-sm">
+          <span className="text-sm font-bold text-[var(--brand)]">{selectedIds.size} selecionado(s)</span>
           <div className="ml-auto flex flex-wrap gap-2">
             <Button variant="outline" size="sm" icon={<SlidersHorizontal size={14} />} onClick={() => setBulkMinimoOpen(true)}>
               Definir Mínimo
@@ -183,7 +213,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <Card className="p-5 lg:col-span-2 h-fit">
-          <p className="mb-4 flex items-center gap-2 text-sm font-bold text-slate-800">
+          <p className="mb-4 flex items-center gap-2 text-sm font-bold text-[var(--text)]">
             <Plus size={16} /> Cadastrar Material
           </p>
           <form onSubmit={handleCreate} className="space-y-4">
@@ -251,7 +281,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
               onChange={(e) => setForm({ ...form, estoque_minimo: e.target.value })}
             />
 
-            <div className="rounded-lg bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
+            <div className="rounded-lg bg-[var(--brand)]/10 px-3 py-2 text-xs font-semibold text-[var(--brand)]">
               Saldo Calculado: {formatNumber(saldoCalculado)} {form.unidade_medida}
             </div>
 
@@ -264,118 +294,71 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
         <div className="lg:col-span-3 space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[200px]">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar material..."
-                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] py-2 pl-9 pr-3 text-sm outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
               />
             </div>
-            <SegmentedControl
-              value={filter}
-              onChange={setFilter}
-              layoutId="admin-filter-pill"
-              options={[
-                { value: 'TODOS', label: 'Todos' },
-                { value: 'CRITICO', label: 'Estoque Crítico', activeClassName: 'text-rose-600' },
-              ]}
-            />
+            <select
+              value={categoria}
+              onChange={(e) => setCategoria(e.target.value)}
+              className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
+            >
+              <option value="TODAS">Todas as categorias</option>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 max-h-[640px] overflow-y-auto pr-1">
-            {visibleMaterials.map((m) => {
-              const critical = isCritical(m, 'central');
-              const selected = selectedIds.has(m.id);
+          <div className="flex flex-wrap gap-2">
+            {STATUS_FILTERS.map((f) => {
+              const active = filter === f.value;
               return (
-                <Card
-                  key={m.id}
-                  onClick={selectMode ? () => toggleSelected(m.id) : undefined}
-                  className={`p-4 ${selectMode ? 'cursor-pointer' : ''} ${selected ? 'ring-2 ring-blue-500 border-blue-300' : ''}`}
+                <button
+                  key={f.value}
+                  onClick={() => setFilter(f.value)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                    active
+                      ? 'border-[var(--brand)] bg-[var(--brand)] text-white'
+                      : `border-[var(--border)] bg-[var(--surface)] ${f.tone} hover:border-[var(--brand)]/50`
+                  }`}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-start gap-2.5">
-                      {selectMode && (
-                        <span
-                          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 ${
-                            selected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 text-transparent'
-                          }`}
-                        >
-                          <Check size={13} />
-                        </span>
-                      )}
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-bold text-slate-800">{m.nome}</p>
-                        <p className="text-[11px] text-slate-400">{m.categoria}</p>
-                      </div>
-                    </div>
-                    {critical && <Badge variant="critical" dot>Crítico</Badge>}
-                  </div>
-
-                  <StockBar saldo={m.saldo_central} minimo={m.estoque_minimo} className="mt-3" />
-
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-lg bg-slate-50 px-2.5 py-2">
-                      <p className="text-slate-400">Central</p>
-                      <p className="font-bold text-slate-800">
-                        {formatNumber(m.saldo_central)} {m.unidade_medida}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-slate-50 px-2.5 py-2">
-                      <p className="text-slate-400">Obra</p>
-                      <p className="font-bold text-slate-800">
-                        {formatNumber(m.saldo_obra)} {m.unidade_medida}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between">
-                    <p className="text-[11px] text-slate-400">Mín: {formatNumber(m.estoque_minimo)}</p>
-                    {!selectMode && (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setHistoryMaterial(m)}
-                          className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                          title="Histórico"
-                        >
-                          <Clock size={15} />
-                        </button>
-                        <button
-                          onClick={() => setManageMaterial(m)}
-                          className="rounded-full p-1.5 text-blue-500 hover:bg-blue-50"
-                          title="Gerenciar"
-                        >
-                          <Pencil size={15} />
-                        </button>
-                        {deletingId === m.id ? (
-                          <span className="flex items-center gap-1 text-[11px] font-bold">
-                            <button onClick={() => handleDelete(m.id)} className="text-rose-600 hover:underline">
-                              Sim
-                            </button>
-                            <span className="text-slate-300">/</span>
-                            <button onClick={() => setDeletingId(null)} className="text-slate-400 hover:underline">
-                              Não
-                            </button>
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => setDeletingId(m.id)}
-                            className="rounded-full p-1.5 text-rose-400 hover:bg-rose-50"
-                            title="Excluir"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </Card>
+                  {f.label}
+                  <span className={active ? 'ml-1.5 opacity-80' : 'ml-1.5 text-[var(--text-muted)]'}>
+                    {statusCounts[f.value]}
+                  </span>
+                </button>
               );
             })}
-            {visibleMaterials.length === 0 && (
-              <EmptyState className="col-span-2" icon={<Search size={20} />} title="Nenhum material encontrado" />
-            )}
           </div>
+
+          <Card className="max-h-[640px] overflow-y-auto">
+            {visibleMaterials.length > 0 ? (
+              <MaterialsTable
+                materials={visibleMaterials}
+                // Com o filtro de remessa ativo, o status faz sentido pela ótica da Obra.
+                scope={filter === 'TRANSFERIR' ? 'obra' : 'empresa'}
+                selectMode={selectMode}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelected}
+                onHistory={setHistoryMaterial}
+                onManage={setManageMaterial}
+                onDelete={handleDelete}
+              />
+            ) : (
+              <EmptyState
+                icon={<Search size={20} />}
+                title="Nenhum material encontrado"
+                subtitle="Ajuste a busca, a categoria ou o filtro de situação."
+              />
+            )}
+          </Card>
         </div>
       </div>
 

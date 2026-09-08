@@ -482,18 +482,29 @@ export function createApp() {
         justificativa,
       });
 
-      const isCritical = novoSaldoCentral <= material.estoque_minimo || novoSaldoObra <= material.estoque_minimo;
-      if (isCritical) {
+      // O mínimo é o ponto de recompra da EMPRESA (Central + Obra). Faltar em um
+      // almoxarifado mas sobrar no outro é caso de remessa, não de alerta de compra.
+      // Mínimo 0 significa "sem controle": só alerta se zerar em tudo.
+      const saldoTotal = novoSaldoCentral + novoSaldoObra;
+      const semEstoque = saldoTotal <= 0;
+      const abaixoDoMinimo = material.estoque_minimo > 0 && saldoTotal < material.estoque_minimo;
+
+      if (semEstoque || abaixoDoMinimo) {
         try {
           const t = await getTransporter();
           if (t) {
             await t.sendMail({
               from: process.env.SMTP_FROM_EMAIL || 'noreply@ssimoveisbrasil.app',
               to: process.env.ADMIN_EMAIL || 'admin@ssimoveis.com',
-              subject: `Alerta de Estoque: ${material.nome}`,
-              html: `<p>O material <strong>${material.nome}</strong> atingiu nível crítico de estoque.</p>
+              subject: `${semEstoque ? 'Sem estoque' : 'Estoque abaixo do mínimo'}: ${material.nome}`,
+              html: `<p>O material <strong>${material.nome}</strong> ${
+                semEstoque
+                  ? 'está <strong>sem estoque</strong> nos dois almoxarifados.'
+                  : 'está com o saldo total <strong>abaixo do estoque mínimo</strong>.'
+              }</p>
                      <p>Saldo Central: ${novoSaldoCentral} ${material.unidade_medida}<br/>
                      Saldo Obra: ${novoSaldoObra} ${material.unidade_medida}<br/>
+                     <strong>Total: ${saldoTotal} ${material.unidade_medida}</strong><br/>
                      Estoque Mínimo: ${material.estoque_minimo} ${material.unidade_medida}</p>
                      <p>Operação: ${tipo_operacao} | Quantidade: ${q} | Responsável: ${req.user!.nome}</p>`,
             });

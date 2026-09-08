@@ -1,9 +1,110 @@
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 
-export function isCritical(material: Pick<Material, 'saldo_central' | 'saldo_obra' | 'estoque_minimo'>, scope: 'central' | 'obra' | 'either' = 'either') {
-  if (scope === 'central') return material.saldo_central <= material.estoque_minimo;
-  if (scope === 'obra') return material.saldo_obra <= material.estoque_minimo;
-  return material.saldo_central <= material.estoque_minimo || material.saldo_obra <= material.estoque_minimo;
+/** Onde o saldo está sendo avaliado. 'empresa' = Central + Obra somados. */
+export type StockScope = 'central' | 'obra' | 'empresa';
+
+/**
+ * Situação de um material. Cada status implica uma ação diferente:
+ *
+ * - RUPTURA     não existe em lugar nenhum          -> comprar
+ * - TRANSFERIR  zerado aqui, mas existe no outro local -> remessa (NÃO é falta)
+ * - ABAIXO      total abaixo do mínimo da empresa   -> comprar
+ * - ATENCAO     total perto do mínimo               -> monitorar
+ * - OK          nada a fazer
+ */
+export type StockStatus = 'RUPTURA' | 'TRANSFERIR' | 'ABAIXO' | 'ATENCAO' | 'OK';
+
+type StockFields = Pick<Material, 'saldo_central' | 'saldo_obra' | 'estoque_minimo'>;
+
+/** Margem acima do mínimo que ainda merece atenção (1.5x = 50% de folga). */
+const ATTENTION_FACTOR = 1.5;
+
+/** Saldo da empresa: o que existe somando os dois almoxarifados. */
+export function stockTotal(m: StockFields): number {
+  return Number(m.saldo_central) + Number(m.saldo_obra);
+}
+
+/**
+ * `estoque_minimo` é o ponto de recompra da EMPRESA (Central + Obra), não de
+ * cada local. Faltar só em um almoxarifado é problema de remessa, não de compra.
+ * Mínimo 0 significa "sem controle de mínimo": só alerta se zerar em tudo.
+ */
+export function stockStatus(m: StockFields, scope: StockScope = 'empresa'): StockStatus {
+  const total = stockTotal(m);
+  const minimo = Number(m.estoque_minimo);
+
+  // Zerado nos dois almoxarifados: falta de verdade.
+  if (total <= 0) return 'RUPTURA';
+
+  // Visto de um almoxarifado: vazio aqui mas disponível no outro -> basta transferir.
+  if (scope !== 'empresa') {
+    const aqui = scope === 'central' ? Number(m.saldo_central) : Number(m.saldo_obra);
+    const outro = scope === 'central' ? Number(m.saldo_obra) : Number(m.saldo_central);
+    if (aqui <= 0 && outro > 0) return 'TRANSFERIR';
+  }
+
+  if (minimo > 0) {
+    if (total < minimo) return 'ABAIXO';
+    if (total < minimo * ATTENTION_FACTOR) return 'ATENCAO';
+  }
+
+  return 'OK';
+}
+
+/** Precisa de compra: ou não existe, ou o total caiu abaixo do mínimo da empresa. */
+export function needsPurchase(m: StockFields): boolean {
+  const s = stockStatus(m, 'empresa');
+  return s === 'RUPTURA' || s === 'ABAIXO';
+}
+
+/** Falta neste almoxarifado, mas existe no outro — resolve-se com remessa. */
+export function needsTransfer(m: StockFields, scope: 'central' | 'obra'): boolean {
+  return stockStatus(m, scope) === 'TRANSFERIR';
+}
+
+/** Quanto do mínimo o saldo total cobre. `null` quando não há mínimo definido. */
+export function percentOfMinimum(m: StockFields): number | null {
+  const minimo = Number(m.estoque_minimo);
+  if (minimo <= 0) return null;
+  return (stockTotal(m) / minimo) * 100;
+}
+
+export const STATUS_LABELS: Record<StockStatus, string> = {
+  RUPTURA: 'Sem estoque',
+  TRANSFERIR: 'Requer remessa',
+  ABAIXO: 'Abaixo do mínimo',
+  ATENCAO: 'Atenção',
+  OK: 'OK',
+};
+
+/** O rótulo de TRANSFERIR depende de quem olha: a Obra repõe da Central, e vice-versa. */
+export function statusLabel(status: StockStatus, scope: StockScope = 'empresa'): string {
+  if (status !== 'TRANSFERIR') return STATUS_LABELS[status];
+  if (scope === 'obra') return 'Tem na Central';
+  if (scope === 'central') return 'Tem na Obra';
+  return STATUS_LABELS.TRANSFERIR;
+}
+
+/**
+ * Se a operação soma, subtrai ou apenas move estoque. Remessa e devolução
+ * transferem entre almoxarifados, então não alteram o total da empresa.
+ */
+export type MovementDirection = 'in' | 'out' | 'transfer' | 'neutral';
+
+export function movementDirection(tipo: string): MovementDirection {
+  if (tipo.includes('REMESSA') || tipo.includes('DEVOLUCAO')) return 'transfer';
+  if (tipo.includes('ENTRADA')) return 'in';
+  if (tipo.includes('SAIDA') || tipo.includes('CONSUMO') || tipo === 'EXCLUSÃO') return 'out';
+  return 'neutral';
+}
+
+/** Quantidade com sinal, na convenção do total da empresa. */
+export function signedQuantity(mov: Pick<MaterialMovement, 'tipo_operacao' | 'quantidade'>): string {
+  const dir = movementDirection(mov.tipo_operacao);
+  const q = Math.abs(Number(mov.quantidade));
+  if (dir === 'in') return `+${formatNumber(q)}`;
+  if (dir === 'out') return `−${formatNumber(q)}`;
+  return formatNumber(q);
 }
 
 export function movementMaterialName(mov: MaterialMovement, materials: Material[]): string {
