@@ -58,13 +58,13 @@ export function Login() {
           className="absolute inset-0 opacity-50"
           style={{
             backgroundImage:
-              'radial-gradient(circle at 20% 15%, rgba(37,99,235,0.4), transparent 42%), radial-gradient(circle at 90% 85%, rgba(245,158,11,0.18), transparent 45%)',
+              'radial-gradient(circle at 20% 15%, rgba(255,142,41,0.35), transparent 42%), radial-gradient(circle at 90% 85%, rgba(39,208,149,0.14), transparent 45%)',
           }}
         />
         <div className="pointer-events-none absolute inset-0 grain" />
 
         {/* signature stripe ribbon */}
-        <Stripes className="absolute -right-10 top-0 h-full w-16 -skew-x-[14deg] opacity-90" color="rgba(245,158,11,0.85)" />
+        <Stripes className="absolute -right-10 top-0 h-full w-16 -skew-x-[14deg] opacity-90" color="rgba(255,142,41,0.85)" />
         <Stripes className="absolute -right-10 top-0 h-full w-16 -skew-x-[14deg] opacity-90 mix-blend-multiply" color="rgba(11,15,25,0.9)" />
 
         <motion.div
@@ -82,7 +82,7 @@ export function Login() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
-            className="font-mono text-xs font-semibold uppercase tracking-[0.3em] text-amber-400"
+            className="font-mono text-xs font-semibold uppercase tracking-[0.3em] text-[var(--brand)]"
           >
             Gestão de Almoxarifado
           </motion.p>
@@ -132,8 +132,8 @@ export function Login() {
       </div>
 
       {/* ---- Right: form ---- */}
-      <div className="relative flex items-center justify-center bg-slate-50 p-6 sm:p-10">
-        <Stripes className="absolute inset-x-0 top-0 h-1.5 lg:hidden" color="rgba(245,158,11,0.9)" />
+      <div className="relative flex items-center justify-center bg-[var(--surface)] p-6 sm:p-10">
+        <Stripes className="absolute inset-x-0 top-0 h-1.5 lg:hidden" color="rgba(255,142,41,0.9)" />
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -142,15 +142,15 @@ export function Login() {
         >
           <div className="mb-8 flex items-center gap-2.5 lg:hidden">
             <Logo size={36} />
-            <span className="font-mono text-xs font-semibold tracking-[0.2em] text-slate-800">SS IMÓVEIS / ESTOQUE</span>
+            <span className="font-mono text-xs font-semibold tracking-[0.2em] text-[var(--text)]">SS IMÓVEIS / ESTOQUE</span>
           </div>
 
-          <h2 className="font-display text-3xl font-bold text-slate-900">Acessar painel</h2>
-          <p className="mt-1.5 text-sm text-slate-500">Entre com sua matrícula ou e-mail cadastrado.</p>
+          <h2 className="font-display text-3xl font-bold text-[var(--text)]">Acessar painel</h2>
+          <p className="mt-1.5 text-sm text-[var(--text-muted)]">Entre com sua matrícula ou e-mail cadastrado.</p>
 
           <form onSubmit={handleSubmit} className="mt-8 space-y-4">
             <div className="relative">
-              <User size={16} className="pointer-events-none absolute left-3 top-[38px] text-slate-400" />
+              <User size={16} className="pointer-events-none absolute left-3 top-[38px] text-[var(--text-muted)]" />
               <Input
                 label="Matrícula ou e-mail"
                 required
@@ -161,7 +161,7 @@ export function Login() {
               />
             </div>
             <div className="relative">
-              <Lock size={16} className="pointer-events-none absolute left-3 top-[38px] text-slate-400" />
+              <Lock size={16} className="pointer-events-none absolute left-3 top-[38px] text-[var(--text-muted)]" />
               <Input
                 label="Senha"
                 required
@@ -176,10 +176,10 @@ export function Login() {
             </Button>
           </form>
 
-          <div className="mt-10 flex items-center gap-3 text-[11px] text-slate-400">
-            <span className="h-px flex-1 bg-slate-200" />
+          <div className="mt-10 flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
+            <span className="h-px flex-1 bg-[var(--border)]" />
             <span className="font-mono">acesso restrito</span>
-            <span className="h-px flex-1 bg-slate-200" />
+            <span className="h-px flex-1 bg-[var(--border)]" />
           </div>
         </motion.div>
       </div>

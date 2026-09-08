@@ -14,17 +14,17 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<Variant, string> = {
   primary:
-    'bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-600/25 disabled:bg-blue-300',
+    'bg-[var(--brand)] text-white hover:brightness-105 shadow-md shadow-[var(--brand)]/30 disabled:opacity-50',
   accent:
-    'bg-amber-500 text-slate-900 hover:bg-amber-400 shadow-md shadow-amber-500/25 disabled:bg-amber-200',
+    'bg-[var(--brand-secondary)] text-white hover:brightness-105 shadow-md shadow-[var(--brand-secondary)]/25 disabled:opacity-50',
   secondary:
-    'bg-slate-900 text-white hover:bg-slate-800 shadow-md shadow-slate-900/20 disabled:bg-slate-400',
+    'bg-slate-900 text-white hover:bg-slate-800 shadow-md shadow-slate-900/20 disabled:bg-slate-400 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100',
   danger:
     'bg-rose-600 text-white hover:bg-rose-700 shadow-md shadow-rose-600/25 disabled:bg-rose-300',
   ghost:
-    'bg-transparent text-slate-600 hover:bg-slate-100 disabled:text-slate-300',
+    'bg-transparent text-[var(--text-muted)] hover:bg-[var(--bg-2)] disabled:opacity-40',
   outline:
-    'bg-white text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50 disabled:text-slate-300',
+    'bg-[var(--surface)] text-[var(--text)] border border-[var(--border)] hover:border-[var(--brand)]/50 hover:bg-[var(--brand)]/5 disabled:opacity-40',
 };
 
 const sizeClasses: Record<Size, string> = {

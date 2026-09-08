@@ -145,20 +145,20 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[70] flex flex-col bg-slate-50"
+      className="fixed inset-0 z-[70] flex flex-col bg-[var(--bg-2)]"
     >
       <Stripes className="h-1.5 shrink-0" color="rgba(245,158,11,0.9)" dense />
 
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3 sm:px-6">
         <div className="flex items-center gap-3">
-          <button onClick={onClose} className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+          <button onClick={onClose} className="rounded-full p-2 text-[var(--text-muted)] hover:bg-[var(--bg-2)] hover:text-[var(--text)]">
             <ArrowLeft size={18} />
           </button>
           <div>
-            <p className="font-display text-base font-bold text-slate-900">
+            <p className="font-display text-base font-bold text-[var(--text)]">
               Recontagem Rápida — {location === 'CENTRAL' ? 'Central' : 'Obra'}
             </p>
-            <p className="font-mono text-[11px] text-slate-400">
+            <p className="font-mono text-[11px] text-[var(--text-muted)]">
               {countedInView}/{filtered.length} conferidos nesta visão
             </p>
           </div>
@@ -170,20 +170,20 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
 
       {step === 'counting' ? (
         <>
-          <div className="shrink-0 space-y-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
+          <div className="shrink-0 space-y-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3 sm:px-6">
             <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Buscar material..."
-                className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] py-2.5 pl-9 pr-3 text-sm outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
               />
             </div>
             <div className="hide-scrollbar flex gap-2 overflow-x-auto">
               <button
                 onClick={() => setCategory('TODAS')}
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${category === 'TODAS' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${category === 'TODAS' ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-2)] text-[var(--text-muted)]'}`}
               >
                 Todas
               </button>
@@ -191,7 +191,7 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
                 <button
                   key={c}
                   onClick={() => setCategory(c)}
-                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${category === c ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${category === c ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-2)] text-[var(--text-muted)]'}`}
                 >
                   {c}
                 </button>
@@ -213,12 +213,12 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
                   <div
                     key={m.id}
                     className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
-                      isDone ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-200 bg-white'
+                      isDone ? 'border-emerald-200 bg-emerald-50/40' : 'border-[var(--border)] bg-[var(--surface)]'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-800">{m.nome}</p>
-                      <p className="font-mono text-[11px] text-slate-400">
+                      <p className="truncate text-sm font-semibold text-[var(--text)]">{m.nome}</p>
+                      <p className="font-mono text-[11px] text-[var(--text-muted)]">
                         Sistema: {formatNumber(saldo)} {m.unidade_medida}
                       </p>
                     </div>
@@ -237,14 +237,14 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
                       value={raw ?? (isMatched ? String(saldo) : '')}
                       onChange={(e) => setCount(m.id, e.target.value)}
                       placeholder={String(saldo)}
-                      className="w-20 shrink-0 rounded-lg border border-slate-200 px-2 py-2 text-right text-sm font-semibold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                      className="w-20 shrink-0 rounded-lg border border-[var(--border)] px-2 py-2 text-right text-sm font-semibold outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
                     />
 
                     <button
                       onClick={() => confirmMatch(m.id)}
                       title="Confere com o sistema"
                       className={`shrink-0 rounded-lg p-2 transition-colors ${
-                        isMatched ? 'bg-emerald-500 text-white' : 'bg-slate-100 text-slate-400 hover:bg-emerald-100 hover:text-emerald-600'
+                        isMatched ? 'bg-emerald-500 text-white' : 'bg-[var(--bg-2)] text-[var(--text-muted)] hover:bg-emerald-100 hover:text-emerald-600'
                       }`}
                     >
                       <Check size={16} />
@@ -260,8 +260,8 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
         <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6">
           <div className="mx-auto max-w-2xl">
             <div className="mb-5 flex items-center gap-2">
-              <ClipboardCheck size={18} className="text-blue-600" />
-              <h3 className="font-display text-lg font-bold text-slate-900">Confirmar {diffs.length} divergência(s)</h3>
+              <ClipboardCheck size={18} className="text-[var(--brand)]" />
+              <h3 className="font-display text-lg font-bold text-[var(--text)]">Confirmar {diffs.length} divergência(s)</h3>
             </div>
             <div className="space-y-2">
               <AnimatePresence>
@@ -271,11 +271,11 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3"
+                    className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3"
                   >
                     <div>
-                      <p className="text-sm font-semibold text-slate-800">{d.material.nome}</p>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-sm font-semibold text-[var(--text)]">{d.material.nome}</p>
+                      <p className="text-xs text-[var(--text-muted)]">
                         Sistema: {formatNumber(d.saldo)} → Contagem: {formatNumber(d.contagem)}
                       </p>
                     </div>

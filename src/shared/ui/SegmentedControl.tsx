@@ -13,20 +13,20 @@ export function SegmentedControl<T extends string>({
   onChange,
   options,
   layoutId,
-  activeClassName = 'text-blue-600',
+  activeClassName = 'text-[var(--brand)]',
 }: SegmentedControlProps<T>) {
   return (
-    <div className="flex rounded-lg bg-slate-100 p-1 text-xs font-bold">
+    <div className="flex rounded-lg bg-[var(--bg-2)] p-1 text-xs font-bold">
       {options.map((opt) => (
         <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
-          className={`relative rounded-md px-3 py-1.5 transition-colors ${value === opt.value ? opt.activeClassName || activeClassName : 'text-slate-500'}`}
+          className={`relative rounded-md px-3 py-1.5 transition-colors ${value === opt.value ? opt.activeClassName || activeClassName : 'text-[var(--text-muted)]'}`}
         >
           {value === opt.value && (
             <motion.div
               layoutId={layoutId}
-              className="absolute inset-0 rounded-md bg-white shadow-sm"
+              className="absolute inset-0 rounded-md bg-[var(--surface)] shadow-sm ring-1 ring-[var(--border)]"
               transition={{ type: 'spring', stiffness: 450, damping: 34 }}
             />
           )}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, ChevronDown, X } from 'lucide-react';
 import type { Material } from '@/shared/types';
-import { formatNumber } from '@/features/estoque/utils';
+import { formatNumber, needsPurchase } from '@/features/estoque/utils';
 
 interface MaterialPickerProps {
   materials: Material[];
@@ -50,7 +50,7 @@ export function MaterialPicker({ materials, value, onChange, label = 'Material',
   return (
     <div ref={rootRef} className="relative">
       {label && (
-        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
           {label} {required && <span className="text-rose-500">*</span>}
         </label>
       )}
@@ -59,8 +59,8 @@ export function MaterialPicker({ materials, value, onChange, label = 'Material',
         <button
           type="button"
           onClick={openPicker}
-          className={`flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left text-sm outline-none transition-colors hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 ${
-            !selected ? 'text-slate-400' : 'text-slate-800'
+          className={`flex w-full items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-left text-sm outline-none transition-colors hover:border-[var(--brand)]/50 focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20 ${
+            !selected ? 'text-[var(--text-muted)]' : 'text-[var(--text)]'
           }`}
         >
           <span className="truncate">{selected ? selected.nome : 'Buscar material...'}</span>
@@ -73,51 +73,51 @@ export function MaterialPicker({ materials, value, onChange, label = 'Material',
                   e.stopPropagation();
                   onChange('');
                 }}
-                className="rounded-full p-1 text-slate-300 hover:bg-slate-100 hover:text-slate-500"
+                className="rounded-full p-1 text-[var(--text-muted)] hover:bg-[var(--bg-2)] hover:text-[var(--text)]"
               >
                 <X size={13} />
               </span>
             )}
-            <ChevronDown size={15} className="text-slate-400" />
+            <ChevronDown size={15} className="text-[var(--text-muted)]" />
           </span>
         </button>
       ) : (
         <div className="relative">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
           <input
             ref={inputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
             placeholder="Digite o nome do material..."
-            className="w-full rounded-lg border border-blue-500 bg-white py-2.5 pl-9 pr-3 text-sm outline-none ring-2 ring-blue-500/15"
+            className="w-full rounded-lg border border-[var(--brand)] bg-[var(--surface)] py-2.5 pl-9 pr-3 text-sm text-[var(--text)] outline-none ring-2 ring-[var(--brand)]/20"
           />
         </div>
       )}
 
       {open && (
-        <div className="absolute z-20 mt-1.5 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-          {results.length === 0 && <p className="px-3 py-4 text-center text-xs text-slate-400">Nenhum material encontrado.</p>}
+        <div className="absolute z-20 mt-1.5 max-h-72 w-full overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] py-1 shadow-lg">
+          {results.length === 0 && <p className="px-3 py-4 text-center text-xs text-[var(--text-muted)]">Nenhum material encontrado.</p>}
           {results.map((m) => {
-            const critical = m.saldo_central <= m.estoque_minimo || m.saldo_obra <= m.estoque_minimo;
+            const critical = needsPurchase(m);
             return (
               <button
                 type="button"
                 key={m.id}
                 onClick={() => pick(m)}
-                className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 ${
-                  String(m.id) === value ? 'bg-blue-50/70 font-semibold text-blue-700' : 'text-slate-700'
+                className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-[var(--brand)]/10 ${
+                  String(m.id) === value ? 'bg-[var(--brand)]/10 font-semibold text-[var(--brand)]' : 'text-[var(--text)]'
                 }`}
               >
                 <span className="truncate">{m.nome}</span>
-                <span className={`shrink-0 font-mono text-[11px] ${critical ? 'text-rose-500' : 'text-slate-400'}`}>
+                <span className={`shrink-0 font-mono text-[11px] ${critical ? 'text-rose-500' : 'text-[var(--text-muted)]'}`}>
                   C:{formatNumber(m.saldo_central)} O:{formatNumber(m.saldo_obra)}
                 </span>
               </button>
             );
           })}
           {materials.length > RESULTS_LIMIT && results.length === RESULTS_LIMIT && (
-            <p className="px-3 pt-1.5 text-center text-[10px] text-slate-300">Refine a busca para ver mais resultados</p>
+            <p className="px-3 pt-1.5 text-center text-[10px] text-[var(--text-muted)]">Refine a busca para ver mais resultados</p>
           )}
         </div>
       )}
