@@ -601,6 +601,324 @@ export function createApp() {
     }
   });
 
+  // --------------------------- SUPORTE ---------------------------
+  // Almoxarifes abrem chamados sobre materiais (duplicados, nome/informação
+  // errados). A gestão revisa e resolve. Quem não é admin só enxerga o que abriu.
+
+  /**
+   * As tabelas de suporte vêm da migração 001. Enquanto ela não roda, o
+   * PostgREST responde 42P01/PGRST205 — traduzimos isso num aviso claro em vez
+   * de um "erro interno" genérico.
+   */
+  const MISSING_TABLE_CODES = ['42P01', 'PGRST205'];
+  function isMissingSupportTable(err: any): boolean {
+    return MISSING_TABLE_CODES.includes(err?.code) || /support_tickets/.test(err?.message || '');
+  }
+  const SETUP_ERROR = 'O módulo de suporte ainda não foi instalado no banco. Rode a migração migrations/001_suporte_e_seguranca.sql no Supabase.';
+
+  const TICKET_TYPES = ['DUPLICADO', 'NOME_INCORRETO', 'INFO_INCORRETA', 'FALTA_CADASTRO', 'OUTRO'];
+  const TICKET_STATUSES = ['ABERTO', 'EM_ANALISE', 'RESOLVIDO', 'RECUSADO'];
+  const TICKET_PRIORITIES = ['BAIXA', 'NORMAL', 'ALTA'];
+
+  async function loadTickets(onlyMatricula?: string) {
+    let query = supabaseServer
+      .from('support_tickets')
+      .select('*, materiais:support_ticket_materials(id, material_id, material_nome)')
+      .order('created_at', { ascending: false });
+    if (onlyMatricula) query = query.eq('autor_matricula', onlyMatricula);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data || [];
+  }
+
+  app.get('/api/support', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+    try {
+      const isAdmin = ADMIN_ROLES.includes(req.user!.role);
+      res.json({ tickets: await loadTickets(isAdmin ? undefined : req.user!.matricula) });
+    } catch (err: any) {
+      if (isMissingSupportTable(err)) return res.status(503).json({ error: SETUP_ERROR, setup_required: true });
+      console.error('[GET /api/support] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar chamados de suporte.' });
+    }
+  });
+
+  app.get('/api/support/:id/comments', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { data: ticket } = await supabaseServer.from('support_tickets').select('autor_matricula').eq('id', id).maybeSingle();
+      if (!ticket) return res.status(404).json({ error: 'Chamado não encontrado.' });
+      if (!ADMIN_ROLES.includes(req.user!.role) && ticket.autor_matricula !== req.user!.matricula) {
+        return res.status(403).json({ error: 'Você não tem acesso a este chamado.' });
+      }
+
+      const { data, error } = await supabaseServer
+        .from('support_ticket_comments')
+        .select('*')
+        .eq('ticket_id', id)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      res.json({ comments: data || [] });
+    } catch (err: any) {
+      console.error('[GET /api/support/:id/comments] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar mensagens do chamado.' });
+    }
+  });
+
+  app.post('/api/support', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+    try {
+      const { tipo, assunto, descricao, prioridade, material_ids } = req.body || {};
+
+      if (!TICKET_TYPES.includes(tipo)) return res.status(400).json({ error: 'Tipo de chamado inválido.' });
+      if (!assunto || String(assunto).trim().length < 3) return res.status(400).json({ error: 'Descreva o assunto em pelo menos 3 caracteres.' });
+      if (!descricao || String(descricao).trim().length < 5) return res.status(400).json({ error: 'Descreva o problema em pelo menos 5 caracteres.' });
+      if (prioridade && !TICKET_PRIORITIES.includes(prioridade)) return res.status(400).json({ error: 'Prioridade inválida.' });
+
+      const ids: number[] = Array.isArray(material_ids) ? [...new Set(material_ids.map(Number))].filter(Boolean) : [];
+      // Duplicado só faz sentido comparando pelo menos dois materiais.
+      if (tipo === 'DUPLICADO' && ids.length < 2) {
+        return res.status(400).json({ error: 'Para relatar duplicidade, selecione pelo menos dois materiais.' });
+      }
+      if (tipo !== 'OUTRO' && tipo !== 'FALTA_CADASTRO' && ids.length === 0) {
+        return res.status(400).json({ error: 'Selecione ao menos um material.' });
+      }
+
+      const { data: ticket, error } = await supabaseServer
+        .from('support_tickets')
+        .insert({
+          tipo,
+          assunto: String(assunto).trim(),
+          descricao: String(descricao).trim(),
+          prioridade: prioridade || 'NORMAL',
+          autor_matricula: req.user!.matricula,
+          autor_nome: req.user!.nome,
+          autor_role: req.user!.role,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      if (ids.length > 0) {
+        const { data: mats } = await supabaseServer.from('materials').select('id, nome').in('id', ids);
+        const rows = (mats || []).map((m: any) => ({
+          ticket_id: ticket.id,
+          material_id: m.id,
+          material_nome: m.nome, // snapshot: sobrevive a exclusão/unificação
+        }));
+        if (rows.length > 0) await supabaseServer.from('support_ticket_materials').insert(rows);
+      }
+
+      res.status(201).json({ ticket });
+    } catch (err: any) {
+      if (isMissingSupportTable(err)) return res.status(503).json({ error: SETUP_ERROR, setup_required: true });
+      console.error('[POST /api/support] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao abrir chamado.' });
+    }
+  });
+
+  app.post('/api/support/:id/comments', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { mensagem } = req.body || {};
+      if (!mensagem || String(mensagem).trim().length === 0) {
+        return res.status(400).json({ error: 'Escreva uma mensagem.' });
+      }
+
+      const { data: ticket } = await supabaseServer.from('support_tickets').select('autor_matricula').eq('id', id).maybeSingle();
+      if (!ticket) return res.status(404).json({ error: 'Chamado não encontrado.' });
+      if (!ADMIN_ROLES.includes(req.user!.role) && ticket.autor_matricula !== req.user!.matricula) {
+        return res.status(403).json({ error: 'Você não tem acesso a este chamado.' });
+      }
+
+      const { data, error } = await supabaseServer
+        .from('support_ticket_comments')
+        .insert({
+          ticket_id: id,
+          autor_matricula: req.user!.matricula,
+          autor_nome: req.user!.nome,
+          mensagem: String(mensagem).trim(),
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      // Responder reabre um chamado já encerrado — a conversa continua viva.
+      await supabaseServer.from('support_tickets').update({ status: 'EM_ANALISE' }).eq('id', id).in('status', ['RESOLVIDO', 'RECUSADO']);
+
+      res.status(201).json({ comment: data });
+    } catch (err: any) {
+      console.error('[POST /api/support/:id/comments] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao enviar mensagem.' });
+    }
+  });
+
+  app.patch('/api/support/:id', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { status, prioridade, resolucao } = req.body || {};
+
+      const patch: Record<string, any> = {};
+      if (status !== undefined) {
+        if (!TICKET_STATUSES.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+        patch.status = status;
+        if (status === 'RESOLVIDO' || status === 'RECUSADO') {
+          patch.resolved_at = new Date().toISOString();
+          patch.resolvido_por = req.user!.nome;
+        } else {
+          patch.resolved_at = null;
+          patch.resolvido_por = null;
+        }
+      }
+      if (prioridade !== undefined) {
+        if (!TICKET_PRIORITIES.includes(prioridade)) return res.status(400).json({ error: 'Prioridade inválida.' });
+        patch.prioridade = prioridade;
+      }
+      if (resolucao !== undefined) patch.resolucao = resolucao ? String(resolucao).trim() : null;
+
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar.' });
+
+      const { data, error } = await supabaseServer.from('support_tickets').update(patch).eq('id', id).select().single();
+      if (error) throw error;
+      res.json({ ticket: data });
+    } catch (err: any) {
+      console.error('[PATCH /api/support/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao atualizar chamado.' });
+    }
+  });
+
+  // --------------------------- USUÁRIOS (admin) ---------------------------
+  // A tabela `users` é compartilhada com o CRM. Este gerenciador só enxerga e
+  // altera perfis de estoque — nunca CLIENTE nem os papéis do CRM.
+
+  const MANAGEABLE_ROLES = ALL_INVENTORY_ROLES;
+  const MIN_PASSWORD_LENGTH = 8;
+  const USER_COLUMNS = 'id, nome, email, matricula, role, created_at';
+
+  function assertManageable(role: string | null | undefined): boolean {
+    return !!role && MANAGEABLE_ROLES.includes(role);
+  }
+
+  app.get('/api/users', authenticate, requireRole(ADMIN_ROLES), async (_req, res) => {
+    try {
+      const { data, error } = await supabaseServer
+        .from('users')
+        .select(`${USER_COLUMNS}, senha`)
+        .in('role', MANAGEABLE_ROLES)
+        .order('nome', { ascending: true });
+      if (error) throw error;
+
+      // A senha nunca sai daqui — só o indicador de que ainda está em texto puro.
+      const users = (data || []).map(({ senha, ...u }: any) => ({
+        ...u,
+        senha_em_texto_puro: !/^\$2[aby]\$/.test(String(senha || '')),
+      }));
+      res.json({ users });
+    } catch (err: any) {
+      console.error('[GET /api/users] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar usuários.' });
+    }
+  });
+
+  app.post('/api/users', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { nome, matricula, email, role, senha } = req.body || {};
+      if (!nome || !matricula || !senha) return res.status(400).json({ error: 'Informe nome, matrícula e senha.' });
+      if (!assertManageable(role)) return res.status(400).json({ error: 'Perfil inválido para o sistema de estoque.' });
+      if (String(senha).length < MIN_PASSWORD_LENGTH) {
+        return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
+      }
+
+      const { data: existing } = await supabaseServer.from('users').select('id').eq('matricula', matricula).maybeSingle();
+      if (existing) return res.status(409).json({ error: 'Já existe um usuário com esta matrícula.' });
+
+      const { data, error } = await supabaseServer
+        .from('users')
+        .insert({
+          nome: String(nome).trim(),
+          matricula: String(matricula).trim(),
+          email: email ? String(email).trim() : null,
+          role,
+          senha: await bcrypt.hash(String(senha), 10),
+        })
+        .select(USER_COLUMNS)
+        .single();
+      if (error) throw error;
+
+      res.status(201).json({ user: data });
+    } catch (err: any) {
+      console.error('[POST /api/users] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao criar usuário.' });
+    }
+  });
+
+  app.patch('/api/users/:id', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { nome, email, role, senha } = req.body || {};
+
+      const { data: target } = await supabaseServer.from('users').select('id, role, matricula').eq('id', id).maybeSingle();
+      if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
+      if (!assertManageable(target.role)) {
+        return res.status(403).json({ error: 'Este usuário pertence a outro sistema e não pode ser editado aqui.' });
+      }
+
+      const patch: Record<string, any> = {};
+      if (nome !== undefined) patch.nome = String(nome).trim();
+      if (email !== undefined) patch.email = email ? String(email).trim() : null;
+      if (role !== undefined) {
+        if (!assertManageable(role)) return res.status(400).json({ error: 'Perfil inválido para o sistema de estoque.' });
+        // Sem isso, o último admin pode se rebaixar e trancar todo mundo para fora.
+        if (target.id === req.user!.id && !ADMIN_ROLES.includes(role)) {
+          return res.status(400).json({ error: 'Você não pode remover o seu próprio acesso de administrador.' });
+        }
+        patch.role = role;
+      }
+      if (senha) {
+        if (String(senha).length < MIN_PASSWORD_LENGTH) {
+          return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
+        }
+        patch.senha = await bcrypt.hash(String(senha), 10);
+      }
+
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar.' });
+
+      const { data, error } = await supabaseServer.from('users').update(patch).eq('id', id).select(USER_COLUMNS).single();
+      if (error) throw error;
+      res.json({ user: data });
+    } catch (err: any) {
+      console.error('[PATCH /api/users/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao atualizar usuário.' });
+    }
+  });
+
+  app.delete('/api/users/:id', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (id === req.user!.id) return res.status(400).json({ error: 'Você não pode excluir a própria conta.' });
+
+      const { data: target } = await supabaseServer.from('users').select('id, role').eq('id', id).maybeSingle();
+      if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
+      if (!assertManageable(target.role)) {
+        return res.status(403).json({ error: 'Este usuário pertence a outro sistema e não pode ser excluído aqui.' });
+      }
+
+      // Não deixa o sistema ficar sem administrador.
+      if (ADMIN_ROLES.includes(target.role)) {
+        const { count } = await supabaseServer
+          .from('users')
+          .select('id', { count: 'exact', head: true })
+          .in('role', ADMIN_ROLES);
+        if ((count ?? 0) <= 1) return res.status(400).json({ error: 'Este é o último administrador — não é possível excluí-lo.' });
+      }
+
+      const { error } = await supabaseServer.from('users').delete().eq('id', id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error('[DELETE /api/users/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao excluir usuário.' });
+    }
+  });
+
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
   return app;
