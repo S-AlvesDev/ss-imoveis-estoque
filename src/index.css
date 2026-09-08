@@ -1,13 +1,48 @@
 @import "tailwindcss";
 
+/* Class-based dark mode (Tailwind v4). Toggled by <html class="dark"> via store/theme.ts */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
   --ink: #0b0f19;
-  --amber: #f59e0b;
-  --amber-deep: #b45309;
+
+  /* ---- Elegent "Free Admin Dashboard" brand tokens ---- */
+  --brand: #ff8e29; /* Primary  */
+  --brand-deep: #f7942e;
+  --brand-soft: #ffc796; /* Shade 6 */
+  --brand-secondary: #27d095; /* green  */
+  --brand-tertiary: #67cadf; /* cyan   */
+
+  /* legacy aliases still referenced in a few spots */
+  --amber: #ff8e29;
+  --amber-deep: #f7942e;
+
+  /* ---- Light surfaces ---- */
+  --bg: #fff4ea; /* Background   */
+  --bg-2: #f5f5f5; /* Background II */
+  --surface: #ffffff; /* White        */
+  --border: #e1e1e1; /* Border       */
+  --text: #050f24; /* Text Dark    */
+  --text-muted: #6f757e; /* Text Light   */
+  --text-disable: #cccdcd; /* Text Disable */
+}
+
+/* ---- Dark surfaces ---- */
+/* :root.dark, not :where(.dark) — :where() is zero-specificity and would lose to :root above. */
+:root.dark {
+  --bg: #151d32; /* Background 1 */
+  /* Recessed tone *inside* a card. Sits below --surface so segmented tracks,
+     table stripes and modal footers stay visible against the card itself. */
+  --bg-2: #1e2639;
+  --surface: #292f45; /* Background 2 */
+  --border: #353c56; /* Border       */
+  --text: #f3f4f7; /* Text White   */
+  --text-muted: #c7cad0; /* Text Light   */
+  --text-disable: #6f7687; /* Disable      */
 }
 
 * {
@@ -24,9 +59,10 @@
 }
 
 body {
-  background-color: #f3f4f7;
-  color: #0f172a;
+  background-color: var(--bg);
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 ::-webkit-scrollbar {
@@ -43,6 +79,12 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+.dark ::-webkit-scrollbar-thumb {
+  background: #3f4766;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #556084;
+}
 
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
@@ -52,12 +94,12 @@ body {
   scrollbar-width: none;
 }
 
-/* ---- Signature diagonal hazard-stripe motif ---- */
+/* ---- Signature diagonal hazard-stripe motif (now Elegent orange) ---- */
 .stripes {
   background-image: repeating-linear-gradient(
     -45deg,
-    var(--stripe-color, rgba(245, 158, 11, 0.9)) 0,
-    var(--stripe-color, rgba(245, 158, 11, 0.9)) 10px,
+    var(--stripe-color, rgba(255, 142, 41, 0.9)) 0,
+    var(--stripe-color, rgba(255, 142, 41, 0.9)) 10px,
     transparent 10px,
     transparent 20px
   );
@@ -100,6 +142,10 @@ body {
   background: linear-gradient(90deg, #eef1f6 0%, #f8fafc 50%, #eef1f6 100%);
   background-size: 800px 100%;
   animation: shimmer 1.6s infinite linear;
+}
+.dark .animate-shimmer {
+  background: linear-gradient(90deg, #1f2740 0%, #2b344f 50%, #1f2740 100%);
+  background-size: 800px 100%;
 }
 
 .text-gradient {

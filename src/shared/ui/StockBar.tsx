@@ -16,7 +16,7 @@ export function StockBar({ saldo, minimo, className = '' }: StockBarProps) {
   const barColor = { critical: '#e11d48', warning: '#f59e0b', healthy: '#059669' }[status];
 
   return (
-    <div className={`h-1.5 w-full overflow-hidden rounded-full bg-slate-100 ${className}`}>
+    <div className={`h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-2)] ${className}`}>
       <motion.div
         className="h-full rounded-full"
         style={{ backgroundColor: barColor }}

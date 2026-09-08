@@ -13,7 +13,7 @@ import { formatNumber } from '@/features/estoque/utils';
 const ADMIN_OPERATIONS = [
   { value: 'ENTRADA_CENTRAL', label: 'Entrada Central', color: 'bg-emerald-600 text-white' },
   { value: 'SAIDA', label: 'Saída Central', color: 'bg-amber-600 text-white' },
-  { value: 'REMESSA_OBRA', label: 'Remessa p/ Obra', color: 'bg-blue-600 text-white' },
+  { value: 'REMESSA_OBRA', label: 'Remessa p/ Obra', color: 'bg-[var(--brand)] text-white' },
   { value: 'DEVOLUCAO_CENTRAL', label: 'Devolução p/ Central', color: 'bg-indigo-600 text-white' },
   { value: 'AJUSTE_CENTRAL', label: 'Ajuste Central', color: 'bg-slate-800 text-white' },
   { value: 'AJUSTE_OBRA', label: 'Ajuste Obra', color: 'bg-slate-800 text-white' },
@@ -59,17 +59,17 @@ export function ManageModal({ material, onClose, onUpdated }: ManageModalProps) 
 
   return (
     <Modal open={!!material} onClose={onClose} title={material?.nome || ''} subtitle="Gerenciar material" maxWidth="max-w-lg">
-      <div className="mb-5 flex rounded-lg bg-slate-100 p-1 text-xs font-bold">
+      <div className="mb-5 flex rounded-lg bg-[var(--bg-2)] p-1 text-xs font-bold">
         {(['EDITAR', 'MOVIMENTAR'] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`relative flex-1 rounded-md py-2 transition-colors ${tab === t ? 'text-blue-600' : 'text-slate-500'}`}
+            className={`relative flex-1 rounded-md py-2 transition-colors ${tab === t ? 'text-[var(--brand)]' : 'text-[var(--text-muted)]'}`}
           >
             {tab === t && (
               <motion.div
                 layoutId="manage-tab-pill"
-                className="absolute inset-0 rounded-md bg-white shadow-sm"
+                className="absolute inset-0 rounded-md bg-[var(--surface)] shadow-sm"
                 transition={{ type: 'spring', stiffness: 450, damping: 34 }}
               />
             )}
@@ -111,7 +111,7 @@ export function ManageModal({ material, onClose, onUpdated }: ManageModalProps) 
             />
           </div>
           {material && (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-[var(--text-muted)]">
               Saldo Central: <strong>{formatNumber(material.saldo_central)}</strong> · Saldo Obra:{' '}
               <strong>{formatNumber(material.saldo_obra)}</strong> (altere pela aba Movimentar)
             </p>

@@ -54,7 +54,7 @@ export function MovementForm({ materials, operations, onSubmit, allowNegative }:
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">Operação</p>
+        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Operação</p>
         <div className="flex flex-wrap gap-2">
           {operations.map((op) => (
             <button
@@ -62,7 +62,7 @@ export function MovementForm({ materials, operations, onSubmit, allowNegative }:
               key={op.value}
               onClick={() => setOperacao(op.value)}
               className={`rounded-full px-3.5 py-1.5 text-[11px] font-bold uppercase tracking-wide transition-colors ${
-                operacao === op.value ? op.color : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                operacao === op.value ? op.color : 'bg-[var(--bg-2)] text-[var(--text-muted)] hover:bg-[var(--bg-2)]'
               }`}
             >
               {op.label}
@@ -74,15 +74,15 @@ export function MovementForm({ materials, operations, onSubmit, allowNegative }:
       <MaterialPicker label="Material" required materials={materials} value={materialId} onChange={setMaterialId} />
 
       {selected && (
-        <div className="flex gap-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">
+        <div className="flex gap-4 rounded-lg bg-[var(--bg-2)] px-3 py-2 text-xs text-[var(--text-muted)]">
           <span>
-            Saldo Central: <strong className="text-slate-700">{formatNumber(selected.saldo_central)}</strong>
+            Saldo Central: <strong className="text-[var(--text)]">{formatNumber(selected.saldo_central)}</strong>
           </span>
           <span>
-            Saldo Obra: <strong className="text-slate-700">{formatNumber(selected.saldo_obra)}</strong>
+            Saldo Obra: <strong className="text-[var(--text)]">{formatNumber(selected.saldo_obra)}</strong>
           </span>
           <span>
-            Mínimo: <strong className="text-slate-700">{formatNumber(selected.estoque_minimo)}</strong>
+            Mínimo: <strong className="text-[var(--text)]">{formatNumber(selected.estoque_minimo)}</strong>
           </span>
         </div>
       )}

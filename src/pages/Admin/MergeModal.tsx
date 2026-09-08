@@ -67,7 +67,7 @@ export function MergeModal({ open, materials, onClose, onDone }: MergeModalProps
           <label
             key={m.id}
             className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 transition-colors ${
-              targetId === m.id ? 'border-blue-500 bg-blue-50/60' : 'border-slate-200 hover:border-slate-300'
+              targetId === m.id ? 'border-[var(--brand)] bg-[var(--brand)]/10' : 'border-[var(--border)] hover:border-[var(--brand)]/50'
             }`}
           >
             <input
@@ -78,13 +78,13 @@ export function MergeModal({ open, materials, onClose, onDone }: MergeModalProps
               className="accent-blue-600"
             />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-slate-800">{m.nome}</p>
-              <p className="font-mono text-[11px] text-slate-400">
+              <p className="truncate text-sm font-semibold text-[var(--text)]">{m.nome}</p>
+              <p className="font-mono text-[11px] text-[var(--text-muted)]">
                 Central: {formatNumber(m.saldo_central)} · Obra: {formatNumber(m.saldo_obra)} {m.unidade_medida}
               </p>
             </div>
             {targetId === m.id && (
-              <span className="shrink-0 rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+              <span className="shrink-0 rounded-full bg-[var(--brand)] px-2 py-0.5 text-[10px] font-bold uppercase text-white">
                 Principal
               </span>
             )}
@@ -100,14 +100,14 @@ export function MergeModal({ open, materials, onClose, onDone }: MergeModalProps
       )}
 
       {target && !unidadesDiferentes && (
-        <div className="mt-4 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-          <p className="mb-1 font-bold uppercase tracking-wide text-slate-400">Resultado</p>
+        <div className="mt-4 rounded-lg bg-[var(--bg-2)] p-3 text-xs text-[var(--text-muted)]">
+          <p className="mb-1 font-bold uppercase tracking-wide text-[var(--text-muted)]">Resultado</p>
           <p>
-            <strong className="text-slate-800">{target.nome}</strong> passa a ter Central:{' '}
-            <strong className="text-slate-800">{formatNumber(previewCentral)}</strong>, Obra:{' '}
-            <strong className="text-slate-800">{formatNumber(previewObra)}</strong> {target.unidade_medida}.
+            <strong className="text-[var(--text)]">{target.nome}</strong> passa a ter Central:{' '}
+            <strong className="text-[var(--text)]">{formatNumber(previewCentral)}</strong>, Obra:{' '}
+            <strong className="text-[var(--text)]">{formatNumber(previewObra)}</strong> {target.unidade_medida}.
           </p>
-          <p className="mt-1 text-slate-400">
+          <p className="mt-1 text-[var(--text-muted)]">
             {donors.map((d) => d.nome).join(', ')} — {donors.length > 1 ? 'serão removidos' : 'será removido'}, com o histórico
             preservado na auditoria.
           </p>
