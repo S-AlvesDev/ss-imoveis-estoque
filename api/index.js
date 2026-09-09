@@ -25,6 +25,31 @@ var CENTRAL_ROLES = ["ALMOXARIFE_GERAL", "ALMOXARIFADO", ...ADMIN_ROLES];
 var OBRA_ROLES = ["ALMOXARIFE_OBRA", ...ADMIN_ROLES];
 var ALL_INVENTORY_ROLES = Array.from(/* @__PURE__ */ new Set([...CENTRAL_ROLES, ...OBRA_ROLES]));
 
+// src/features/estoque/utils.ts
+var ATTENTION_FACTOR = 1.5;
+function stockTotal(m) {
+  return Number(m.saldo_central) + Number(m.saldo_obra);
+}
+function stockStatus(m, scope = "empresa") {
+  const total = stockTotal(m);
+  const minimo = Number(m.estoque_minimo);
+  if (total <= 0) return "RUPTURA";
+  if (scope !== "empresa") {
+    const aqui = scope === "central" ? Number(m.saldo_central) : Number(m.saldo_obra);
+    const outro = scope === "central" ? Number(m.saldo_obra) : Number(m.saldo_central);
+    if (aqui <= 0 && outro > 0) return "TRANSFERIR";
+  }
+  if (minimo > 0) {
+    if (total < minimo) return "ABAIXO";
+    if (total < minimo * ATTENTION_FACTOR) return "ATENCAO";
+  }
+  return "OK";
+}
+function needsPurchase(m) {
+  const s = stockStatus(m, "empresa");
+  return s === "RUPTURA" || s === "ABAIXO";
+}
+
 // src/server/app.ts
 var JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -398,10 +423,14 @@ function createApp() {
         funcionario_matricula: req.user.matricula,
         justificativa
       });
-      const saldoTotal = novoSaldoCentral + novoSaldoObra;
-      const semEstoque = saldoTotal <= 0;
-      const abaixoDoMinimo = material.estoque_minimo > 0 && saldoTotal < material.estoque_minimo;
-      if (semEstoque || abaixoDoMinimo) {
+      const saldoAtualizado = {
+        saldo_central: novoSaldoCentral,
+        saldo_obra: novoSaldoObra,
+        estoque_minimo: material.estoque_minimo
+      };
+      const saldoTotal = stockTotal(saldoAtualizado);
+      const semEstoque = stockStatus(saldoAtualizado, "empresa") === "RUPTURA";
+      if (needsPurchase(saldoAtualizado)) {
         try {
           const t = await getTransporter();
           if (t) {

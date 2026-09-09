@@ -8,6 +8,8 @@ import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import { supabaseServer } from '../lib/supabaseServer';
 import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants';
+// Mesma regra de saldo que a interface usa — fonte única da verdade.
+import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -567,14 +569,19 @@ export function createApp() {
         justificativa,
       });
 
-      // O mínimo é o ponto de recompra da EMPRESA (Central + Obra). Faltar em um
-      // almoxarifado mas sobrar no outro é caso de remessa, não de alerta de compra.
-      // Mínimo 0 significa "sem controle": só alerta se zerar em tudo.
-      const saldoTotal = novoSaldoCentral + novoSaldoObra;
-      const semEstoque = saldoTotal <= 0;
-      const abaixoDoMinimo = material.estoque_minimo > 0 && saldoTotal < material.estoque_minimo;
+      // A regra de "precisa comprar" vive num lugar só, compartilhada com a
+      // interface. Quando o servidor tinha a própria cópia, as duas podiam
+      // divergir sem ninguém perceber — e é a divergência, não a regra, que
+      // volta a produzir alarme falso.
+      const saldoAtualizado = {
+        saldo_central: novoSaldoCentral,
+        saldo_obra: novoSaldoObra,
+        estoque_minimo: material.estoque_minimo,
+      };
+      const saldoTotal = stockTotal(saldoAtualizado);
+      const semEstoque = stockStatus(saldoAtualizado, 'empresa') === 'RUPTURA';
 
-      if (semEstoque || abaixoDoMinimo) {
+      if (needsPurchase(saldoAtualizado)) {
         try {
           const t = await getTransporter();
           if (t) {
