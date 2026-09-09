@@ -63,6 +63,15 @@ where u.role is not null
   and u.matricula is not null
 on conflict do nothing;
 
+-- Tabelas de controle: fechadas por padrão. O servidor as acessa por
+-- service_role; chave anônima não deve enxergar a lista de clientes nem
+-- quem pertence a quem. As policies de leitura entram na Fase 1b.
+--
+-- Ligado DEPOIS do backfill de propósito: assim a carga inicial não depende
+-- de quem roda a migração ser dono ou superusuário da tabela.
+alter table organizations      enable row level security;
+alter table estoque_user_orgs  enable row level security;
+
 
 -- -----------------------------------------------------------------------------
 --  BLOCO 3 — Marcar os dados existentes
