@@ -123,9 +123,13 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
 export function createApp() {
   const app = express();
 
-  // Atrás do proxy da Vercel o IP real vem em X-Forwarded-For. Sem isso o
-  // rate limit enxergaria todo mundo como o mesmo cliente.
-  app.set('trust proxy', 1);
+  // Atrás de um proxy (Vercel) o IP real vem em X-Forwarded-For. Mas confiar
+  // nesse cabeçalho SEM proxy na frente é pior que não confiar em nada: o
+  // cliente passa a escolher o próprio `req.ip` e burla o rate limit trocando
+  // o header a cada requisição. Só liga onde existe proxy de verdade.
+  if (process.env.VERCEL || process.env.TRUST_PROXY === 'true') {
+    app.set('trust proxy', 1);
+  }
 
   app.use(helmet({ contentSecurityPolicy: false }));
 
@@ -142,23 +146,49 @@ export function createApp() {
     }),
   );
 
-  app.use(express.json({ limit: '1mb' }));
+  // Abaixo do padrão do body-parser (100kb). A maior carga real é a recontagem
+  // dos 317 materiais, que dá 13KB — 64kb deixa folga de sobra.
+  app.use(express.json({ limit: '64kb' }));
 
   /**
-   * Limite de tentativas de login por IP.
+   * Tentativas de login por CONTA.
+   *
+   * Limitar só por IP tranca o escritório inteiro: a equipe do almoxarifado sai
+   * por uma conexão só, então dez erros de digitação de uma pessoa deixariam
+   * todas as outras de fora. Contando por conta, o erro de um não afeta ninguém.
    *
    * ATENÇÃO: o armazenamento é em memória. Em serverless cada instância tem a
    * própria contagem, então isso atrasa um ataque, mas não o impede em escala.
-   * Proteção real exige armazenamento compartilhado (Redis ou tabela no banco)
-   * ou bloqueio por conta — ver Fase 0 do plano de segurança.
+   * Proteção real exige armazenamento compartilhado (Redis ou tabela no banco).
    */
-  const loginLimiter = rateLimit({
+  const loginAccountLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 10,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     skipSuccessfulRequests: true, // só conta tentativa que falhou
-    message: { error: 'Muitas tentativas de login. Aguarde 15 minutos e tente novamente.' },
+    // Roda depois do express.json(), então req.body já está disponível.
+    keyGenerator: (req) =>
+      String(req.body?.matricula ?? '')
+        .trim()
+        .toLowerCase()
+        .slice(0, 120) || 'sem-identificador',
+    message: { error: 'Muitas tentativas para esta conta. Aguarde 15 minutos e tente novamente.' },
+  });
+
+  /**
+   * Teto por IP no login, folgado. Não serve para proteger uma conta — isso é
+   * do limitador acima —, e sim para conter quem varre muitas contas a partir
+   * de um mesmo lugar. 60 falhas em 15 minutos já é muito acima do uso normal
+   * de um escritório inteiro.
+   */
+  const loginIpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: 'Muitas tentativas de login a partir desta rede. Aguarde alguns minutos.' },
   });
 
   /** Teto geral, folgado o bastante para uso normal e apertado para varredura. */
@@ -173,7 +203,7 @@ export function createApp() {
   app.use('/api/', apiLimiter);
 
   // --------------------------- AUTH ---------------------------
-  app.post('/api/login', loginLimiter, async (req, res) => {
+  app.post('/api/login', loginIpLimiter, loginAccountLimiter, async (req, res) => {
     try {
       const { matricula, senha } = req.body || {};
       if (typeof matricula !== 'string' || typeof senha !== 'string' || !matricula || !senha) {
@@ -186,7 +216,10 @@ export function createApp() {
       // são estrutura da consulta, não dado. Sem esta checagem, uma matrícula
       // como `x,role.eq.CLIENTE` reescreveria a condição de busca.
       if (identificador.length > 120 || /[,()"]/.test(identificador)) {
-        console.warn('[Login] identificador rejeitado por conter caracteres de filtro', { ip: req.ip });
+        console.warn('[Login] identificador rejeitado por conter caracteres de filtro', {
+          ip: req.ip,
+          tamanho: identificador.length,
+        });
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
@@ -198,7 +231,12 @@ export function createApp() {
         .maybeSingle();
 
       if (error || !userRow) {
-        console.warn('[Login] falha: usuário não encontrado', { identificador, ip: req.ip });
+        // Nunca registrar o valor digitado: quando alguém erra o campo e digita
+        // a senha aqui, nenhum usuário casa e o log guardaria a senha em claro.
+        console.warn('[Login] falha: nenhuma conta para o identificador informado', {
+          ip: req.ip,
+          tamanho: identificador.length,
+        });
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
@@ -221,14 +259,19 @@ export function createApp() {
         role,
       };
 
-      // Registro de acesso. Falha aqui não pode impedir o login.
-      supabaseServer
-        .from('users')
-        .update({ ultimo_acesso: new Date().toISOString() })
-        .eq('id', userRow.id)
-        .then(({ error: e }) => {
-          if (e) console.warn('[Login] não foi possível gravar ultimo_acesso:', e.message);
-        });
+      // Aguardado de propósito: em serverless a função pode ser congelada assim
+      // que a resposta sai, e uma escrita solta simplesmente não chegaria ao
+      // banco. O try/catch garante que uma falha aqui não impeça o login — e
+      // que uma rejeição não vire unhandled rejection derrubando o processo.
+      try {
+        const { error: acessoError } = await supabaseServer
+          .from('users')
+          .update({ ultimo_acesso: new Date().toISOString() })
+          .eq('id', userRow.id);
+        if (acessoError) console.warn('[Login] não foi possível gravar ultimo_acesso:', acessoError.message);
+      } catch (acessoErr: any) {
+        console.warn('[Login] não foi possível gravar ultimo_acesso:', acessoErr?.message);
+      }
 
       if (!/^\$2[aby]\$/.test(String(userRow.senha || ''))) {
         console.warn('[Login] conta ainda com senha em texto puro', { matricula: userRow.matricula });

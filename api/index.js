@@ -121,7 +121,9 @@ async function verifyPassword(inputPassword, storedValue) {
 var ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
 function createApp() {
   const app = express();
-  app.set("trust proxy", 1);
+  if (process.env.VERCEL || process.env.TRUST_PROXY === "true") {
+    app.set("trust proxy", 1);
+  }
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(
     cors({
@@ -133,15 +135,25 @@ function createApp() {
       credentials: false
     })
   );
-  app.use(express.json({ limit: "1mb" }));
-  const loginLimiter = rateLimit({
+  app.use(express.json({ limit: "64kb" }));
+  const loginAccountLimiter = rateLimit({
     windowMs: 15 * 60 * 1e3,
     limit: 10,
     standardHeaders: "draft-7",
     legacyHeaders: false,
     skipSuccessfulRequests: true,
     // só conta tentativa que falhou
-    message: { error: "Muitas tentativas de login. Aguarde 15 minutos e tente novamente." }
+    // Roda depois do express.json(), então req.body já está disponível.
+    keyGenerator: (req) => String(req.body?.matricula ?? "").trim().toLowerCase().slice(0, 120) || "sem-identificador",
+    message: { error: "Muitas tentativas para esta conta. Aguarde 15 minutos e tente novamente." }
+  });
+  const loginIpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1e3,
+    limit: 60,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: "Muitas tentativas de login a partir desta rede. Aguarde alguns minutos." }
   });
   const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1e3,
@@ -151,7 +163,7 @@ function createApp() {
     message: { error: "Muitas requisi\xE7\xF5es. Aguarde alguns minutos." }
   });
   app.use("/api/", apiLimiter);
-  app.post("/api/login", loginLimiter, async (req, res) => {
+  app.post("/api/login", loginIpLimiter, loginAccountLimiter, async (req, res) => {
     try {
       const { matricula, senha } = req.body || {};
       if (typeof matricula !== "string" || typeof senha !== "string" || !matricula || !senha) {
@@ -159,12 +171,18 @@ function createApp() {
       }
       const identificador = matricula.trim();
       if (identificador.length > 120 || /[,()"]/.test(identificador)) {
-        console.warn("[Login] identificador rejeitado por conter caracteres de filtro", { ip: req.ip });
+        console.warn("[Login] identificador rejeitado por conter caracteres de filtro", {
+          ip: req.ip,
+          tamanho: identificador.length
+        });
         return res.status(401).json({ error: "Credenciais inv\xE1lidas." });
       }
       const { data: userRow, error } = await supabaseServer.from("users").select("*").or(`matricula.eq.${identificador},email.eq.${identificador}`).neq("role", "CLIENTE").maybeSingle();
       if (error || !userRow) {
-        console.warn("[Login] falha: usu\xE1rio n\xE3o encontrado", { identificador, ip: req.ip });
+        console.warn("[Login] falha: nenhuma conta para o identificador informado", {
+          ip: req.ip,
+          tamanho: identificador.length
+        });
         return res.status(401).json({ error: "Credenciais inv\xE1lidas." });
       }
       const role = userRow.role || (String(userRow.matricula || "").startsWith("E") ? "ALMOXARIFE_GERAL" : null);
@@ -182,9 +200,12 @@ function createApp() {
         matricula: userRow.matricula,
         role
       };
-      supabaseServer.from("users").update({ ultimo_acesso: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userRow.id).then(({ error: e }) => {
-        if (e) console.warn("[Login] n\xE3o foi poss\xEDvel gravar ultimo_acesso:", e.message);
-      });
+      try {
+        const { error: acessoError } = await supabaseServer.from("users").update({ ultimo_acesso: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userRow.id);
+        if (acessoError) console.warn("[Login] n\xE3o foi poss\xEDvel gravar ultimo_acesso:", acessoError.message);
+      } catch (acessoErr) {
+        console.warn("[Login] n\xE3o foi poss\xEDvel gravar ultimo_acesso:", acessoErr?.message);
+      }
       if (!/^\$2[aby]\$/.test(String(userRow.senha || ""))) {
         console.warn("[Login] conta ainda com senha em texto puro", { matricula: userRow.matricula });
       }
