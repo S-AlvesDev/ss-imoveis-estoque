@@ -3,6 +3,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
@@ -92,19 +93,53 @@ async function verifyPassword(inputPassword, storedValue) {
   }
   return inputPassword === storedValue;
 }
+var ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
 function createApp() {
   const app = express();
+  app.set("trust proxy", 1);
   app.use(helmet({ contentSecurityPolicy: false }));
-  app.use(cors());
-  app.use(express.json());
-  app.post("/api/login", async (req, res) => {
+  app.use(
+    cors({
+      origin(origin, callback) {
+        if (!origin) return callback(null, true);
+        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+        return callback(null, false);
+      },
+      credentials: false
+    })
+  );
+  app.use(express.json({ limit: "1mb" }));
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1e3,
+    limit: 10,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    // só conta tentativa que falhou
+    message: { error: "Muitas tentativas de login. Aguarde 15 minutos e tente novamente." }
+  });
+  const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1e3,
+    limit: 600,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: "Muitas requisi\xE7\xF5es. Aguarde alguns minutos." }
+  });
+  app.use("/api/", apiLimiter);
+  app.post("/api/login", loginLimiter, async (req, res) => {
     try {
       const { matricula, senha } = req.body || {};
-      if (!matricula || !senha) {
+      if (typeof matricula !== "string" || typeof senha !== "string" || !matricula || !senha) {
         return res.status(400).json({ error: "Informe matr\xEDcula e senha." });
       }
-      const { data: userRow, error } = await supabaseServer.from("users").select("*").or(`matricula.eq.${matricula},email.eq.${matricula}`).neq("role", "CLIENTE").maybeSingle();
+      const identificador = matricula.trim();
+      if (identificador.length > 120 || /[,()"]/.test(identificador)) {
+        console.warn("[Login] identificador rejeitado por conter caracteres de filtro", { ip: req.ip });
+        return res.status(401).json({ error: "Credenciais inv\xE1lidas." });
+      }
+      const { data: userRow, error } = await supabaseServer.from("users").select("*").or(`matricula.eq.${identificador},email.eq.${identificador}`).neq("role", "CLIENTE").maybeSingle();
       if (error || !userRow) {
+        console.warn("[Login] falha: usu\xE1rio n\xE3o encontrado", { identificador, ip: req.ip });
         return res.status(401).json({ error: "Credenciais inv\xE1lidas." });
       }
       const role = userRow.role || (String(userRow.matricula || "").startsWith("E") ? "ALMOXARIFE_GERAL" : null);
@@ -113,6 +148,7 @@ function createApp() {
       }
       const passwordOk = await verifyPassword(senha, userRow.senha);
       if (!passwordOk) {
+        console.warn("[Login] falha: senha incorreta", { matricula: userRow.matricula, ip: req.ip });
         return res.status(401).json({ error: "Credenciais inv\xE1lidas." });
       }
       const authedUser = {
@@ -121,6 +157,12 @@ function createApp() {
         matricula: userRow.matricula,
         role
       };
+      supabaseServer.from("users").update({ ultimo_acesso: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userRow.id).then(({ error: e }) => {
+        if (e) console.warn("[Login] n\xE3o foi poss\xEDvel gravar ultimo_acesso:", e.message);
+      });
+      if (!/^\$2[aby]\$/.test(String(userRow.senha || ""))) {
+        console.warn("[Login] conta ainda com senha em texto puro", { matricula: userRow.matricula });
+      }
       const token = jwt.sign(authedUser, JWT_SECRET, { expiresIn: "12h" });
       res.json({ user: authedUser, token });
     } catch (err) {

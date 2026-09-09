@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
@@ -103,30 +104,99 @@ async function verifyPassword(inputPassword: string, storedValue: string): Promi
   return inputPassword === storedValue;
 }
 
+/**
+ * Origens autorizadas a chamar a API de outro domínio.
+ *
+ * O frontend é servido pela mesma origem da API (a Vercel reescreve /api/* para
+ * a função), então em operação normal nenhuma origem externa é necessária:
+ * requisição de mesma origem não passa por CORS. A lista existe para casos
+ * pontuais — um painel separado, um ambiente de teste — via ALLOWED_ORIGINS.
+ */
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 /** Monta o app Express com todas as rotas da API, sem iniciar nenhum servidor HTTP. */
 export function createApp() {
   const app = express();
 
+  // Atrás do proxy da Vercel o IP real vem em X-Forwarded-For. Sem isso o
+  // rate limit enxergaria todo mundo como o mesmo cliente.
+  app.set('trust proxy', 1);
+
   app.use(helmet({ contentSecurityPolicy: false }));
-  app.use(cors());
-  app.use(express.json());
+
+  app.use(
+    cors({
+      origin(origin, callback) {
+        // Sem cabeçalho Origin: mesma origem, curl ou health check. Liberado.
+        if (!origin) return callback(null, true);
+        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+        // Nega omitindo o cabeçalho CORS, em vez de estourar um erro 500.
+        return callback(null, false);
+      },
+      credentials: false,
+    }),
+  );
+
+  app.use(express.json({ limit: '1mb' }));
+
+  /**
+   * Limite de tentativas de login por IP.
+   *
+   * ATENÇÃO: o armazenamento é em memória. Em serverless cada instância tem a
+   * própria contagem, então isso atrasa um ataque, mas não o impede em escala.
+   * Proteção real exige armazenamento compartilhado (Redis ou tabela no banco)
+   * ou bloqueio por conta — ver Fase 0 do plano de segurança.
+   */
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skipSuccessfulRequests: true, // só conta tentativa que falhou
+    message: { error: 'Muitas tentativas de login. Aguarde 15 minutos e tente novamente.' },
+  });
+
+  /** Teto geral, folgado o bastante para uso normal e apertado para varredura. */
+  const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 600,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Muitas requisições. Aguarde alguns minutos.' },
+  });
+
+  app.use('/api/', apiLimiter);
 
   // --------------------------- AUTH ---------------------------
-  app.post('/api/login', async (req, res) => {
+  app.post('/api/login', loginLimiter, async (req, res) => {
     try {
       const { matricula, senha } = req.body || {};
-      if (!matricula || !senha) {
+      if (typeof matricula !== 'string' || typeof senha !== 'string' || !matricula || !senha) {
         return res.status(400).json({ error: 'Informe matrícula e senha.' });
+      }
+
+      const identificador = matricula.trim();
+
+      // O valor entra num filtro `.or()` do PostgREST, onde vírgula e parênteses
+      // são estrutura da consulta, não dado. Sem esta checagem, uma matrícula
+      // como `x,role.eq.CLIENTE` reescreveria a condição de busca.
+      if (identificador.length > 120 || /[,()"]/.test(identificador)) {
+        console.warn('[Login] identificador rejeitado por conter caracteres de filtro', { ip: req.ip });
+        return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
       const { data: userRow, error } = await supabaseServer
         .from('users')
         .select('*')
-        .or(`matricula.eq.${matricula},email.eq.${matricula}`)
+        .or(`matricula.eq.${identificador},email.eq.${identificador}`)
         .neq('role', 'CLIENTE')
         .maybeSingle();
 
       if (error || !userRow) {
+        console.warn('[Login] falha: usuário não encontrado', { identificador, ip: req.ip });
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
@@ -137,6 +207,8 @@ export function createApp() {
 
       const passwordOk = await verifyPassword(senha, userRow.senha);
       if (!passwordOk) {
+        // Trilha para investigar tentativa de invasão; a senha nunca é registrada.
+        console.warn('[Login] falha: senha incorreta', { matricula: userRow.matricula, ip: req.ip });
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
@@ -146,6 +218,19 @@ export function createApp() {
         matricula: userRow.matricula,
         role,
       };
+
+      // Registro de acesso. Falha aqui não pode impedir o login.
+      supabaseServer
+        .from('users')
+        .update({ ultimo_acesso: new Date().toISOString() })
+        .eq('id', userRow.id)
+        .then(({ error: e }) => {
+          if (e) console.warn('[Login] não foi possível gravar ultimo_acesso:', e.message);
+        });
+
+      if (!/^\$2[aby]\$/.test(String(userRow.senha || ''))) {
+        console.warn('[Login] conta ainda com senha em texto puro', { matricula: userRow.matricula });
+      }
 
       const token = jwt.sign(authedUser, JWT_SECRET as string, { expiresIn: '12h' });
       res.json({ user: authedUser, token });
