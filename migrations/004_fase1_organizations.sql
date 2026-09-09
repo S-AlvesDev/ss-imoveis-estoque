@@ -55,12 +55,19 @@ create table if not exists estoque_user_orgs (
 create index if not exists estoque_user_orgs_matricula_idx on estoque_user_orgs (matricula);
 
 -- Todo mundo que hoje acessa o estoque pertence à São Severino.
+--
+-- A lista é explícita, espelhando ALL_INVENTORY_ROLES em shared/constants.ts.
+-- Filtrar por `role <> 'CLIENTE'` seria largo demais: a tabela `users` é
+-- compartilhada com o CRM, e papéis como CORRETOR_ATENDIMENTO não são CLIENTE
+-- mas também não têm acesso ao estoque.
 insert into estoque_user_orgs (matricula, organization_id)
 select u.matricula, '5e7e0000-0000-4000-8000-000000000001'
 from users u
-where u.role is not null
-  and u.role <> 'CLIENTE'
-  and u.matricula is not null
+where u.matricula is not null
+  and u.role in (
+    'ADMINISTRADOR', 'ADMINISTRATIVO',
+    'ALMOXARIFE_GERAL', 'ALMOXARIFADO', 'ALMOXARIFE_OBRA'
+  )
 on conflict do nothing;
 
 -- Tabelas de controle: fechadas por padrão. O servidor as acessa por
