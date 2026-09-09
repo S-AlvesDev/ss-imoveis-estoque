@@ -2,11 +2,14 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import { supabaseServer } from '../lib/supabaseServer';
 import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants';
+// Mesma regra de saldo que a interface usa — fonte única da verdade.
+import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -103,30 +106,137 @@ async function verifyPassword(inputPassword: string, storedValue: string): Promi
   return inputPassword === storedValue;
 }
 
+/**
+ * Origens autorizadas a chamar a API de outro domínio.
+ *
+ * O frontend é servido pela mesma origem da API (a Vercel reescreve /api/* para
+ * a função), então em operação normal nenhuma origem externa é necessária:
+ * requisição de mesma origem não passa por CORS. A lista existe para casos
+ * pontuais — um painel separado, um ambiente de teste — via ALLOWED_ORIGINS.
+ */
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
 /** Monta o app Express com todas as rotas da API, sem iniciar nenhum servidor HTTP. */
 export function createApp() {
   const app = express();
 
+  // Atrás de um proxy (Vercel) o IP real vem em X-Forwarded-For. Mas confiar
+  // nesse cabeçalho SEM proxy na frente é pior que não confiar em nada: o
+  // cliente passa a escolher o próprio `req.ip` e burla o rate limit trocando
+  // o header a cada requisição. Só liga onde existe proxy de verdade.
+  if (process.env.VERCEL || process.env.TRUST_PROXY === 'true') {
+    app.set('trust proxy', 1);
+  }
+
   app.use(helmet({ contentSecurityPolicy: false }));
-  app.use(cors());
-  app.use(express.json());
+
+  app.use(
+    cors({
+      origin(origin, callback) {
+        // Sem cabeçalho Origin: mesma origem, curl ou health check. Liberado.
+        if (!origin) return callback(null, true);
+        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+        // Nega omitindo o cabeçalho CORS, em vez de estourar um erro 500.
+        return callback(null, false);
+      },
+      credentials: false,
+    }),
+  );
+
+  // Abaixo do padrão do body-parser (100kb). A maior carga real é a recontagem
+  // dos 317 materiais, que dá 13KB — 64kb deixa folga de sobra.
+  app.use(express.json({ limit: '64kb' }));
+
+  /**
+   * Tentativas de login por CONTA.
+   *
+   * Limitar só por IP tranca o escritório inteiro: a equipe do almoxarifado sai
+   * por uma conexão só, então dez erros de digitação de uma pessoa deixariam
+   * todas as outras de fora. Contando por conta, o erro de um não afeta ninguém.
+   *
+   * ATENÇÃO: o armazenamento é em memória. Em serverless cada instância tem a
+   * própria contagem, então isso atrasa um ataque, mas não o impede em escala.
+   * Proteção real exige armazenamento compartilhado (Redis ou tabela no banco).
+   */
+  const loginAccountLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skipSuccessfulRequests: true, // só conta tentativa que falhou
+    // Roda depois do express.json(), então req.body já está disponível.
+    keyGenerator: (req) =>
+      String(req.body?.matricula ?? '')
+        .trim()
+        .toLowerCase()
+        .slice(0, 120) || 'sem-identificador',
+    message: { error: 'Muitas tentativas para esta conta. Aguarde 15 minutos e tente novamente.' },
+  });
+
+  /**
+   * Teto por IP no login, folgado. Não serve para proteger uma conta — isso é
+   * do limitador acima —, e sim para conter quem varre muitas contas a partir
+   * de um mesmo lugar. 60 falhas em 15 minutos já é muito acima do uso normal
+   * de um escritório inteiro.
+   */
+  const loginIpLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: 'Muitas tentativas de login a partir desta rede. Aguarde alguns minutos.' },
+  });
+
+  /** Teto geral, folgado o bastante para uso normal e apertado para varredura. */
+  const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 600,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Muitas requisições. Aguarde alguns minutos.' },
+  });
+
+  app.use('/api/', apiLimiter);
 
   // --------------------------- AUTH ---------------------------
-  app.post('/api/login', async (req, res) => {
+  app.post('/api/login', loginIpLimiter, loginAccountLimiter, async (req, res) => {
     try {
       const { matricula, senha } = req.body || {};
-      if (!matricula || !senha) {
+      if (typeof matricula !== 'string' || typeof senha !== 'string' || !matricula || !senha) {
         return res.status(400).json({ error: 'Informe matrícula e senha.' });
+      }
+
+      const identificador = matricula.trim();
+
+      // O valor entra num filtro `.or()` do PostgREST, onde vírgula e parênteses
+      // são estrutura da consulta, não dado. Sem esta checagem, uma matrícula
+      // como `x,role.eq.CLIENTE` reescreveria a condição de busca.
+      if (identificador.length > 120 || /[,()"]/.test(identificador)) {
+        console.warn('[Login] identificador rejeitado por conter caracteres de filtro', {
+          ip: req.ip,
+          tamanho: identificador.length,
+        });
+        return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
       const { data: userRow, error } = await supabaseServer
         .from('users')
         .select('*')
-        .or(`matricula.eq.${matricula},email.eq.${matricula}`)
+        .or(`matricula.eq.${identificador},email.eq.${identificador}`)
         .neq('role', 'CLIENTE')
         .maybeSingle();
 
       if (error || !userRow) {
+        // Nunca registrar o valor digitado: quando alguém erra o campo e digita
+        // a senha aqui, nenhum usuário casa e o log guardaria a senha em claro.
+        console.warn('[Login] falha: nenhuma conta para o identificador informado', {
+          ip: req.ip,
+          tamanho: identificador.length,
+        });
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
@@ -137,6 +247,8 @@ export function createApp() {
 
       const passwordOk = await verifyPassword(senha, userRow.senha);
       if (!passwordOk) {
+        // Trilha para investigar tentativa de invasão; a senha nunca é registrada.
+        console.warn('[Login] falha: senha incorreta', { matricula: userRow.matricula, ip: req.ip });
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
@@ -146,6 +258,24 @@ export function createApp() {
         matricula: userRow.matricula,
         role,
       };
+
+      // Aguardado de propósito: em serverless a função pode ser congelada assim
+      // que a resposta sai, e uma escrita solta simplesmente não chegaria ao
+      // banco. O try/catch garante que uma falha aqui não impeça o login — e
+      // que uma rejeição não vire unhandled rejection derrubando o processo.
+      try {
+        const { error: acessoError } = await supabaseServer
+          .from('users')
+          .update({ ultimo_acesso: new Date().toISOString() })
+          .eq('id', userRow.id);
+        if (acessoError) console.warn('[Login] não foi possível gravar ultimo_acesso:', acessoError.message);
+      } catch (acessoErr: any) {
+        console.warn('[Login] não foi possível gravar ultimo_acesso:', acessoErr?.message);
+      }
+
+      if (!/^\$2[aby]\$/.test(String(userRow.senha || ''))) {
+        console.warn('[Login] conta ainda com senha em texto puro', { matricula: userRow.matricula });
+      }
 
       const token = jwt.sign(authedUser, JWT_SECRET as string, { expiresIn: '12h' });
       res.json({ user: authedUser, token });
@@ -482,14 +612,19 @@ export function createApp() {
         justificativa,
       });
 
-      // O mínimo é o ponto de recompra da EMPRESA (Central + Obra). Faltar em um
-      // almoxarifado mas sobrar no outro é caso de remessa, não de alerta de compra.
-      // Mínimo 0 significa "sem controle": só alerta se zerar em tudo.
-      const saldoTotal = novoSaldoCentral + novoSaldoObra;
-      const semEstoque = saldoTotal <= 0;
-      const abaixoDoMinimo = material.estoque_minimo > 0 && saldoTotal < material.estoque_minimo;
+      // A regra de "precisa comprar" vive num lugar só, compartilhada com a
+      // interface. Quando o servidor tinha a própria cópia, as duas podiam
+      // divergir sem ninguém perceber — e é a divergência, não a regra, que
+      // volta a produzir alarme falso.
+      const saldoAtualizado = {
+        saldo_central: novoSaldoCentral,
+        saldo_obra: novoSaldoObra,
+        estoque_minimo: material.estoque_minimo,
+      };
+      const saldoTotal = stockTotal(saldoAtualizado);
+      const semEstoque = stockStatus(saldoAtualizado, 'empresa') === 'RUPTURA';
 
-      if (semEstoque || abaixoDoMinimo) {
+      if (needsPurchase(saldoAtualizado)) {
         try {
           const t = await getTransporter();
           if (t) {
