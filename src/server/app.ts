@@ -11,6 +11,14 @@ import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
 import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
 
+/**
+ * Tabela de identidades DO ESTOQUE. Antes o login vinha de `users`, que é
+ * compartilhada com o CRM da imobiliária — clientes e corretores na mesma
+ * estrutura dos almoxarifes. A separação é o que permite o estoque existir
+ * como produto próprio.
+ */
+const ESTOQUE_USERS = 'estoque_users';
+
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   throw new Error('[Server] JWT_SECRET não definido — configure essa variável de ambiente antes de subir o servidor.');
@@ -224,10 +232,12 @@ export function createApp() {
       }
 
       const { data: userRow, error } = await supabaseServer
-        .from('users')
+        .from(ESTOQUE_USERS)
         .select('*')
         .or(`matricula.eq.${identificador},email.eq.${identificador}`)
-        .neq('role', 'CLIENTE')
+        // Sem filtro de CLIENTE: esta tabela só contém gente do estoque.
+        // Contas desativadas não entram.
+        .eq('ativo', true)
         .maybeSingle();
 
       if (error || !userRow) {
@@ -265,7 +275,7 @@ export function createApp() {
       // que uma rejeição não vire unhandled rejection derrubando o processo.
       try {
         const { error: acessoError } = await supabaseServer
-          .from('users')
+          .from(ESTOQUE_USERS)
           .update({ ultimo_acesso: new Date().toISOString() })
           .eq('id', userRow.id);
         if (acessoError) console.warn('[Login] não foi possível gravar ultimo_acesso:', acessoError.message);
@@ -273,8 +283,31 @@ export function createApp() {
         console.warn('[Login] não foi possível gravar ultimo_acesso:', acessoErr?.message);
       }
 
+      // Converte a senha legada para bcrypt neste momento — o único em que o
+      // servidor tem a senha correta em mãos.
+      //
+      // A conversão é feita aqui, e não na migração, de propósito: bcryptjs
+      // gera E verifica o hash, então não existe risco de duas bibliotecas
+      // discordarem sobre os mesmos bytes. Fazer isso em SQL com pgcrypto
+      // funciona em UTF-8, mas uma divergência de encoding trancaria a pessoa
+      // para fora, e a conferência da migração não teria como perceber.
       if (!/^\$2[aby]\$/.test(String(userRow.senha || ''))) {
-        console.warn('[Login] conta ainda com senha em texto puro', { matricula: userRow.matricula });
+        try {
+          const hash = await bcrypt.hash(senha, 10);
+          const { error: upgradeError } = await supabaseServer
+            .from(ESTOQUE_USERS)
+            .update({ senha: hash, senha_alterada_em: new Date().toISOString() })
+            .eq('id', userRow.id);
+
+          if (upgradeError) {
+            console.warn('[Login] falha ao proteger senha legada:', upgradeError.message);
+          } else {
+            console.info('[Login] senha legada convertida para bcrypt', { matricula: userRow.matricula });
+          }
+        } catch (upgradeErr: any) {
+          // O login não pode falhar por causa disto.
+          console.warn('[Login] falha ao proteger senha legada:', upgradeErr?.message);
+        }
       }
 
       const token = jwt.sign(authedUser, JWT_SECRET as string, { expiresIn: '12h' });
@@ -301,7 +334,8 @@ export function createApp() {
             .order('created_at', { ascending: false })
             .order('id', { ascending: false }),
         ),
-        supabaseServer.from('users').select('id, nome, matricula, role').neq('role', 'CLIENTE'),
+        // Sem filtro de CLIENTE: esta tabela só tem gente do estoque.
+        supabaseServer.from(ESTOQUE_USERS).select('id, nome, matricula, role'),
       ]);
 
       if (materialsRes.error) throw materialsRes.error;
@@ -935,7 +969,7 @@ export function createApp() {
   app.get('/api/users', authenticate, requireRole(ADMIN_ROLES), async (_req, res) => {
     try {
       const { data, error } = await supabaseServer
-        .from('users')
+        .from(ESTOQUE_USERS)
         .select(`${USER_COLUMNS}, senha`)
         .in('role', MANAGEABLE_ROLES)
         .order('nome', { ascending: true });
@@ -962,11 +996,11 @@ export function createApp() {
         return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
       }
 
-      const { data: existing } = await supabaseServer.from('users').select('id').eq('matricula', matricula).maybeSingle();
+      const { data: existing } = await supabaseServer.from(ESTOQUE_USERS).select('id').eq('matricula', matricula).maybeSingle();
       if (existing) return res.status(409).json({ error: 'Já existe um usuário com esta matrícula.' });
 
       const { data, error } = await supabaseServer
-        .from('users')
+        .from(ESTOQUE_USERS)
         .insert({
           nome: String(nome).trim(),
           matricula: String(matricula).trim(),
@@ -990,7 +1024,7 @@ export function createApp() {
       const id = Number(req.params.id);
       const { nome, email, role, senha } = req.body || {};
 
-      const { data: target } = await supabaseServer.from('users').select('id, role, matricula').eq('id', id).maybeSingle();
+      const { data: target } = await supabaseServer.from(ESTOQUE_USERS).select('id, role, matricula').eq('id', id).maybeSingle();
       if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: 'Este usuário pertence a outro sistema e não pode ser editado aqui.' });
@@ -1016,7 +1050,7 @@ export function createApp() {
 
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar.' });
 
-      const { data, error } = await supabaseServer.from('users').update(patch).eq('id', id).select(USER_COLUMNS).single();
+      const { data, error } = await supabaseServer.from(ESTOQUE_USERS).update(patch).eq('id', id).select(USER_COLUMNS).single();
       if (error) throw error;
       res.json({ user: data });
     } catch (err: any) {
@@ -1030,7 +1064,7 @@ export function createApp() {
       const id = Number(req.params.id);
       if (id === req.user!.id) return res.status(400).json({ error: 'Você não pode excluir a própria conta.' });
 
-      const { data: target } = await supabaseServer.from('users').select('id, role').eq('id', id).maybeSingle();
+      const { data: target } = await supabaseServer.from(ESTOQUE_USERS).select('id, role').eq('id', id).maybeSingle();
       if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: 'Este usuário pertence a outro sistema e não pode ser excluído aqui.' });
@@ -1039,13 +1073,13 @@ export function createApp() {
       // Não deixa o sistema ficar sem administrador.
       if (ADMIN_ROLES.includes(target.role)) {
         const { count } = await supabaseServer
-          .from('users')
+          .from(ESTOQUE_USERS)
           .select('id', { count: 'exact', head: true })
           .in('role', ADMIN_ROLES);
         if ((count ?? 0) <= 1) return res.status(400).json({ error: 'Este é o último administrador — não é possível excluí-lo.' });
       }
 
-      const { error } = await supabaseServer.from('users').delete().eq('id', id);
+      const { error } = await supabaseServer.from(ESTOQUE_USERS).delete().eq('id', id);
       if (error) throw error;
       res.json({ success: true });
     } catch (err: any) {

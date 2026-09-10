@@ -69,6 +69,10 @@ $$;
 -- -----------------------------------------------------------------------------
 --  3. A política. Escrita UMA vez; vale para toda consulta à tabela.
 -- -----------------------------------------------------------------------------
+-- A tabela de contas também fica fechada: nenhuma prova precisa lê-la, e
+-- deixá-la aberta é justamente o alerta que o Supabase levanta.
+alter table poc.organizations enable row level security;
+
 alter table poc.materials enable row level security;
 
 -- FORCE faz a regra valer inclusive para o dono da tabela. Sem isso, o próprio

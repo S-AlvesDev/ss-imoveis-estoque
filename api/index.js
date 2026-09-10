@@ -51,6 +51,7 @@ function needsPurchase(m) {
 }
 
 // src/server/app.ts
+var ESTOQUE_USERS = "estoque_users";
 var JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   throw new Error("[Server] JWT_SECRET n\xE3o definido \u2014 configure essa vari\xE1vel de ambiente antes de subir o servidor.");
@@ -177,7 +178,7 @@ function createApp() {
         });
         return res.status(401).json({ error: "Credenciais inv\xE1lidas." });
       }
-      const { data: userRow, error } = await supabaseServer.from("users").select("*").or(`matricula.eq.${identificador},email.eq.${identificador}`).neq("role", "CLIENTE").maybeSingle();
+      const { data: userRow, error } = await supabaseServer.from(ESTOQUE_USERS).select("*").or(`matricula.eq.${identificador},email.eq.${identificador}`).eq("ativo", true).maybeSingle();
       if (error || !userRow) {
         console.warn("[Login] falha: nenhuma conta para o identificador informado", {
           ip: req.ip,
@@ -201,13 +202,23 @@ function createApp() {
         role
       };
       try {
-        const { error: acessoError } = await supabaseServer.from("users").update({ ultimo_acesso: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userRow.id);
+        const { error: acessoError } = await supabaseServer.from(ESTOQUE_USERS).update({ ultimo_acesso: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userRow.id);
         if (acessoError) console.warn("[Login] n\xE3o foi poss\xEDvel gravar ultimo_acesso:", acessoError.message);
       } catch (acessoErr) {
         console.warn("[Login] n\xE3o foi poss\xEDvel gravar ultimo_acesso:", acessoErr?.message);
       }
       if (!/^\$2[aby]\$/.test(String(userRow.senha || ""))) {
-        console.warn("[Login] conta ainda com senha em texto puro", { matricula: userRow.matricula });
+        try {
+          const hash = await bcrypt.hash(senha, 10);
+          const { error: upgradeError } = await supabaseServer.from(ESTOQUE_USERS).update({ senha: hash, senha_alterada_em: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userRow.id);
+          if (upgradeError) {
+            console.warn("[Login] falha ao proteger senha legada:", upgradeError.message);
+          } else {
+            console.info("[Login] senha legada convertida para bcrypt", { matricula: userRow.matricula });
+          }
+        } catch (upgradeErr) {
+          console.warn("[Login] falha ao proteger senha legada:", upgradeErr?.message);
+        }
       }
       const token = jwt.sign(authedUser, JWT_SECRET, { expiresIn: "12h" });
       res.json({ user: authedUser, token });
@@ -226,7 +237,8 @@ function createApp() {
         fetchAllRows(
           () => supabaseServer.from("material_movements").select("*, materials(nome)").order("created_at", { ascending: false }).order("id", { ascending: false })
         ),
-        supabaseServer.from("users").select("id, nome, matricula, role").neq("role", "CLIENTE")
+        // Sem filtro de CLIENTE: esta tabela só tem gente do estoque.
+        supabaseServer.from(ESTOQUE_USERS).select("id, nome, matricula, role")
       ]);
       if (materialsRes.error) throw materialsRes.error;
       res.json({
@@ -687,7 +699,7 @@ function createApp() {
   }
   app.get("/api/users", authenticate, requireRole(ADMIN_ROLES), async (_req, res) => {
     try {
-      const { data, error } = await supabaseServer.from("users").select(`${USER_COLUMNS}, senha`).in("role", MANAGEABLE_ROLES).order("nome", { ascending: true });
+      const { data, error } = await supabaseServer.from(ESTOQUE_USERS).select(`${USER_COLUMNS}, senha`).in("role", MANAGEABLE_ROLES).order("nome", { ascending: true });
       if (error) throw error;
       const users = (data || []).map(({ senha, ...u }) => ({
         ...u,
@@ -707,9 +719,9 @@ function createApp() {
       if (String(senha).length < MIN_PASSWORD_LENGTH) {
         return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
       }
-      const { data: existing } = await supabaseServer.from("users").select("id").eq("matricula", matricula).maybeSingle();
+      const { data: existing } = await supabaseServer.from(ESTOQUE_USERS).select("id").eq("matricula", matricula).maybeSingle();
       if (existing) return res.status(409).json({ error: "J\xE1 existe um usu\xE1rio com esta matr\xEDcula." });
-      const { data, error } = await supabaseServer.from("users").insert({
+      const { data, error } = await supabaseServer.from(ESTOQUE_USERS).insert({
         nome: String(nome).trim(),
         matricula: String(matricula).trim(),
         email: email ? String(email).trim() : null,
@@ -727,7 +739,7 @@ function createApp() {
     try {
       const id = Number(req.params.id);
       const { nome, email, role, senha } = req.body || {};
-      const { data: target } = await supabaseServer.from("users").select("id, role, matricula").eq("id", id).maybeSingle();
+      const { data: target } = await supabaseServer.from(ESTOQUE_USERS).select("id, role, matricula").eq("id", id).maybeSingle();
       if (!target) return res.status(404).json({ error: "Usu\xE1rio n\xE3o encontrado." });
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: "Este usu\xE1rio pertence a outro sistema e n\xE3o pode ser editado aqui." });
@@ -749,7 +761,7 @@ function createApp() {
         patch.senha = await bcrypt.hash(String(senha), 10);
       }
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nada para atualizar." });
-      const { data, error } = await supabaseServer.from("users").update(patch).eq("id", id).select(USER_COLUMNS).single();
+      const { data, error } = await supabaseServer.from(ESTOQUE_USERS).update(patch).eq("id", id).select(USER_COLUMNS).single();
       if (error) throw error;
       res.json({ user: data });
     } catch (err) {
@@ -761,16 +773,16 @@ function createApp() {
     try {
       const id = Number(req.params.id);
       if (id === req.user.id) return res.status(400).json({ error: "Voc\xEA n\xE3o pode excluir a pr\xF3pria conta." });
-      const { data: target } = await supabaseServer.from("users").select("id, role").eq("id", id).maybeSingle();
+      const { data: target } = await supabaseServer.from(ESTOQUE_USERS).select("id, role").eq("id", id).maybeSingle();
       if (!target) return res.status(404).json({ error: "Usu\xE1rio n\xE3o encontrado." });
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: "Este usu\xE1rio pertence a outro sistema e n\xE3o pode ser exclu\xEDdo aqui." });
       }
       if (ADMIN_ROLES.includes(target.role)) {
-        const { count } = await supabaseServer.from("users").select("id", { count: "exact", head: true }).in("role", ADMIN_ROLES);
+        const { count } = await supabaseServer.from(ESTOQUE_USERS).select("id", { count: "exact", head: true }).in("role", ADMIN_ROLES);
         if ((count ?? 0) <= 1) return res.status(400).json({ error: "Este \xE9 o \xFAltimo administrador \u2014 n\xE3o \xE9 poss\xEDvel exclu\xED-lo." });
       }
-      const { error } = await supabaseServer.from("users").delete().eq("id", id);
+      const { error } = await supabaseServer.from(ESTOQUE_USERS).delete().eq("id", id);
       if (error) throw error;
       res.json({ success: true });
     } catch (err) {
