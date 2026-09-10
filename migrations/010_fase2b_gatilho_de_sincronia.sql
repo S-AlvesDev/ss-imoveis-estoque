@@ -27,8 +27,7 @@
 --  a migração, e o banco real a reprovou por arredondamento. Réplica infiel
 --  testa outro sistema.
 --
---  Exercitando as operações que o sistema faz hoje —
---  entrada na Central, consumo na Obra, remessa, ajuste por contagem, saldo
+--  Foram exercitadas as operações que o sistema faz hoje — entrada na Central, consumo na Obra, remessa, ajuste por contagem, saldo
 --  indo a zero, saldo ficando negativo, unificação, criação e exclusão de
 --  material. Em todas, o espelho acompanhou. Também foi conferido que:
 --    - excluir material não deixa saldo órfão;
