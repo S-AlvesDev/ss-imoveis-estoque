@@ -22,13 +22,20 @@
 --  resultado possível: os números divergem devagar e ninguém percebe.
 --
 --  COMO FOI TESTADO
---  Contra PostgreSQL real, exercitando as operações que o sistema faz hoje —
+--  Contra PostgreSQL real, com as colunas de saldo na MESMA escala da produção
+--  (2 casas) — a primeira versão deste teste usava numeric sem escala, aprovou
+--  a migração, e o banco real a reprovou por arredondamento. Réplica infiel
+--  testa outro sistema.
+--
+--  Exercitando as operações que o sistema faz hoje —
 --  entrada na Central, consumo na Obra, remessa, ajuste por contagem, saldo
 --  indo a zero, saldo ficando negativo, unificação, criação e exclusão de
 --  material. Em todas, o espelho acompanhou. Também foi conferido que:
 --    - excluir material não deixa saldo órfão;
 --    - renomear material NÃO reescreve o espelho à toa;
 --    - o rollback tira o gatilho e não encosta no saldo real.
+--    - pedindo 987654.321, a coluna guarda 987654.32 e o espelho guarda o
+--      mesmo — o espelho copia o que a coluna aceitou, não o que foi pedido.
 --
 --  E que o gatilho SABE RECUSAR: material de organização sem depósito é
 --  rejeitado e a inserção é desfeita; com dois depósitos CENTRAL na mesma
@@ -126,7 +133,57 @@ create trigger sincroniza_saldo_ao_alterar
 
 
 -- -----------------------------------------------------------------------------
---  3. Ressincroniza o que mudou entre a 009 e agora
+--  3. O espelho precisa arredondar igual à coluna
+--
+--  saldo_central e saldo_obra têm escala definida (2 casas). stock_balances
+--  nasceu como numeric sem escala, então aceita 3 casas onde a coluna aceita 2.
+--  Hoje isso não aparece — o gatilho só copia valores que já couberam lá. Mas
+--  depois da virada, quando o servidor escrever direto no espelho, o mesmo
+--  lançamento passaria a guardar um valor que antes teria sido arredondado.
+--  Mudança silenciosa de comportamento em cima de saldo é justamente o que não
+--  pode acontecer.
+--
+--  O tipo é lido da própria coluna, não escrito à mão: se um dia ela mudar, o
+--  espelho acompanha sozinho.
+-- -----------------------------------------------------------------------------
+do $$
+declare
+  tipo_da_coluna text;
+  tipo_do_espelho text;
+begin
+  select case
+           when numeric_precision is not null and numeric_scale is not null
+             then format('numeric(%s,%s)', numeric_precision, numeric_scale)
+             else 'numeric'
+         end
+    into tipo_da_coluna
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'materials' and column_name = 'saldo_central';
+
+  select case
+           when numeric_precision is not null and numeric_scale is not null
+             then format('numeric(%s,%s)', numeric_precision, numeric_scale)
+             else 'numeric'
+         end
+    into tipo_do_espelho
+  from information_schema.columns
+  where table_schema = 'public' and table_name = 'stock_balances' and column_name = 'saldo';
+
+  if tipo_da_coluna is null then
+    raise exception 'materials.saldo_central não encontrada.';
+  end if;
+
+  if tipo_da_coluna is distinct from tipo_do_espelho then
+    execute format('alter table stock_balances alter column saldo type %s', tipo_da_coluna);
+    raise notice 'Espelho ajustado de % para % — mesma escala da coluna.', tipo_do_espelho, tipo_da_coluna;
+  else
+    raise notice 'Espelho já usa %, igual à coluna.', tipo_do_espelho;
+  end if;
+end $$;
+
+
+-- -----------------------------------------------------------------------------
+--  4. Ressincroniza o que mudou entre a 009 e agora
 --
 --  Entre rodar a 009 e rodar esta migração, o estoque continuou funcionando.
 --  Tudo que se mexeu nesse intervalo está desatualizado no espelho.
@@ -157,8 +214,10 @@ on conflict (warehouse_id, material_id)
 do $$
 declare
   alvo          record;
+  deposito      uuid;
+  gravado       numeric;
   visto         numeric;
-  marca         numeric := 987654.321;
+  marca         numeric := 987654.32;
   divergentes   int;
 begin
   select id, organization_id, saldo_central, saldo_obra into alvo
@@ -169,29 +228,33 @@ begin
     return;
   end if;
 
+  deposito := deposito_do_tipo(alvo.organization_id, 'CENTRAL');
+
   -- Mexe no saldo e confere que o espelho acompanhou.
+  --
+  -- A comparação é sempre contra o que a COLUNA guardou, nunca contra o valor
+  -- que eu pedi para gravar. A coluna tem escala própria e arredonda; o dever do
+  -- gatilho é espelhar o que ficou lá. Comparar com o valor pedido reprovava um
+  -- gatilho correto — foi exatamente o que aconteceu na primeira versão disto.
   update materials set saldo_central = marca where id = alvo.id;
 
-  select saldo into visto
-  from stock_balances
-  where material_id = alvo.id
-    and warehouse_id = deposito_do_tipo(alvo.organization_id, 'CENTRAL');
+  select saldo_central into gravado from materials where id = alvo.id;
+  select saldo into visto from stock_balances
+   where material_id = alvo.id and warehouse_id = deposito;
 
-  if visto is distinct from marca then
-    raise exception 'FALHOU: o gatilho não sincronizou. Esperado % no depósito Central, encontrado %.', marca, visto;
+  if visto is distinct from gravado then
+    raise exception 'FALHOU: o gatilho não sincronizou. A coluna guardou %, o depósito Central tem %.', gravado, visto;
   end if;
 
   -- Devolve o valor original e confere que voltou também.
   update materials set saldo_central = alvo.saldo_central where id = alvo.id;
 
-  select saldo into visto
-  from stock_balances
-  where material_id = alvo.id
-    and warehouse_id = deposito_do_tipo(alvo.organization_id, 'CENTRAL');
+  select coalesce(saldo_central, 0) into gravado from materials where id = alvo.id;
+  select saldo into visto from stock_balances
+   where material_id = alvo.id and warehouse_id = deposito;
 
-  if visto is distinct from coalesce(alvo.saldo_central, 0) then
-    raise exception 'FALHOU: o saldo não voltou ao original. Esperado %, encontrado %.',
-      coalesce(alvo.saldo_central, 0), visto;
+  if visto is distinct from gravado then
+    raise exception 'FALHOU: o saldo não voltou ao original. A coluna tem %, o depósito tem %.', gravado, visto;
   end if;
 
   -- E o conjunto todo continua batendo material a material.
