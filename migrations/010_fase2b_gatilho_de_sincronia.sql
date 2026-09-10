@@ -27,12 +27,13 @@
 --  a migração, e o banco real a reprovou por arredondamento. Réplica infiel
 --  testa outro sistema.
 --
---  Foram exercitadas as operações que o sistema faz hoje — entrada na Central, consumo na Obra, remessa, ajuste por contagem, saldo
---  indo a zero, saldo ficando negativo, unificação, criação e exclusão de
---  material. Em todas, o espelho acompanhou. Também foi conferido que:
+--  Foram exercitadas as operações que o sistema faz hoje — entrada na
+--  Central, consumo na Obra, remessa, ajuste por contagem, saldo indo a zero,
+--  saldo ficando negativo, unificação, criação e exclusão de material. Em
+--  todas, o espelho acompanhou. Também foi conferido que:
 --    - excluir material não deixa saldo órfão;
 --    - renomear material NÃO reescreve o espelho à toa;
---    - o rollback tira o gatilho e não encosta no saldo real.
+--    - o rollback tira o gatilho e não encosta no saldo real;
 --    - pedindo 987654.321, a coluna guarda 987654.32 e o espelho guarda o
 --      mesmo — o espelho copia o que a coluna aceitou, não o que foi pedido.
 --
