@@ -10,7 +10,7 @@ import { supabaseServer } from '../lib/supabaseServer';
 import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants';
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
 import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
-import { RLS_ATIVO, scopedDb } from './tenant';
+import { scopedDb, type ScopedDb } from './tenant';
 
 /**
  * Tabela de identidades DO ESTOQUE. Antes o login vinha de `users`, que é
@@ -82,6 +82,8 @@ declare global {
   namespace Express {
     interface Request {
       user?: AuthedUser;
+      /** Acesso a dados já preso à organização da sessão. Ver withTenant. */
+      db?: ScopedDb;
     }
   }
 }
@@ -97,6 +99,24 @@ function authenticate(req: express.Request, res: express.Response, next: express
   } catch {
     return res.status(401).json({ error: 'Token inválido ou expirado.' });
   }
+}
+
+/**
+ * Prende o acesso a dados à organização da sessão.
+ *
+ * Vem depois de authenticate porque depende de req.user. A partir daqui, a
+ * rota usa `req.db` e não precisa lembrar de filtrar por organização — nem
+ * consegue esquecer, porque não tem outro caminho para o banco.
+ */
+function withTenant(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const organizationId = req.user?.organization_id;
+  if (!organizationId) {
+    // Token antigo, emitido antes da Fase 1b. Melhor exigir novo login do que
+    // atender a requisição sem saber a que organização ela pertence.
+    return res.status(401).json({ error: 'Sessão desatualizada. Entre novamente.' });
+  }
+  req.db = scopedDb(organizationId);
+  next();
 }
 
 function requireRole(allowed: string[]) {
@@ -337,7 +357,7 @@ export function createApp() {
   });
 
   // --------------------------- DATA ---------------------------
-  app.get('/api/data', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.get('/api/data', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       // Toda leitura desta rota já nasce presa à organização da sessão.
       const db = scopedDb(req.user!.organization_id);
@@ -352,7 +372,7 @@ export function createApp() {
             .order('id', { ascending: false }),
         ),
         // Sem filtro de CLIENTE: esta tabela só tem gente do estoque.
-        db.from(ESTOQUE_USERS).select('id, nome, matricula, role'),
+        req.db!.from(ESTOQUE_USERS).select('id, nome, matricula, role'),
       ]);
 
       if (materialsRes.error) throw materialsRes.error;
@@ -369,7 +389,7 @@ export function createApp() {
   });
 
   // --------------------------- MATERIALS CRUD (admin) ---------------------------
-  app.post('/api/materials', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.post('/api/materials', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { nome, unidade_medida, qtd_volumes, fator_multiplicador, estoque_minimo, categoria } = req.body || {};
       if (!nome || !unidade_medida || qtd_volumes == null || fator_multiplicador == null || estoque_minimo == null) {
@@ -378,7 +398,7 @@ export function createApp() {
 
       const saldo_central = Number(qtd_volumes) * Number(fator_multiplicador);
 
-      const { data: material, error } = await supabaseServer
+      const { data: material, error } = await req.db!
         .from('materials')
         .insert({
           nome,
@@ -395,7 +415,7 @@ export function createApp() {
 
       if (error) throw error;
 
-      await supabaseServer.from('material_movements').insert({
+      await req.db!.from('material_movements').insert({
         material_id: material.id,
         tipo_operacao: 'ENTRADA_CENTRAL',
         quantidade: saldo_central,
@@ -410,7 +430,7 @@ export function createApp() {
     }
   });
 
-  app.put('/api/materials/:id', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.put('/api/materials/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { id } = req.params;
       const { nome, categoria, unidade_medida, estoque_minimo, fator_multiplicador } = req.body || {};
@@ -422,7 +442,7 @@ export function createApp() {
       if (estoque_minimo !== undefined) updates.estoque_minimo = estoque_minimo;
       if (fator_multiplicador !== undefined) updates.fator_multiplicador = fator_multiplicador;
 
-      const { data, error } = await supabaseServer
+      const { data, error } = await req.db!
         .from('materials')
         .update(updates)
         .eq('id', id)
@@ -437,11 +457,11 @@ export function createApp() {
     }
   });
 
-  app.delete('/api/materials/:id', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.delete('/api/materials/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { id } = req.params;
 
-      const { data: material, error: fetchError } = await supabaseServer
+      const { data: material, error: fetchError } = await req.db!
         .from('materials')
         .select('*')
         .eq('id', id)
@@ -449,19 +469,19 @@ export function createApp() {
 
       if (fetchError || !material) return res.status(404).json({ error: 'Material não encontrado.' });
 
-      const { data: relatedMovements } = await supabaseServer
+      const { data: relatedMovements } = await req.db!
         .from('material_movements')
         .select('id, justificativa')
         .eq('material_id', id);
 
       for (const mov of relatedMovements || []) {
-        await supabaseServer
+        await req.db!
           .from('material_movements')
           .update({ material_id: null, justificativa: `[${material.nome}] ${mov.justificativa || ''}`.trim() })
           .eq('id', mov.id);
       }
 
-      await supabaseServer.from('material_movements').insert({
+      await req.db!.from('material_movements').insert({
         material_id: null,
         tipo_operacao: 'EXCLUSÃO',
         quantidade: material.saldo_central,
@@ -469,7 +489,7 @@ export function createApp() {
         justificativa: `EXCLUSÃO DO MATERIAL: O material '${material.nome}' (Saldo em estoque era de ${material.saldo_central} ${material.unidade_medida}) foi excluído do sistema permanentemente por ${req.user!.nome}.`,
       });
 
-      const { error: deleteError } = await supabaseServer.from('materials').delete().eq('id', id);
+      const { error: deleteError } = await req.db!.from('materials').delete().eq('id', id);
       if (deleteError) throw deleteError;
 
       res.json({ success: true });
@@ -480,7 +500,7 @@ export function createApp() {
   });
 
   // --------------------------- EDIÇÃO EM LOTE ---------------------------
-  app.patch('/api/materials/bulk-minimo', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.patch('/api/materials/bulk-minimo', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { ids, estoque_minimo } = req.body || {};
       if (!Array.isArray(ids) || ids.length === 0) {
@@ -491,7 +511,7 @@ export function createApp() {
         return res.status(400).json({ error: 'Informe um estoque mínimo válido.' });
       }
 
-      const { error } = await supabaseServer
+      const { error } = await req.db!
         .from('materials')
         .update({ estoque_minimo: minimo, updated_at: new Date().toISOString() })
         .in('id', ids);
@@ -505,7 +525,7 @@ export function createApp() {
   });
 
   // --------------------------- UNIFICAR MATERIAIS ---------------------------
-  app.post('/api/materials/merge', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.post('/api/materials/merge', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { targetId, sourceIds } = req.body || {};
       const sources: number[] = Array.isArray(sourceIds) ? sourceIds.filter((id) => id !== targetId) : [];
@@ -513,7 +533,7 @@ export function createApp() {
         return res.status(400).json({ error: 'Selecione um material principal e ao menos mais um para unificar.' });
       }
 
-      const { data: allSelected, error: fetchError } = await supabaseServer
+      const { data: allSelected, error: fetchError } = await req.db!
         .from('materials')
         .select('*')
         .in('id', [targetId, ...sources]);
@@ -522,51 +542,51 @@ export function createApp() {
         return res.status(404).json({ error: 'Um ou mais materiais selecionados não foram encontrados.' });
       }
 
-      const target = allSelected.find((m) => m.id === targetId)!;
-      const donors = allSelected.filter((m) => m.id !== targetId);
+      const target = allSelected.find((m: any) => m.id === targetId)!;
+      const donors = allSelected.filter((m: any) => m.id !== targetId);
 
-      const unidadesDiferentes = donors.some((d) => d.unidade_medida !== target.unidade_medida);
+      const unidadesDiferentes = donors.some((d: any) => d.unidade_medida !== target.unidade_medida);
       if (unidadesDiferentes) {
         return res.status(400).json({
           error: `As unidades de medida não coincidem (${target.unidade_medida} vs. outras). Ajuste antes de unificar.`,
         });
       }
 
-      const somaCentral = donors.reduce((s, d) => s + Number(d.saldo_central), 0);
-      const somaObra = donors.reduce((s, d) => s + Number(d.saldo_obra), 0);
+      const somaCentral = donors.reduce((s: number, d: any) => s + Number(d.saldo_central), 0);
+      const somaObra = donors.reduce((s: number, d: any) => s + Number(d.saldo_obra), 0);
       const novoSaldoCentral = Number(target.saldo_central) + somaCentral;
       const novoSaldoObra = Number(target.saldo_obra) + somaObra;
 
-      const { error: updateError } = await supabaseServer
+      const { error: updateError } = await req.db!
         .from('materials')
         .update({ saldo_central: novoSaldoCentral, saldo_obra: novoSaldoObra, updated_at: new Date().toISOString() })
         .eq('id', targetId);
       if (updateError) throw updateError;
 
       if (somaCentral !== 0 || somaObra !== 0) {
-        await supabaseServer.from('material_movements').insert({
+        await req.db!.from('material_movements').insert({
           material_id: targetId,
           tipo_operacao: 'UNIFICACAO',
           quantidade: somaCentral + somaObra,
           funcionario_matricula: req.user!.matricula,
-          justificativa: `Unificação: incorporou o saldo de ${donors.map((d) => `'${d.nome}'`).join(', ')} (Central +${somaCentral}, Obra +${somaObra}).`,
+          justificativa: `Unificação: incorporou o saldo de ${donors.map((d: any) => `'${d.nome}'`).join(', ')} (Central +${somaCentral}, Obra +${somaObra}).`,
         });
       }
 
       for (const donor of donors) {
-        const { data: relatedMovements } = await supabaseServer
+        const { data: relatedMovements } = await req.db!
           .from('material_movements')
           .select('id, justificativa')
           .eq('material_id', donor.id);
 
         for (const mov of relatedMovements || []) {
-          await supabaseServer
+          await req.db!
             .from('material_movements')
             .update({ material_id: null, justificativa: `[${donor.nome}] ${mov.justificativa || ''}`.trim() })
             .eq('id', mov.id);
         }
 
-        await supabaseServer.from('material_movements').insert({
+        await req.db!.from('material_movements').insert({
           material_id: null,
           tipo_operacao: 'EXCLUSÃO',
           quantidade: donor.saldo_central + donor.saldo_obra,
@@ -574,7 +594,7 @@ export function createApp() {
           justificativa: `UNIFICAÇÃO: o material '${donor.nome}' foi unificado com '${target.nome}' e removido do sistema por ${req.user!.nome}.`,
         });
 
-        await supabaseServer.from('materials').delete().eq('id', donor.id);
+        await req.db!.from('materials').delete().eq('id', donor.id);
       }
 
       res.json({ success: true, targetId, novoSaldoCentral, novoSaldoObra });
@@ -585,7 +605,7 @@ export function createApp() {
   });
 
   // --------------------------- MOVEMENTS ---------------------------
-  app.post('/api/materials/:id/movement', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.post('/api/materials/:id/movement', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       const { id } = req.params;
       const { tipo_operacao, quantidade, justificativa } = req.body || {};
@@ -600,7 +620,7 @@ export function createApp() {
         return res.status(403).json({ error: 'Você não tem permissão para esta operação.' });
       }
 
-      const { data: material, error: fetchError } = await supabaseServer
+      const { data: material, error: fetchError } = await req.db!
         .from('materials')
         .select('*')
         .eq('id', id)
@@ -648,14 +668,14 @@ export function createApp() {
         return res.status(400).json({ error: 'A operação resultaria em saldo negativo.' });
       }
 
-      const { error: updateError } = await supabaseServer
+      const { error: updateError } = await req.db!
         .from('materials')
         .update({ saldo_central: novoSaldoCentral, saldo_obra: novoSaldoObra, updated_at: new Date().toISOString() })
         .eq('id', id);
 
       if (updateError) throw updateError;
 
-      await supabaseServer.from('material_movements').insert({
+      await req.db!.from('material_movements').insert({
         material_id: id,
         tipo_operacao,
         quantidade: q,
@@ -708,7 +728,7 @@ export function createApp() {
   });
 
   // --------------------------- RECONTAGEM (ajuste em lote) ---------------------------
-  app.post('/api/materials/bulk-recount', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.post('/api/materials/bulk-recount', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       const { location, counts } = req.body || {};
       if (location !== 'CENTRAL' && location !== 'OBRA') {
@@ -730,7 +750,7 @@ export function createApp() {
         const contagem = Number(entry?.contagem);
         if (materialId == null || Number.isNaN(contagem)) continue;
 
-        const { data: material } = await supabaseServer.from('materials').select('*').eq('id', materialId).single();
+        const { data: material } = await req.db!.from('materials').select('*').eq('id', materialId).single();
         if (!material) continue;
 
         const saldoAtual = location === 'CENTRAL' ? Number(material.saldo_central) : Number(material.saldo_obra);
@@ -741,13 +761,13 @@ export function createApp() {
         const novoSaldoCentral = location === 'CENTRAL' ? contagem : Number(material.saldo_central);
         const novoSaldoObra = location === 'OBRA' ? contagem : Number(material.saldo_obra);
 
-        const { error: updateError } = await supabaseServer
+        const { error: updateError } = await req.db!
           .from('materials')
           .update({ saldo_central: novoSaldoCentral, saldo_obra: novoSaldoObra, updated_at: new Date().toISOString() })
           .eq('id', materialId);
         if (updateError) continue;
 
-        await supabaseServer.from('material_movements').insert({
+        await req.db!.from('material_movements').insert({
           material_id: materialId,
           tipo_operacao,
           quantidade: diferenca,
@@ -806,8 +826,10 @@ export function createApp() {
   const TICKET_STATUSES = ['ABERTO', 'EM_ANALISE', 'RESOLVIDO', 'RECUSADO'];
   const TICKET_PRIORITIES = ['BAIXA', 'NORMAL', 'ALTA'];
 
-  async function loadTickets(onlyMatricula?: string) {
-    let query = supabaseServer
+  // Recebe o acessor com escopo em vez de alcançar o banco por conta própria:
+  // é o que garante que um helper não escape do isolamento da rota.
+  async function loadTickets(db: ScopedDb, onlyMatricula?: string) {
+    let query = db
       .from('support_tickets')
       .select('*, materiais:support_ticket_materials(id, material_id, material_nome)')
       .order('created_at', { ascending: false });
@@ -817,10 +839,10 @@ export function createApp() {
     return data || [];
   }
 
-  app.get('/api/support', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.get('/api/support', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       const isAdmin = ADMIN_ROLES.includes(req.user!.role);
-      res.json({ tickets: await loadTickets(isAdmin ? undefined : req.user!.matricula) });
+      res.json({ tickets: await loadTickets(req.db!, isAdmin ? undefined : req.user!.matricula) });
     } catch (err: any) {
       if (isMissingSupportTable(err)) return res.status(503).json({ error: SETUP_ERROR, setup_required: true });
       console.error('[GET /api/support] erro:', err.message);
@@ -828,16 +850,16 @@ export function createApp() {
     }
   });
 
-  app.get('/api/support/:id/comments', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.get('/api/support/:id/comments', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const { data: ticket } = await supabaseServer.from('support_tickets').select('autor_matricula').eq('id', id).maybeSingle();
+      const { data: ticket } = await req.db!.from('support_tickets').select('autor_matricula').eq('id', id).maybeSingle();
       if (!ticket) return res.status(404).json({ error: 'Chamado não encontrado.' });
       if (!ADMIN_ROLES.includes(req.user!.role) && ticket.autor_matricula !== req.user!.matricula) {
         return res.status(403).json({ error: 'Você não tem acesso a este chamado.' });
       }
 
-      const { data, error } = await supabaseServer
+      const { data, error } = await req.db!
         .from('support_ticket_comments')
         .select('*')
         .eq('ticket_id', id)
@@ -850,7 +872,7 @@ export function createApp() {
     }
   });
 
-  app.post('/api/support', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.post('/api/support', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       const { tipo, assunto, descricao, prioridade, material_ids } = req.body || {};
 
@@ -868,7 +890,7 @@ export function createApp() {
         return res.status(400).json({ error: 'Selecione ao menos um material.' });
       }
 
-      const { data: ticket, error } = await supabaseServer
+      const { data: ticket, error } = await req.db!
         .from('support_tickets')
         .insert({
           tipo,
@@ -884,13 +906,13 @@ export function createApp() {
       if (error) throw error;
 
       if (ids.length > 0) {
-        const { data: mats } = await supabaseServer.from('materials').select('id, nome').in('id', ids);
+        const { data: mats } = await req.db!.from('materials').select('id, nome').in('id', ids);
         const rows = (mats || []).map((m: any) => ({
           ticket_id: ticket.id,
           material_id: m.id,
           material_nome: m.nome, // snapshot: sobrevive a exclusão/unificação
         }));
-        if (rows.length > 0) await supabaseServer.from('support_ticket_materials').insert(rows);
+        if (rows.length > 0) await req.db!.from('support_ticket_materials').insert(rows);
       }
 
       res.status(201).json({ ticket });
@@ -901,7 +923,7 @@ export function createApp() {
     }
   });
 
-  app.post('/api/support/:id/comments', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.post('/api/support/:id/comments', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const { mensagem } = req.body || {};
@@ -909,13 +931,13 @@ export function createApp() {
         return res.status(400).json({ error: 'Escreva uma mensagem.' });
       }
 
-      const { data: ticket } = await supabaseServer.from('support_tickets').select('autor_matricula').eq('id', id).maybeSingle();
+      const { data: ticket } = await req.db!.from('support_tickets').select('autor_matricula').eq('id', id).maybeSingle();
       if (!ticket) return res.status(404).json({ error: 'Chamado não encontrado.' });
       if (!ADMIN_ROLES.includes(req.user!.role) && ticket.autor_matricula !== req.user!.matricula) {
         return res.status(403).json({ error: 'Você não tem acesso a este chamado.' });
       }
 
-      const { data, error } = await supabaseServer
+      const { data, error } = await req.db!
         .from('support_ticket_comments')
         .insert({
           ticket_id: id,
@@ -928,7 +950,7 @@ export function createApp() {
       if (error) throw error;
 
       // Responder reabre um chamado já encerrado — a conversa continua viva.
-      await supabaseServer.from('support_tickets').update({ status: 'EM_ANALISE' }).eq('id', id).in('status', ['RESOLVIDO', 'RECUSADO']);
+      await req.db!.from('support_tickets').update({ status: 'EM_ANALISE' }).eq('id', id).in('status', ['RESOLVIDO', 'RECUSADO']);
 
       res.status(201).json({ comment: data });
     } catch (err: any) {
@@ -937,7 +959,7 @@ export function createApp() {
     }
   });
 
-  app.patch('/api/support/:id', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.patch('/api/support/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const { status, prioridade, resolucao } = req.body || {};
@@ -962,7 +984,7 @@ export function createApp() {
 
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar.' });
 
-      const { data, error } = await supabaseServer.from('support_tickets').update(patch).eq('id', id).select().single();
+      const { data, error } = await req.db!.from('support_tickets').update(patch).eq('id', id).select().single();
       if (error) throw error;
       res.json({ ticket: data });
     } catch (err: any) {
@@ -983,9 +1005,9 @@ export function createApp() {
     return !!role && MANAGEABLE_ROLES.includes(role);
   }
 
-  app.get('/api/users', authenticate, requireRole(ADMIN_ROLES), async (_req, res) => {
+  app.get('/api/users', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const { data, error } = await supabaseServer
+      const { data, error } = await req.db!
         .from(ESTOQUE_USERS)
         .select(`${USER_COLUMNS}, senha`)
         .in('role', MANAGEABLE_ROLES)
@@ -1004,7 +1026,7 @@ export function createApp() {
     }
   });
 
-  app.post('/api/users', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.post('/api/users', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { nome, matricula, email, role, senha } = req.body || {};
       if (!nome || !matricula || !senha) return res.status(400).json({ error: 'Informe nome, matrícula e senha.' });
@@ -1013,10 +1035,10 @@ export function createApp() {
         return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
       }
 
-      const { data: existing } = await supabaseServer.from(ESTOQUE_USERS).select('id').eq('matricula', matricula).maybeSingle();
+      const { data: existing } = await req.db!.from(ESTOQUE_USERS).select('id').eq('matricula', matricula).maybeSingle();
       if (existing) return res.status(409).json({ error: 'Já existe um usuário com esta matrícula.' });
 
-      const { data, error } = await supabaseServer
+      const { data, error } = await req.db!
         .from(ESTOQUE_USERS)
         .insert({
           nome: String(nome).trim(),
@@ -1036,12 +1058,12 @@ export function createApp() {
     }
   });
 
-  app.patch('/api/users/:id', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.patch('/api/users/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const id = Number(req.params.id);
       const { nome, email, role, senha } = req.body || {};
 
-      const { data: target } = await supabaseServer.from(ESTOQUE_USERS).select('id, role, matricula').eq('id', id).maybeSingle();
+      const { data: target } = await req.db!.from(ESTOQUE_USERS).select('id, role, matricula').eq('id', id).maybeSingle();
       if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: 'Este usuário pertence a outro sistema e não pode ser editado aqui.' });
@@ -1067,7 +1089,7 @@ export function createApp() {
 
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar.' });
 
-      const { data, error } = await supabaseServer.from(ESTOQUE_USERS).update(patch).eq('id', id).select(USER_COLUMNS).single();
+      const { data, error } = await req.db!.from(ESTOQUE_USERS).update(patch).eq('id', id).select(USER_COLUMNS).single();
       if (error) throw error;
       res.json({ user: data });
     } catch (err: any) {
@@ -1076,12 +1098,12 @@ export function createApp() {
     }
   });
 
-  app.delete('/api/users/:id', authenticate, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.delete('/api/users/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (id === req.user!.id) return res.status(400).json({ error: 'Você não pode excluir a própria conta.' });
 
-      const { data: target } = await supabaseServer.from(ESTOQUE_USERS).select('id, role').eq('id', id).maybeSingle();
+      const { data: target } = await req.db!.from(ESTOQUE_USERS).select('id, role').eq('id', id).maybeSingle();
       if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: 'Este usuário pertence a outro sistema e não pode ser excluído aqui.' });
@@ -1089,14 +1111,14 @@ export function createApp() {
 
       // Não deixa o sistema ficar sem administrador.
       if (ADMIN_ROLES.includes(target.role)) {
-        const { count } = await supabaseServer
+        const { count } = await req.db!
           .from(ESTOQUE_USERS)
           .select('id', { count: 'exact', head: true })
           .in('role', ADMIN_ROLES);
         if ((count ?? 0) <= 1) return res.status(400).json({ error: 'Este é o último administrador — não é possível excluí-lo.' });
       }
 
-      const { error } = await supabaseServer.from(ESTOQUE_USERS).delete().eq('id', id);
+      const { error } = await req.db!.from(ESTOQUE_USERS).delete().eq('id', id);
       if (error) throw error;
       res.json({ success: true });
     } catch (err: any) {

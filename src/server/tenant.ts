@@ -97,17 +97,21 @@ export function scopedDb(organizationId: string) {
       const base = client.from(table);
       const daOrg = TABELAS_DA_ORGANIZACAO.has(table);
 
+      // O retorno é `any` de propósito. O cliente do Supabase aqui não tem
+      // schema tipado, então as consultas originais já devolviam `any`; tipar
+      // o wrapper estreitaria para uma união com GenericStringError e faria as
+      // rotas pararem de compilar sem ganhar segurança real.
       return {
-        select: (colunas = '*', opcoes?: any) => {
+        select: (colunas = '*', opcoes?: any): any => {
           const q = base.select(colunas, opcoes);
           return daOrg ? q.eq('organization_id', organizationId) : q;
         },
-        insert: (linhas: any) => base.insert(daOrg ? comOrganizacao(linhas, organizationId) : linhas),
-        update: (patch: any) => {
+        insert: (linhas: any): any => base.insert(daOrg ? comOrganizacao(linhas, organizationId) : linhas),
+        update: (patch: any): any => {
           const q = base.update(patch);
           return daOrg ? q.eq('organization_id', organizationId) : q;
         },
-        delete: () => {
+        delete: (): any => {
           const q = base.delete();
           return daOrg ? q.eq('organization_id', organizationId) : q;
         },
