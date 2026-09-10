@@ -26,6 +26,8 @@
 --    - os 2 saldos negativos foram copiados como estão, sem "corrigir";
 --    - só EXCLUSÃO e UNIFICACAO ficaram sem depósito;
 --    - o rollback devolve o banco ao estado anterior sem perder saldo.
+--    - com um material de outra organização, ela se recusa a rodar antes de
+--      criar qualquer coisa.
 --
 --  E, o que mais importa, que a conferência SABE REPROVAR: rodando esta
 --  migração com o backfill adulterado (Obra recebendo o saldo da Central),
@@ -34,6 +36,43 @@
 --
 --  Pré-requisito: migração 004 (organizations).
 -- =============================================================================
+
+-- -----------------------------------------------------------------------------
+--  0. Pré-condições
+--
+--  Os depósitos abaixo nascem presos à organização São Severino, que hoje é a
+--  única. O backfill, porém, copia a organização de cada material. Se algum dia
+--  existir material de outra conta antes desta migração rodar, o saldo dele
+--  apontaria para o depósito de OUTRA empresa — e ninguém perceberia, porque o
+--  total continuaria batendo certinho.
+--
+--  Então falha aqui, alto e cedo, antes de criar qualquer coisa. Quem vier
+--  depois precisa criar unidade e depósito por organização, não copiar isto.
+-- -----------------------------------------------------------------------------
+do $$
+declare
+  fora    int;
+  exemplo text;
+begin
+  if to_regclass('organizations') is null then
+    raise exception 'organizations não existe — rode a migração 004 antes.';
+  end if;
+
+  select count(*) into fora
+  from materials
+  where organization_id is distinct from '5e7e0000-0000-4000-8000-000000000001';
+
+  if fora > 0 then
+    select nome into exemplo
+    from materials
+    where organization_id is distinct from '5e7e0000-0000-4000-8000-000000000001'
+    limit 1;
+
+    raise exception 'FALHOU: % material(is) fora da São Severino (ex.: %). Esta migração só cria depósito para uma organização — crie unidade e depósito para cada conta antes de rodar.',
+      fora, exemplo;
+  end if;
+end $$;
+
 
 -- -----------------------------------------------------------------------------
 --  1. Unidade — a filial. "Nova Cruz", "Natal".
