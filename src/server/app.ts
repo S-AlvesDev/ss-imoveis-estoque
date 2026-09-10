@@ -234,6 +234,9 @@ export function createApp() {
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
+      // Acesso privilegiado de propósito: o login precisa encontrar a pessoa
+      // ANTES de existir uma organização no contexto. Rotas de autenticação
+      // usam service_role; rotas de dados usam scopedDb.
       const { data: userRow, error } = await supabaseServer
         .from(ESTOQUE_USERS)
         .select('*')
