@@ -10,6 +10,7 @@ import { supabaseServer } from '../lib/supabaseServer';
 import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants';
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
 import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
+import { RLS_ATIVO, scopedDb } from './tenant';
 
 /**
  * Tabela de identidades DO ESTOQUE. Antes o login vinha de `users`, que é
@@ -73,6 +74,8 @@ interface AuthedUser {
   nome: string;
   matricula: string;
   role: string;
+  /** Organização dona dos dados que esta sessão enxerga. */
+  organization_id: string;
 }
 
 declare global {
@@ -262,11 +265,19 @@ export function createApp() {
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
+      if (!userRow.organization_id) {
+        // Conta sem organização não tem escopo de dados definido. Recusar é
+        // melhor do que deixar entrar sem saber o que ela pode enxergar.
+        console.error('[Login] conta sem organization_id', { matricula: userRow.matricula });
+        return res.status(403).json({ error: 'Conta sem organização vinculada. Procure a gestão.' });
+      }
+
       const authedUser: AuthedUser = {
         id: userRow.id,
         nome: userRow.nome,
         matricula: userRow.matricula,
         role,
+        organization_id: userRow.organization_id,
       };
 
       // Aguardado de propósito: em serverless a função pode ser congelada assim
@@ -323,19 +334,22 @@ export function createApp() {
   });
 
   // --------------------------- DATA ---------------------------
-  app.get('/api/data', authenticate, requireRole(ALL_INVENTORY_ROLES), async (_req, res) => {
+  app.get('/api/data', authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
+      // Toda leitura desta rota já nasce presa à organização da sessão.
+      const db = scopedDb(req.user!.organization_id);
+
       const [materialsRes, movements, staffRes] = await Promise.all([
-        supabaseServer.from('materials').select('*').order('nome', { ascending: true }),
+        db.from('materials').select('*').order('nome', { ascending: true }),
         fetchAllRows(() =>
-          supabaseServer
+          db
             .from('material_movements')
             .select('*, materials(nome)')
             .order('created_at', { ascending: false })
             .order('id', { ascending: false }),
         ),
         // Sem filtro de CLIENTE: esta tabela só tem gente do estoque.
-        supabaseServer.from(ESTOQUE_USERS).select('id, nome, matricula, role'),
+        db.from(ESTOQUE_USERS).select('id, nome, matricula, role'),
       ]);
 
       if (materialsRes.error) throw materialsRes.error;

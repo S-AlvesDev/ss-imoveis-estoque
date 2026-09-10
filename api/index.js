@@ -4,7 +4,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
-import jwt from "jsonwebtoken";
+import jwt2 from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import nodemailer from "nodemailer";
 
@@ -48,6 +48,79 @@ function stockStatus(m, scope = "empresa") {
 function needsPurchase(m) {
   const s = stockStatus(m, "empresa");
   return s === "RUPTURA" || s === "ABAIXO";
+}
+
+// src/server/tenant.ts
+import { createClient as createClient2 } from "@supabase/supabase-js";
+import jwt from "jsonwebtoken";
+var SUPABASE_URL = process.env.SUPABASE_URL || "";
+var SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+var ANON_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "";
+var SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || "";
+var RLS_ATIVO = Boolean(SUPABASE_JWT_SECRET && ANON_KEY);
+var TABELAS_DA_ORGANIZACAO = /* @__PURE__ */ new Set([
+  "materials",
+  "material_movements",
+  "support_tickets",
+  "support_ticket_materials",
+  "support_ticket_comments",
+  "estoque_users"
+]);
+var clientesPorOrg = /* @__PURE__ */ new Map();
+function clientePara(organizationId) {
+  const cache = clientesPorOrg.get(organizationId);
+  if (cache) return cache;
+  let client;
+  if (RLS_ATIVO) {
+    const token = jwt.sign(
+      { role: "authenticated", organization_id: organizationId },
+      SUPABASE_JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+    client = createClient2(SUPABASE_URL, ANON_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+  } else {
+    client = createClient2(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false }
+    });
+  }
+  clientesPorOrg.set(organizationId, client);
+  return client;
+}
+function comOrganizacao(payload, organizationId) {
+  const marcar = (row) => ({ ...row, organization_id: organizationId });
+  return Array.isArray(payload) ? payload.map(marcar) : marcar(payload);
+}
+function scopedDb(organizationId) {
+  if (!organizationId) {
+    throw new Error("[tenant] organiza\xE7\xE3o ausente \u2014 consulta recusada.");
+  }
+  const client = clientePara(organizationId);
+  return {
+    /** Escapatória explícita, para o que é global de verdade (ex.: organizations). */
+    raw: client,
+    from(table) {
+      const base = client.from(table);
+      const daOrg = TABELAS_DA_ORGANIZACAO.has(table);
+      return {
+        select: (colunas = "*", opcoes) => {
+          const q = base.select(colunas, opcoes);
+          return daOrg ? q.eq("organization_id", organizationId) : q;
+        },
+        insert: (linhas) => base.insert(daOrg ? comOrganizacao(linhas, organizationId) : linhas),
+        update: (patch) => {
+          const q = base.update(patch);
+          return daOrg ? q.eq("organization_id", organizationId) : q;
+        },
+        delete: () => {
+          const q = base.delete();
+          return daOrg ? q.eq("organization_id", organizationId) : q;
+        }
+      };
+    }
+  };
 }
 
 // src/server/app.ts
@@ -97,7 +170,7 @@ function authenticate(req, res, next) {
   const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: "Token de acesso ausente." });
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
+    const payload = jwt2.verify(token, JWT_SECRET);
     req.user = payload;
     next();
   } catch {
@@ -195,11 +268,16 @@ function createApp() {
         console.warn("[Login] falha: senha incorreta", { matricula: userRow.matricula, ip: req.ip });
         return res.status(401).json({ error: "Credenciais inv\xE1lidas." });
       }
+      if (!userRow.organization_id) {
+        console.error("[Login] conta sem organization_id", { matricula: userRow.matricula });
+        return res.status(403).json({ error: "Conta sem organiza\xE7\xE3o vinculada. Procure a gest\xE3o." });
+      }
       const authedUser = {
         id: userRow.id,
         nome: userRow.nome,
         matricula: userRow.matricula,
-        role
+        role,
+        organization_id: userRow.organization_id
       };
       try {
         const { error: acessoError } = await supabaseServer.from(ESTOQUE_USERS).update({ ultimo_acesso: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userRow.id);
@@ -220,7 +298,7 @@ function createApp() {
           console.warn("[Login] falha ao proteger senha legada:", upgradeErr?.message);
         }
       }
-      const token = jwt.sign(authedUser, JWT_SECRET, { expiresIn: "12h" });
+      const token = jwt2.sign(authedUser, JWT_SECRET, { expiresIn: "12h" });
       res.json({ user: authedUser, token });
     } catch (err) {
       console.error("[Login] erro:", err.message);
@@ -230,15 +308,16 @@ function createApp() {
   app.get("/api/me", authenticate, (req, res) => {
     res.json({ user: req.user });
   });
-  app.get("/api/data", authenticate, requireRole(ALL_INVENTORY_ROLES), async (_req, res) => {
+  app.get("/api/data", authenticate, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
+      const db = scopedDb(req.user.organization_id);
       const [materialsRes, movements, staffRes] = await Promise.all([
-        supabaseServer.from("materials").select("*").order("nome", { ascending: true }),
+        db.from("materials").select("*").order("nome", { ascending: true }),
         fetchAllRows(
-          () => supabaseServer.from("material_movements").select("*, materials(nome)").order("created_at", { ascending: false }).order("id", { ascending: false })
+          () => db.from("material_movements").select("*, materials(nome)").order("created_at", { ascending: false }).order("id", { ascending: false })
         ),
         // Sem filtro de CLIENTE: esta tabela só tem gente do estoque.
-        supabaseServer.from(ESTOQUE_USERS).select("id, nome, matricula, role")
+        db.from(ESTOQUE_USERS).select("id, nome, matricula, role")
       ]);
       if (materialsRes.error) throw materialsRes.error;
       res.json({
