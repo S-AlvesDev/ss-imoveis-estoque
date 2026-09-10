@@ -28,6 +28,8 @@
 --    - o rollback devolve o banco ao estado anterior sem perder saldo.
 --    - com um material de outra organização, ela se recusa a rodar antes de
 --      criar qualquer coisa.
+--    - lendo como um papel comum, a São Severino vê as 620 linhas, outra
+--      organização vê 0 e sem token vê 0.
 --
 --  E, o que mais importa, que a conferência SABE REPROVAR: rodando esta
 --  migração com o backfill adulterado (Obra recebendo o saldo da Central),
@@ -212,6 +214,37 @@ begin
 end $$;
 
 
+-- -----------------------------------------------------------------------------
+--  5. Políticas de isolamento
+--
+--  As três tabelas acima nascem com RLS ligado. Ligar RLS sem política não
+--  protege: significa ZERO linha visível pela chave anônima, e sem erro — a
+--  tela simplesmente vem vazia. Foi exatamente o que a migração 008 teve que
+--  consertar depois. Aqui já nasce junto.
+--
+--  `force row level security` faz a política valer inclusive para o dono da
+--  tabela, senão ela é ignorada justamente por quem mais acessa.
+-- -----------------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  if to_regclass('current_org_id'::text) is null
+     and not exists (select 1 from pg_proc where proname = 'current_org_id') then
+    raise exception 'current_org_id() não existe — rode a migração 004 antes.';
+  end if;
+
+  foreach t in array array['units', 'warehouses', 'stock_balances'] loop
+    execute format('alter table %I force row level security', t);
+    execute format('drop policy if exists isolamento_por_organizacao on %I', t);
+    execute format('create policy isolamento_por_organizacao on %I
+                      using (organization_id = current_org_id())
+                      with check (organization_id = current_org_id())', t);
+  end loop;
+
+  raise notice 'OK — política de isolamento criada em units, warehouses e stock_balances.';
+end $$;
+
+
 -- =============================================================================
 --  CONFERÊNCIA — a parte que importa
 -- =============================================================================
@@ -223,6 +256,7 @@ declare
   total_novo numeric;
   sem_deposito int;
   negativos int;
+  sem_politica text[];
 begin
   -- Material a material: a soma dos depósitos tem que bater com as colunas.
   select count(*) into divergentes
@@ -256,6 +290,16 @@ begin
     and tipo_operacao not in ('EXCLUSÃO', 'UNIFICACAO');
 
   select count(*) into negativos from stock_balances where saldo < 0;
+
+  -- RLS ligado sem política devolve zero linha calada. Conferir isto aqui é o
+  -- que impede a Fase 2b de encontrar uma tela vazia sem mensagem de erro.
+  select array_agg(t) into sem_politica
+  from unnest(array['units', 'warehouses', 'stock_balances']) t
+  where not exists (select 1 from pg_policies where tablename = t);
+
+  if sem_politica is not null then
+    raise exception 'FALHOU: RLS ligado e sem política em %', array_to_string(sem_politica, ', ');
+  end if;
 
   raise notice 'CONFERIDO — saldo idêntico material a material. Total: %', total_novo;
   raise notice 'Movimentações sem depósito (fora as administrativas): %', sem_deposito;
