@@ -8,6 +8,7 @@ import { Stripes } from '@/shared/ui/Stripes';
 import { Logo } from '@/shared/ui/Logo';
 import { useAuth } from '@/store/auth';
 import type { AuthUser } from '@/shared/types';
+import { CriarConta } from './CriarConta';
 
 const metrics = [
   { label: 'Materiais sob controle', value: '300+' },
@@ -19,6 +20,7 @@ export function Login() {
   const [matricula, setMatricula] = useState('');
   const [senha, setSenha] = useState('');
   const [loading, setLoading] = useState(false);
+  const [modo, setModo] = useState<'entrar' | 'criar'>('entrar');
   const setSession = useAuth((s) => s.setSession);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -145,6 +147,10 @@ export function Login() {
             <span className="font-mono text-xs font-semibold tracking-[0.2em] text-[var(--text)]">SS IMÓVEIS / ESTOQUE</span>
           </div>
 
+          {modo === 'criar' ? (
+            <CriarConta onVoltar={() => setModo('entrar')} />
+          ) : (
+            <>
           <h2 className="font-display text-3xl font-bold text-[var(--text)]">Acessar painel</h2>
           <p className="mt-1.5 text-sm text-[var(--text-muted)]">Entre com sua matrícula ou e-mail cadastrado.</p>
 
@@ -176,11 +182,20 @@ export function Login() {
             </Button>
           </form>
 
+          <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
+            Sua empresa ainda não usa o sistema?{' '}
+            <button type="button" onClick={() => setModo('criar')} className="font-semibold text-[var(--brand)] hover:underline">
+              Criar conta
+            </button>
+          </p>
+
           <div className="mt-10 flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
             <span className="h-px flex-1 bg-[var(--border)]" />
             <span className="font-mono">acesso restrito</span>
             <span className="h-px flex-1 bg-[var(--border)]" />
           </div>
+            </>
+          )}
         </motion.div>
       </div>
     </div>

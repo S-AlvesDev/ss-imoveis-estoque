@@ -278,16 +278,19 @@ export function createApp() {
       // Acesso privilegiado de propósito: o login precisa encontrar a pessoa
       // ANTES de existir uma organização no contexto. Rotas de autenticação
       // usam service_role; rotas de dados usam scopedDb.
-      const { data: userRow, error } = await supabaseServer
+      // Matrícula é única DENTRO de cada organização, não entre elas: "001"
+      // pode existir na São Severino e numa empresa que se cadastrou ontem. Por
+      // isso não dá para pegar "a" conta — pega-se as candidatas e a senha
+      // decide. E-mail, ao contrário, é único no sistema inteiro.
+      const { data: candidatas, error } = await supabaseServer
         .from(ESTOQUE_USERS)
         .select('*')
-        .or(`matricula.eq.${identificador},email.eq.${identificador}`)
-        // Sem filtro de CLIENTE: esta tabela só contém gente do estoque.
+        .or(`matricula.eq.${identificador},email.eq.${identificador.toLowerCase()}`)
         // Contas desativadas não entram.
         .eq('ativo', true)
-        .maybeSingle();
+        .limit(10);
 
-      if (error || !userRow) {
+      if (error || !candidatas || candidatas.length === 0) {
         // Nunca registrar o valor digitado: quando alguém erra o campo e digita
         // a senha aqui, nenhum usuário casa e o log guardaria a senha em claro.
         console.warn('[Login] falha: nenhuma conta para o identificador informado', {
@@ -297,16 +300,29 @@ export function createApp() {
         return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
+      // A senha escolhe entre as candidatas. Comparar com todas custa um
+      // bcrypt a mais por homônimo — e homônimo entre organizações é raro.
+      const validas: any[] = [];
+      for (const c of candidatas) {
+        if (await verifyPassword(senha, c.senha)) validas.push(c);
+      }
+
+      if (validas.length === 0) {
+        // Trilha para investigar tentativa de invasão; a senha nunca é registrada.
+        console.warn('[Login] falha: senha incorreta', { candidatas: candidatas.length, ip: req.ip });
+        return res.status(401).json({ error: 'Credenciais inválidas.' });
+      }
+      if (validas.length > 1) {
+        // Mesma matrícula e mesma senha em duas organizações. Não dá para
+        // saber qual é; deixar entrar em uma seria chutar o escopo dos dados.
+        console.error('[Login] ambíguo: mesma credencial em mais de uma organização', { ip: req.ip });
+        return res.status(401).json({ error: 'Credenciais ambíguas. Entre com o seu e-mail.' });
+      }
+      const userRow = validas[0];
+
       const role = userRow.role || (String(userRow.matricula || '').startsWith('E') ? 'ALMOXARIFE_GERAL' : null);
       if (!role || !ALL_INVENTORY_ROLES.includes(role)) {
         return res.status(403).json({ error: 'Este usuário não tem acesso ao sistema de estoque.' });
-      }
-
-      const passwordOk = await verifyPassword(senha, userRow.senha);
-      if (!passwordOk) {
-        // Trilha para investigar tentativa de invasão; a senha nunca é registrada.
-        console.warn('[Login] falha: senha incorreta', { matricula: userRow.matricula, ip: req.ip });
-        return res.status(401).json({ error: 'Credenciais inválidas.' });
       }
 
       if (!userRow.organization_id) {
@@ -370,6 +386,76 @@ export function createApp() {
     } catch (err: any) {
       console.error('[Login] erro:', err.message);
       res.status(500).json({ error: 'Erro interno ao autenticar.' });
+    }
+  });
+
+  // --------------------------- CRIAR CONTA (público) ---------------------------
+  /**
+   * Uma empresa nova entra sozinha: organização, primeira unidade, os dois
+   * depósitos dela e o responsável como administrador — tudo numa função do
+   * banco (migração 014), que faz ou tudo ou nada.
+   *
+   * É a única rota pública que cria dados. Por isso: limite apertado por IP,
+   * validação antes de qualquer custo, senha protegida aqui (bcrypt) e nunca
+   * enviada em claro ao banco, e a função confere tudo de novo por dentro.
+   */
+  const signupLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Muitas contas criadas a partir desta rede. Tente novamente em uma hora.' },
+  });
+
+  app.post('/api/signup', signupLimiter, async (req, res) => {
+    try {
+      const empresa = String(req.body?.empresa ?? '').trim();
+      const nome = String(req.body?.nome ?? '').trim();
+      const email = String(req.body?.email ?? '').trim().toLowerCase();
+      const senha = String(req.body?.senha ?? '');
+
+      if (empresa.length < 2 || empresa.length > 60) return res.status(400).json({ error: 'Informe o nome da empresa (2 a 60 caracteres).' });
+      if (nome.length < 2 || nome.length > 80) return res.status(400).json({ error: 'Informe o seu nome (2 a 80 caracteres).' });
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 120) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+      if (senha.length < MIN_PASSWORD_LENGTH) return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
+      if (senha.length > 200) return res.status(400).json({ error: 'Senha longa demais.' });
+
+      const hash = await bcrypt.hash(senha, 10);
+
+      // Chave de serviço de propósito: ainda não existe organização no contexto.
+      const { data, error } = await supabaseServer.rpc('criar_organizacao', {
+        p_empresa: empresa,
+        p_nome: nome,
+        p_email: email,
+        p_senha_hash: hash,
+      });
+
+      if (error) {
+        // A função devolve mensagens pensadas para a pessoa; só as de negócio
+        // passam. Erro de infraestrutura vira 500 genérico.
+        if (/Já existe uma conta/.test(error.message)) return res.status(409).json({ error: 'Já existe uma conta com este e-mail. Entre com ela, ou use outro e-mail.' });
+        if (error.code === '23514' || /caracteres|inválido/.test(error.message)) return res.status(400).json({ error: error.message });
+        throw error;
+      }
+
+      const criado = Array.isArray(data) ? data[0] : data;
+      if (!criado?.organization_id || !criado?.user_id) throw new Error('criar_organizacao não devolveu ids.');
+
+      // Já entra logado: ninguém cria uma conta para ver uma tela de login.
+      const authedUser: AuthedUser = {
+        id: Number(criado.user_id),
+        nome,
+        matricula: 'ADMIN',
+        role: 'ADMINISTRADOR',
+        organization_id: criado.organization_id,
+      };
+      const token = jwt.sign(authedUser, JWT_SECRET as string, { expiresIn: '12h' });
+
+      console.info('[Signup] organização criada', { slug: criado.slug, ip: req.ip });
+      res.status(201).json({ user: authedUser, token, organizacao: { slug: criado.slug, nome: empresa } });
+    } catch (err: any) {
+      console.error('[POST /api/signup] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível criar a conta agora. Tente novamente em instantes.' });
     }
   });
 
