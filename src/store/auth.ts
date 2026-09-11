@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AuthUser } from '@/shared/types';
+import { useMarca } from '@/store/marca';
 
 interface AuthState {
   user: AuthUser | null;
@@ -15,7 +16,11 @@ export const useAuth = create<AuthState>()(
       user: null,
       token: null,
       setSession: (user, token) => set({ user, token }),
-      logout: () => set({ user: null, token: null }),
+      logout: () => {
+        // A tela de login é do produto, não da organização que acabou de sair.
+        useMarca.getState().setOrganizacao(null);
+        set({ user: null, token: null });
+      },
     }),
     { name: 'estoque-auth' }
   )

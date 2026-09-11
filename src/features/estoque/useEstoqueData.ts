@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { useUnidade } from '@/store/unidade';
-import type { Acesso, Deposito, Material, MaterialMovement, NivelAcesso, StaffUser, Unidade } from '@/shared/types';
+import { useMarca } from '@/store/marca';
+import type { Acesso, Deposito, Material, MaterialMovement, NivelAcesso, Organizacao, StaffUser, Unidade } from '@/shared/types';
 import { toast } from 'sonner';
 
 /** O que o servidor devolve. Os materiais vêm com `saldos` por depósito. */
@@ -13,9 +14,10 @@ interface EstoqueResposta {
   depositos: Deposito[];
   /** O que ESTA pessoa pode, por depósito. `null` = administrador. */
   acessos: Acesso[] | null;
+  organizacao: Organizacao | null;
 }
 
-const VAZIO: EstoqueResposta = { materials: [], materialMovements: [], staff: [], unidades: [], depositos: [], acessos: null };
+const VAZIO: EstoqueResposta = { materials: [], materialMovements: [], staff: [], unidades: [], depositos: [], acessos: null, organizacao: null };
 
 /**
  * Carrega o estoque e o entrega já visto de uma unidade.
@@ -34,17 +36,20 @@ export function useEstoqueData() {
   const [loading, setLoading] = useState(true);
   const unidadeEscolhida = useUnidade((s) => s.unidadeId);
   const setUnidade = useUnidade((s) => s.setUnidade);
+  const setOrganizacao = useMarca((s) => s.setOrganizacao);
 
   const refetch = useCallback(async () => {
     try {
       const result = await api.get<EstoqueResposta>('/api/data');
       setData({ ...VAZIO, ...result });
+      // Veste a cor e o logo desta organização assim que se sabe qual é.
+      setOrganizacao(result.organizacao ?? null);
     } catch (err: any) {
       toast.error(err.message || 'Erro ao carregar dados do estoque.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setOrganizacao]);
 
   useEffect(() => {
     refetch();
@@ -124,6 +129,7 @@ export function useEstoqueData() {
     depositosDaUnidade,
     /** Nível da pessoa no Central/Obra da unidade em uso: 'OPERA', 'CONSULTA' ou null (não vê). */
     nivelEm,
+    organizacao: data.organizacao,
     loading,
     refetch,
   };

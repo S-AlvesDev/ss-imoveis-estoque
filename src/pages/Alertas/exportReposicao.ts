@@ -1,5 +1,6 @@
 import type { Material } from '@/shared/types';
 import { CATEGORIES } from '@/shared/constants';
+import { nomeDaOrganizacao } from '@/store/marca';
 import { formatNumber, stockStatus, stockTotal } from '@/features/estoque/utils';
 
 /**
@@ -51,7 +52,7 @@ export function exportReposicaoToWord(materials: Material[]) {
     <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
       <head><meta charset="utf-8"><title>Lista de Compras</title></head>
       <body style="font-family:Arial,sans-serif;">
-        <h1>Lista de Compras &mdash; Estoque SS Imóveis</h1>
+        <h1>Lista de Compras &mdash; ${nomeDaOrganizacao()}</h1>
         <p style="color:#666;font-size:12px;">
           Gerado em ${generatedAt}<br/>
           ${materials.length} material(is) abaixo do estoque mínimo da empresa (Central + Obra).<br/>

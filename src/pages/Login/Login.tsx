@@ -5,15 +5,16 @@ import { ArrowRight, Lock, User } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Field';
 import { Stripes } from '@/shared/ui/Stripes';
-import { Logo } from '@/shared/ui/Logo';
+import { MarcaProduto } from '@/shared/ui/Logo';
+import { PRODUTO } from '@/shared/produto';
 import { useAuth } from '@/store/auth';
 import type { AuthUser } from '@/shared/types';
 import { CriarConta } from './CriarConta';
 
 const metrics = [
-  { label: 'Materiais sob controle', value: '300+' },
-  { label: 'Movimentações auditadas', value: '600+' },
-  { label: 'Disponibilidade', value: '24/7' },
+  { label: 'Unidades por conta', value: '∞' },
+  { label: 'Movimentações com origem e destino', value: '100%' },
+  { label: 'Isolamento entre empresas', value: 'no banco' },
 ];
 
 export function Login() {
@@ -75,8 +76,8 @@ export function Login() {
           transition={{ duration: 0.5 }}
           className="relative z-10 flex items-center gap-2.5 text-white"
         >
-          <Logo size={36} className="rounded-full bg-white/95 p-1 shadow-lg" />
-          <span className="font-mono text-[11px] font-semibold tracking-[0.25em] text-slate-300">SS IMÓVEIS / ESTOQUE</span>
+          <MarcaProduto size={36} className="rounded-xl shadow-lg" />
+          <span className="font-display text-lg font-bold tracking-tight text-white">{PRODUTO.nome}</span>
         </motion.div>
 
         <div className="relative z-10 max-w-lg">
@@ -86,7 +87,7 @@ export function Login() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="font-mono text-xs font-semibold uppercase tracking-[0.3em] text-[var(--brand)]"
           >
-            Gestão de Almoxarifado
+            {PRODUTO.slogan}
           </motion.p>
           <motion.h1
             initial={{ opacity: 0, y: 16 }}
@@ -104,8 +105,7 @@ export function Login() {
             transition={{ duration: 0.6, delay: 0.26 }}
             className="mt-5 max-w-md text-sm leading-relaxed text-slate-400"
           >
-            Controle de central e obra, transferências rastreadas, auditoria completa de movimentações e alertas
-            automáticos de estoque crítico — em um painel só.
+            {PRODUTO.descricao}
           </motion.p>
 
           <motion.div
@@ -129,7 +129,7 @@ export function Login() {
           transition={{ duration: 0.6, delay: 0.5 }}
           className="relative z-10 font-mono text-[11px] tracking-wide text-slate-600"
         >
-          Imobiliária São Severino · Sistema Interno · Nova Cruz-RN
+          {PRODUTO.nome} · {PRODUTO.slogan}
         </motion.p>
       </div>
 
@@ -143,8 +143,8 @@ export function Login() {
           className="w-full max-w-sm"
         >
           <div className="mb-8 flex items-center gap-2.5 lg:hidden">
-            <Logo size={36} />
-            <span className="font-mono text-xs font-semibold tracking-[0.2em] text-[var(--text)]">SS IMÓVEIS / ESTOQUE</span>
+            <MarcaProduto size={36} className="rounded-xl" />
+            <span className="font-display text-base font-bold text-[var(--text)]">{PRODUTO.nome}</span>
           </div>
 
           {modo === 'criar' ? (

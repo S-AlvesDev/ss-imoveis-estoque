@@ -6,6 +6,7 @@ import { NovaUnidadeModal } from '@/features/unidades/NovaUnidadeModal';
 import type { Deposito, Material, Unidade } from '@/shared/types';
 import { UnidadeCard } from './UnidadeCard';
 import { AcessosSection } from './AcessosSection';
+import { IdentidadeSection } from './IdentidadeSection';
 
 interface ConfiguracoesProps {
   unidades: Unidade[];
@@ -29,13 +30,15 @@ export function Configuracoes({ unidades, depositos, catalogo, refetch, onSeleci
         <div>
           <h1 className="font-display text-2xl font-bold text-[var(--text)]">Configurações</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            Unidades, almoxarifados, o que cada unidade trabalha e quem opera o quê.
+            Identidade, unidades, almoxarifados, o que cada unidade trabalha e quem opera o quê.
           </p>
         </div>
         <Button icon={<Plus size={15} />} onClick={() => setCriando(true)}>
           Nova unidade
         </Button>
       </div>
+
+      <IdentidadeSection refetch={refetch} />
 
       <section className="space-y-4">
         <div>

@@ -4,6 +4,8 @@ import {
   AlertTriangle, BookOpen, Building2, Check, ChevronsUpDown, HardHat, LayoutDashboard, LifeBuoy, LogOut, Package, Plus, Settings, Users, Warehouse,
 } from 'lucide-react';
 import { useAuth } from '@/store/auth';
+import { useMarca } from '@/store/marca';
+import { PRODUTO } from '@/shared/produto';
 import { Stripes } from '@/shared/ui/Stripes';
 import { Logo } from '@/shared/ui/Logo';
 import { ADMIN_ROLES } from '@/shared/constants';
@@ -195,6 +197,7 @@ interface SidebarProps {
 
 export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades, unidade, onChangeUnidade, onNovaUnidade, acesso }: SidebarProps) {
   const { user, logout } = useAuth();
+  const organizacao = useMarca((s) => s.organizacao);
   const groups = navGroupsFor(user?.role || '', acesso);
 
   function handleSelect(view: AppView) {
@@ -232,10 +235,10 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
         <Stripes className="absolute inset-x-0 top-0 h-1" color="rgba(255,142,41,0.9)" dense />
 
         <div className="relative flex h-16 shrink-0 items-center gap-2.5 px-6">
-          <Logo size={30} className="rounded-full bg-white p-0.5 shadow-sm ring-1 ring-black/5" />
-          <div className="leading-tight">
-            <p className="font-display text-sm font-bold text-[var(--text)]">SS Imóveis</p>
-            <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--text-muted)]">Estoque</p>
+          <Logo size={30} className="rounded-xl" />
+          <div className="min-w-0 leading-tight">
+            <p className="truncate font-display text-sm font-bold text-[var(--text)]">{organizacao?.nome ?? PRODUTO.nome}</p>
+            <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{organizacao ? PRODUTO.nome : 'Estoque'}</p>
           </div>
         </div>
 

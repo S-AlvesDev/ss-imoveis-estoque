@@ -1,3 +1,13 @@
+/** A conta: a empresa dona dos dados. Nome, cor e logo são a identidade que as telas vestem. */
+export interface Organizacao {
+  id: string;
+  nome: string;
+  slug: string;
+  /** #rrggbb, ou null para a cor de fábrica. */
+  cor_primaria: string | null;
+  logo_url: string | null;
+}
+
 /** Uma filial: "Nova Cruz", "Natal". Toda unidade tem um Central e uma Obra. */
 export interface Unidade {
   id: string;

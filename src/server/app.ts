@@ -469,7 +469,7 @@ export function createApp() {
       // Toda leitura desta rota já nasce presa à organização da sessão.
       const db = scopedDb(req.user!.organization_id);
 
-      const [materialsRes, movements, staffRes, unidades, depositos, saldos] = await Promise.all([
+      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes] = await Promise.all([
         db.from('materials').select('*').order('nome', { ascending: true }),
         fetchAllRows(() =>
           db
@@ -483,6 +483,7 @@ export function createApp() {
         unidadesDaOrg(db),
         depositosDaOrg(db, { incluirUnidadesInativas: true }),
         saldosDaOrg(db),
+        db.from('organizations').select('id, nome, slug, cor_primaria, logo_url').eq('id', req.user!.organization_id).single(),
       ]);
 
       if (materialsRes.error) throw materialsRes.error;
@@ -513,10 +514,136 @@ export function createApp() {
         depositos: depositosVisiveis,
         // O que ESTA pessoa pode fazer, para o front montar o menu. Admin: null.
         acessos: acessos === null ? null : [...acessos.entries()].map(([warehouse_id, nivel]) => ({ warehouse_id, nivel })),
+        // Nome, cor e logo — a identidade que as telas vestem por dentro.
+        organizacao: orgRes.data ?? null,
       });
     } catch (err: any) {
       console.error('[GET /api/data] erro:', err.message);
       res.status(500).json({ error: 'Erro ao carregar dados do estoque.' });
+    }
+  });
+
+
+  // --------------------------- IDENTIDADE DA ORGANIZAÇÃO (admin) ---------------------------
+  const LOGO_MAX_BYTES = 5 * 1024 * 1024;
+  const LOGO_TIPOS: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp',
+    'image/svg+xml': 'svg',
+  };
+  const COR_HEX = /^#[0-9a-fA-F]{6}$/;
+
+  /** Caminho do arquivo no bucket a partir da URL pública, ou null se não for nossa. */
+  function caminhoDoLogo(logoUrl: string | null | undefined): string | null {
+    if (!logoUrl) return null;
+    const m = logoUrl.match(/\/object\/public\/logos\/([^?]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
+  /** Nome e cor. O logo tem fluxo próprio, porque o arquivo não passa por aqui. */
+  app.patch('/api/organization', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const patch: Record<string, any> = {};
+      if (req.body?.nome !== undefined) {
+        const nome = String(req.body.nome).trim();
+        if (nome.length < 2 || nome.length > 60) return res.status(400).json({ error: 'Nome deve ter de 2 a 60 caracteres.' });
+        patch.nome = nome;
+      }
+      if (req.body?.cor_primaria !== undefined) {
+        const cor = req.body.cor_primaria === null ? null : String(req.body.cor_primaria).trim().toLowerCase();
+        if (cor !== null && !COR_HEX.test(cor)) return res.status(400).json({ error: 'Cor inválida. Use o formato #rrggbb.' });
+        patch.cor_primaria = cor;
+      }
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para alterar.' });
+
+      const { data, error } = await req.db!.from('organizations').update(patch)
+        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url').single();
+      if (error || !data) throw error ?? new Error('organização não encontrada');
+      res.json({ organizacao: data });
+    } catch (err: any) {
+      console.error('[PATCH /api/organization] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao atualizar a organização.' });
+    }
+  });
+
+  /**
+   * Passo 1 do logo: o servidor autoriza um envio. O arquivo em si vai do
+   * navegador direto ao Storage — a Vercel corta requisições em 4,5 MB, e o
+   * limite do logo é 5 MB. A URL assinada vale para UM caminho, dentro da
+   * pasta desta organização, e expira.
+   */
+  app.post('/api/organization/logo-upload-url', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const tipo = String(req.body?.content_type ?? '');
+      const tamanho = Number(req.body?.size ?? 0);
+      const ext = LOGO_TIPOS[tipo];
+      if (!ext) return res.status(400).json({ error: 'Use PNG, JPG, WebP ou SVG.' });
+      if (!Number.isFinite(tamanho) || tamanho <= 0) return res.status(400).json({ error: 'Arquivo vazio.' });
+      if (tamanho > LOGO_MAX_BYTES) return res.status(400).json({ error: 'O logo pode ter no máximo 5 MB.' });
+
+      const caminho = `${req.user!.organization_id}/logo-${Date.now()}.${ext}`;
+      const { data, error } = await supabaseServer.storage.from('logos').createSignedUploadUrl(caminho);
+      if (error || !data) throw error ?? new Error('sem URL assinada');
+
+      res.json({ signedUrl: data.signedUrl, token: data.token, path: caminho });
+    } catch (err: any) {
+      console.error('[POST /api/organization/logo-upload-url] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao preparar o envio do logo.' });
+    }
+  });
+
+  /**
+   * Passo 2: o navegador avisa que enviou. O servidor confere que o arquivo
+   * existe (não confia num caminho vindo de fora), grava a URL pública e
+   * apaga o logo anterior.
+   */
+  app.post('/api/organization/logo', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const caminho = String(req.body?.path ?? '');
+      const pasta = req.user!.organization_id + '/';
+      if (!caminho.startsWith(pasta) || caminho.includes('..')) return res.status(400).json({ error: 'Caminho inválido.' });
+
+      const nomeArquivo = caminho.slice(pasta.length);
+      const { data: lista, error: lErr } = await supabaseServer.storage.from('logos').list(req.user!.organization_id, { search: nomeArquivo });
+      if (lErr) throw lErr;
+      if (!lista?.some((f) => f.name === nomeArquivo)) return res.status(404).json({ error: 'Arquivo não encontrado no Storage. Envie de novo.' });
+
+      const { data: atual } = await req.db!.from('organizations').select('logo_url').eq('id', req.user!.organization_id).single();
+      const anterior = caminhoDoLogo(atual?.logo_url);
+
+      const publicUrl = supabaseServer.storage.from('logos').getPublicUrl(caminho).data.publicUrl;
+      const { data, error } = await req.db!.from('organizations').update({ logo_url: publicUrl })
+        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url').single();
+      if (error || !data) throw error ?? new Error('organização não encontrada');
+
+      if (anterior && anterior !== caminho) {
+        const { error: rErr } = await supabaseServer.storage.from('logos').remove([anterior]);
+        if (rErr) console.warn('[logo] não apagou o anterior:', rErr.message);
+      }
+
+      res.json({ organizacao: data });
+    } catch (err: any) {
+      console.error('[POST /api/organization/logo] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao salvar o logo.' });
+    }
+  });
+
+  app.delete('/api/organization/logo', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: atual } = await req.db!.from('organizations').select('logo_url').eq('id', req.user!.organization_id).single();
+      const caminho = caminhoDoLogo(atual?.logo_url);
+      const { data, error } = await req.db!.from('organizations').update({ logo_url: null })
+        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url').single();
+      if (error || !data) throw error ?? new Error('organização não encontrada');
+      if (caminho) {
+        const { error: rErr } = await supabaseServer.storage.from('logos').remove([caminho]);
+        if (rErr) console.warn('[logo] não apagou o arquivo:', rErr.message);
+      }
+      res.json({ organizacao: data });
+    } catch (err: any) {
+      console.error('[DELETE /api/organization/logo] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao remover o logo.' });
     }
   });
 

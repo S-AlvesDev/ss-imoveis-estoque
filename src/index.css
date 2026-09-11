@@ -22,7 +22,8 @@
   --amber-deep: #f7942e;
 
   /* ---- Light surfaces ---- */
-  --bg: #fff4ea; /* Background   */
+  /* Um tom quase branco puxado para a cor da marca. Muda junto com --brand. */
+  --bg: color-mix(in srgb, var(--brand) 9%, #ffffff);
   --bg-2: #f5f5f5; /* Background II */
   --surface: #ffffff; /* White        */
   --border: #e1e1e1; /* Border       */

@@ -1,5 +1,6 @@
 import type { Material } from '@/shared/types';
 import { CATEGORIES } from '@/shared/constants';
+import { nomeDaOrganizacao } from '@/store/marca';
 import { formatNumber, needsPurchase } from '@/features/estoque/utils';
 
 export function exportMaterialsToWord(materials: Material[]) {
@@ -39,7 +40,7 @@ export function exportMaterialsToWord(materials: Material[]) {
     <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
     <head><meta charset="utf-8"><title>Relatório de Estoque</title></head>
     <body style="font-family: Calibri, Arial, sans-serif;">
-      <h1>Relatório de Estoque — SS Imóveis</h1>
+      <h1>Relatório de Estoque — ${nomeDaOrganizacao()}</h1>
       <p>Gerado em ${generatedAt}</p>
       <p>Itens marcados com &#9888; estão em nível crítico de estoque.</p>
       ${sections}
