@@ -68,7 +68,7 @@ const VIEW_TITLES: Record<AppView, string> = {
 function InventoryApp({ role }: { role: string }) {
   const [view, setView] = useState<AppView | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { materials, catalogo, materialMovements, staff, unidades, depositos, unidade, nivelEm, loading, refetch } = useEstoqueData();
+  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, unidade, nivelEm, loading, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
 
   if (loading) return <LoadingScreen />;
@@ -90,7 +90,7 @@ function InventoryApp({ role }: { role: string }) {
         onChange={setView}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
-        unidades={unidades}
+        unidades={unidadesAtivas}
         unidade={unidade}
         onChangeUnidade={setUnidade}
         onNovaUnidade={isAdmin ? () => setView('configuracoes') : undefined}

@@ -16,7 +16,6 @@ import {
   calcularMovimento,
   depositosDoFluxo,
   depositosDaUnidade,
-  depositosOriginais,
   acharDeposito,
   depositosDaOrg,
   unidadesDaOrg,
@@ -396,7 +395,7 @@ export function createApp() {
         // Sem filtro de CLIENTE: esta tabela só tem gente do estoque.
         req.db!.from(ESTOQUE_USERS).select('id, nome, matricula, role'),
         unidadesDaOrg(db),
-        depositosDaOrg(db),
+        depositosDaOrg(db, { incluirUnidadesInativas: true }),
         saldosDaOrg(db),
       ]);
 
@@ -409,29 +408,16 @@ export function createApp() {
       const unidadesComAcesso = new Set(depositosVisiveis.map((d) => d.unit_id));
       const unidadesVisiveis = unidades.filter((u) => unidadesComAcesso.has(u.id));
       const visivel = new Set(depositosVisiveis.map((d) => d.id));
-      // As colunas antigas espelham só a unidade original; é com ela que se compara.
-      const originais = new Set(depositosOriginais(depositos).map((d) => d.id));
 
-      // Cada material sai com o saldo por depósito ao lado das colunas antigas.
-      // O front ainda lê as colunas; passa a ler `saldos` na próxima etapa.
-      let divergentes = 0;
+      // Cada material sai com o saldo por depósito: { [depositoId]: saldo }.
+      // O front deriva daí a visão da unidade escolhida.
       const materials = (materialsRes.data || []).map((m: any) => {
         const todos: SaldosPorDeposito = saldos.get(m.id) || {};
         const porDeposito: SaldosPorDeposito = acessos === null
           ? todos
           : Object.fromEntries(Object.entries(todos).filter(([id]) => visivel.has(id)));
-        // Os dois modelos têm que contar a mesma história. Se não contarem,
-        // isso precisa aparecer no log ANTES de o front trocar de fonte —
-        // depois, apareceria como número errado na tela de alguém.
-        const totalColunas = arredondar(Number(m.saldo_central) + Number(m.saldo_obra));
-        const totalOriginal = totalDosDepositos(Object.fromEntries(Object.entries(todos).filter(([id]) => originais.has(id))));
-        if (totalColunas !== totalOriginal) divergentes++;
         return { ...m, saldos: porDeposito };
       });
-
-      if (divergentes > 0) {
-        console.warn(`[GET /api/data] ${divergentes} material(is) com saldo divergente entre colunas e depósitos.`);
-      }
 
       res.json({
         materials,
@@ -558,7 +544,7 @@ export function createApp() {
       const ids: number[] = Array.isArray(req.body?.material_ids) ? req.body.material_ids.map(Number).filter(Number.isFinite) : [];
       if (ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um material.' });
 
-      const depositos = (await depositosDaOrg(req.db!)).filter((d) => d.unit_id === req.params.id);
+      const depositos = (await depositosDaOrg(req.db!, { incluirUnidadesInativas: true })).filter((d) => d.unit_id === req.params.id);
       if (depositos.length === 0) return res.status(404).json({ error: 'Unidade não encontrada.' });
 
       // Só materiais que existem nesta organização — o filtro do req.db garante.
@@ -590,7 +576,7 @@ export function createApp() {
    */
   app.delete('/api/units/:id/materials', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const depositos = (await depositosDaOrg(req.db!)).filter((d) => d.unit_id === req.params.id);
+      const depositos = (await depositosDaOrg(req.db!, { incluirUnidadesInativas: true })).filter((d) => d.unit_id === req.params.id);
       if (depositos.length === 0) return res.status(404).json({ error: 'Unidade não encontrada.' });
       const depositoIds = depositos.map((d) => d.id);
 
@@ -634,7 +620,7 @@ export function createApp() {
   app.delete('/api/units/:id/materials/:materialId', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const materialId = Number(req.params.materialId);
-      const depositos = (await depositosDaOrg(req.db!)).filter((d) => d.unit_id === req.params.id);
+      const depositos = (await depositosDaOrg(req.db!, { incluirUnidadesInativas: true })).filter((d) => d.unit_id === req.params.id);
       if (depositos.length === 0) return res.status(404).json({ error: 'Unidade não encontrada.' });
       const depositoIds = depositos.map((d) => d.id);
 
@@ -694,8 +680,6 @@ export function createApp() {
           fator_multiplicador,
           estoque_minimo,
           categoria: categoria || 'Outros',
-          saldo_central: saldoInicial,
-          saldo_obra: 0,
         })
         .select()
         .single();
@@ -705,7 +689,7 @@ export function createApp() {
       // Zero explícito na Obra: o saldo é sempre uma consulta, nunca uma
       // ausência a interpretar.
       const saldos: SaldosPorDeposito = { [central.id]: saldoInicial, [obra.id]: 0 };
-      await gravarSaldos(req.db!, material.id, saldos, depositos);
+      await gravarSaldos(req.db!, material.id, saldos);
 
       await req.db!.from('material_movements').insert({
         material_id: material.id,
@@ -851,7 +835,7 @@ export function createApp() {
 
       // Soma depósito a depósito: o saldo de cada doador entra no mesmo
       // depósito do principal. Funciona igual com dois depósitos ou vinte.
-      const depositos = await depositosDaOrg(req.db!);
+      const depositos = await depositosDaOrg(req.db!, { incluirUnidadesInativas: true });
       const saldosAlvo = await saldosDoMaterial(req.db!, targetId);
       const somaPorDeposito: SaldosPorDeposito = {};
       const totalDoDoador = new Map<number, number>();
@@ -868,7 +852,7 @@ export function createApp() {
       for (const [depositoId, soma] of Object.entries(somaPorDeposito)) {
         novosSaldos[depositoId] = arredondar((novosSaldos[depositoId] ?? 0) + soma);
       }
-      await gravarSaldos(req.db!, targetId, novosSaldos, depositos);
+      await gravarSaldos(req.db!, targetId, novosSaldos);
 
       const somaTotal = totalDosDepositos(somaPorDeposito);
       const nomeDo = (id: string) => depositos.find((d) => d.id === id)?.nome ?? id;
@@ -961,7 +945,7 @@ export function createApp() {
       const calculo = calcularMovimento(atuais, { ...lados, quantidade: q, ajuste: fluxo.ajuste, rotulo: fluxo.rotulo, nomeDe: nomeDo });
       if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
 
-      await gravarSaldos(req.db!, Number(id), calculo.novos, depositos);
+      await gravarSaldos(req.db!, Number(id), calculo.novos);
 
       await req.db!.from('material_movements').insert({
         material_id: id,
@@ -976,7 +960,9 @@ export function createApp() {
       // A regra de "precisa comprar" vive num lugar só, compartilhada com a
       // interface. Quando o servidor tinha a própria cópia, as duas podiam
       // divergir sem ninguém perceber — e é a divergência, não a regra, que
-      // volta a produzir alarme falso.
+      // volta a produzir alarme falso. Os campos saldo_central/saldo_obra aqui
+      // são o formato que a regra entende (Central e Obra DA UNIDADE), não
+      // colunas do banco.
       // Da unidade onde a operação aconteceu — não "o primeiro Central da lista".
       const daUnidade = depositosDaUnidade(depositos, unit_id);
       const central = daUnidade.find((d) => d.tipo === 'CENTRAL');
@@ -1076,7 +1062,7 @@ export function createApp() {
         // Recontagem não é um delta: é "o físico diz que tem X". Grava X.
         const novos: SaldosPorDeposito = { ...atuais, [deposito.id]: contagem };
         try {
-          await gravarSaldos(req.db!, Number(materialId), novos, depositos);
+          await gravarSaldos(req.db!, Number(materialId), novos);
         } catch (e: any) {
           console.error(`[bulk-recount] material ${materialId}:`, e.message);
           continue;
@@ -1479,7 +1465,7 @@ export function createApp() {
 
       // Só depósitos desta organização — o req.db já filtra, então um id de
       // fora simplesmente não aparece e é recusado.
-      const depositos = await depositosDaOrg(req.db!);
+      const depositos = await depositosDaOrg(req.db!, { incluirUnidadesInativas: true });
       const validos = new Set(depositos.map((d) => d.id));
       const invalido = pedidos.find((a) => !validos.has(a.warehouse_id));
       if (invalido) return res.status(404).json({ error: 'Depósito não encontrado.' });

@@ -49,7 +49,7 @@ export function Configuracoes({ unidades, depositos, catalogo, refetch, onSeleci
           <EmptyState icon={<Building2 size={20} />} title="Nenhuma unidade" subtitle="Crie a primeira para começar a operar." />
         ) : (
           <div className="grid gap-4 xl:grid-cols-2">
-            {unidades.map((u) => (
+            {[...unidades].sort((a, b) => Number(b.ativo) - Number(a.ativo) || a.nome.localeCompare(b.nome)).map((u) => (
               <UnidadeCard
                 key={u.id}
                 unidade={u}

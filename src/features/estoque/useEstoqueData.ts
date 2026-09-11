@@ -50,12 +50,16 @@ export function useEstoqueData() {
     refetch();
   }, [refetch]);
 
-  // A unidade em uso: a escolhida, se ainda existir; senão a primeira. Uma
-  // escolha salva no navegador pode apontar para uma unidade desativada.
+  // Só se opera em unidade ativa. As desativadas continuam no payload para a
+  // tela de Configurações poder mostrá-las e reativá-las.
+  const unidadesAtivas = useMemo(() => data.unidades.filter((u) => u.ativo), [data.unidades]);
+
+  // A unidade em uso: a escolhida, se ainda estiver ativa; senão a primeira.
+  // Uma escolha salva no navegador pode apontar para uma unidade desativada.
   const unidade = useMemo<Unidade | null>(() => {
-    if (data.unidades.length === 0) return null;
-    return data.unidades.find((u) => u.id === unidadeEscolhida) ?? data.unidades[0];
-  }, [data.unidades, unidadeEscolhida]);
+    if (unidadesAtivas.length === 0) return null;
+    return unidadesAtivas.find((u) => u.id === unidadeEscolhida) ?? unidadesAtivas[0];
+  }, [unidadesAtivas, unidadeEscolhida]);
 
   // Corrige a escolha salva quando ela não vale mais, para o seletor e os
   // pedidos ao servidor concordarem sobre qual unidade é.
@@ -110,7 +114,9 @@ export function useEstoqueData() {
     catalogo,
     materialMovements: data.materialMovements,
     staff: data.staff,
+    /** Todas, inclusive desativadas — para Configurações. O seletor usa `unidadesAtivas`. */
     unidades: data.unidades,
+    unidadesAtivas,
     depositos: data.depositos,
     /** A unidade cujos depósitos as telas estão mostrando. */
     unidade,

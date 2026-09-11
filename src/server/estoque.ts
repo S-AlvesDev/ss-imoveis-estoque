@@ -1,22 +1,16 @@
 import type { ScopedDb } from './tenant';
 
 /**
- * Saldo por depósito — o modelo para onde o sistema está indo.
+ * Saldo por depósito.
  *
- * O QUE ESTE MÓDULO RESOLVE
- * O estoque nasceu com duas colunas fixas, `saldo_central` e `saldo_obra`.
- * Enquanto o saldo for coluna, "Central" e "Obra" são conceito do código, e
- * uma unidade em Natal não existe sem alterar programa. Aqui o saldo passa a
- * ser linha em `stock_balances`, uma por depósito — e depósito é cadastro.
+ * O estoque nasceu com duas colunas fixas em `materials`, saldo_central e
+ * saldo_obra. Enquanto o saldo era coluna, "Central" e "Obra" eram conceito
+ * do código, e uma unidade em Natal não existia sem alterar programa. Hoje o
+ * saldo é linha em `stock_balances`, uma por depósito — e depósito é
+ * cadastro. As colunas antigas foram removidas pela migração 013.
  *
- * A TRANSIÇÃO
- * As colunas antigas continuam existindo e continuam certas: toda gravação
- * atualiza os dois modelos. Isso é escrita duplicada, que normalmente é um
- * erro — mas ela está concentrada em UMA função (`gravarSaldos`), não
- * espalhada pelas rotas. Enquanto estiver aqui, dá para voltar atrás sem
- * perder nada; espalhada, seria a próxima rota esquecendo de atualizar.
- *
- * As colunas saem na última migração da Fase 2, e com elas a `espelharColunas`.
+ * Tudo que lê ou grava saldo passa por aqui. O núcleo (calcularMovimento) é
+ * puro e testado sozinho; o acesso ao banco fica no fim do arquivo.
  */
 
 export type TipoDeposito = 'CENTRAL' | 'OBRA' | 'OUTRO';
@@ -27,8 +21,6 @@ export interface Deposito {
   tipo: TipoDeposito;
   unit_id: string;
   ativo: boolean;
-  /** Quando a unidade dele foi criada. Serve para achar a unidade original. */
-  unidade_criada_em?: string;
 }
 
 /** Quanto existe de um material, por depósito. */
@@ -194,29 +186,26 @@ export function depositosDoFluxo(
 //  Acesso ao banco
 // -----------------------------------------------------------------------------
 
-export async function depositosDaOrg(db: ScopedDb): Promise<Deposito[]> {
-  const { data, error } = await db
-    .from('warehouses')
-    .select('id, nome, tipo, unit_id, ativo, units(created_at)')
-    .eq('ativo', true)
-    .order('nome', { ascending: true });
-  if (error) throw error;
-  return (data || []).map(({ units, ...d }: any) => ({ ...d, unidade_criada_em: units?.created_at })) as Deposito[];
-}
-
 /**
- * Os depósitos da unidade ORIGINAL — a mais antiga da organização.
+ * Depósitos da organização.
  *
- * As colunas saldo_central/saldo_obra existem desde antes de haver unidades,
- * e a migração 009 copiou o que elas tinham para os depósitos da primeira
- * unidade. Enquanto as colunas existirem, elas espelham essa unidade e só
- * ela: qualquer outra é invisível para o modelo antigo, de propósito.
+ * Por padrão, só os de unidades ativas: desativar uma unidade não apaga
+ * nada, mas não se opera nela. Configuração e histórico precisam enxergar
+ * tudo — para reativar, resolver nomes, gerenciar materiais — e pedem
+ * `incluirUnidadesInativas`.
  */
-export function depositosOriginais(depositos: Deposito[]): Deposito[] {
-  const datas = depositos.map((d) => d.unidade_criada_em).filter(Boolean) as string[];
-  if (datas.length === 0) return depositos;
-  const primeira = datas.reduce((a, b) => (a < b ? a : b));
-  return depositos.filter((d) => d.unidade_criada_em === primeira);
+export async function depositosDaOrg(
+  db: ScopedDb,
+  opcoes: { incluirUnidadesInativas?: boolean } = {},
+): Promise<Deposito[]> {
+  let q = db
+    .from('warehouses')
+    .select('id, nome, tipo, unit_id, ativo, units!inner(ativo)')
+    .eq('ativo', true);
+  if (!opcoes.incluirUnidadesInativas) q = q.eq('units.ativo', true);
+  const { data, error } = await q.order('nome', { ascending: true });
+  if (error) throw error;
+  return (data || []).map(({ units, ...d }: any) => d) as Deposito[];
 }
 
 export interface Unidade {
@@ -226,11 +215,11 @@ export interface Unidade {
   ativo: boolean;
 }
 
+/** Todas as unidades, ativas ou não. Quem opera filtra por `ativo`; quem configura vê tudo. */
 export async function unidadesDaOrg(db: ScopedDb): Promise<Unidade[]> {
   const { data, error } = await db
     .from('units')
     .select('id, nome, slug, ativo')
-    .eq('ativo', true)
     .order('nome', { ascending: true });
   if (error) throw error;
   return (data || []) as Unidade[];
@@ -279,66 +268,23 @@ export async function saldosDoMaterial(db: ScopedDb, materialId: number): Promis
 }
 
 /**
- * Grava o saldo por depósito e espelha nas colunas antigas.
+ * Grava o saldo por depósito. A única função que escreve saldo no sistema.
  *
- * A ordem importa: `stock_balances` primeiro, colunas depois. Enquanto o
- * gatilho da migração 010 existir, ele reescreve `stock_balances` a partir das
- * colunas — com o mesmo valor, então o resultado é o mesmo. Depois que o
- * gatilho sair, esta função continua sendo a única que grava saldo.
+ * Não encosta em `materials`: o saldo tem o próprio carimbo de data em
+ * `stock_balances`, e o catálogo só muda quando o cadastro muda.
  */
-export async function gravarSaldos(
-  db: ScopedDb,
-  materialId: number,
-  novos: SaldosPorDeposito,
-  depositos: Deposito[],
-): Promise<void> {
-  const agora = new Date().toISOString();
-
+export async function gravarSaldos(db: ScopedDb, materialId: number, novos: SaldosPorDeposito): Promise<void> {
   const linhas = Object.entries(novos).map(([warehouse_id, saldo]) => ({
     material_id: materialId,
     warehouse_id,
     saldo: arredondar(saldo),
-    updated_at: agora,
+    updated_at: new Date().toISOString(),
   }));
+  if (linhas.length === 0) return;
 
-  if (linhas.length > 0) {
-    const { error } = await db
-      .from('stock_balances')
-      .upsert(linhas, { onConflict: 'warehouse_id,material_id' });
-    if (error) throw error;
-  }
-
-  await espelharColunas(db, materialId, novos, depositos, agora);
-}
-
-/**
- * Mantém `saldo_central` e `saldo_obra` corretas enquanto elas existirem.
- *
- * Some junto com as colunas, na última migração da Fase 2. Até lá é o que
- * permite desfazer a virada sem perder saldo: se algo der errado no servidor,
- * as colunas continuam sendo uma resposta válida.
- */
-async function espelharColunas(
-  db: ScopedDb,
-  materialId: number,
-  novos: SaldosPorDeposito,
-  depositos: Deposito[],
-  agora: string,
-): Promise<void> {
-  const patch: Record<string, any> = { updated_at: agora };
-
-  // Só a unidade original. `find` na lista inteira escolheria "o primeiro
-  // Central por ordem de nome" — e uma entrada em Natal iria parar na
-  // coluna de Nova Cruz assim que Natal tivesse um nome que viesse antes.
-  const originais = depositosOriginais(depositos);
-  const central = originais.find((d) => d.tipo === 'CENTRAL');
-  const obra = originais.find((d) => d.tipo === 'OBRA');
-  if (central && novos[central.id] !== undefined) patch.saldo_central = arredondar(novos[central.id]);
-  if (obra && novos[obra.id] !== undefined) patch.saldo_obra = arredondar(novos[obra.id]);
-
-  if (Object.keys(patch).length === 1) return; // só o updated_at: nada a espelhar
-
-  const { error } = await db.from('materials').update(patch).eq('id', materialId);
+  const { error } = await db
+    .from('stock_balances')
+    .upsert(linhas, { onConflict: 'warehouse_id,material_id' });
   if (error) throw error;
 }
 
