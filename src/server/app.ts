@@ -11,6 +11,21 @@ import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
 import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
 import { scopedDb, type ScopedDb } from './tenant';
+import {
+  FLUXO_DA_OPERACAO,
+  calcularMovimento,
+  depositosDoFluxo,
+  acharDeposito,
+  depositosDaOrg,
+  unidadesDaOrg,
+  saldosDaOrg,
+  saldosDoMaterial,
+  gravarSaldos,
+  totalDosDepositos,
+  arredondar,
+  type Deposito,
+  type SaldosPorDeposito,
+} from './estoque';
 
 /**
  * Tabela de identidades DO ESTOQUE. Antes o login vinha de `users`, que é
@@ -362,7 +377,7 @@ export function createApp() {
       // Toda leitura desta rota já nasce presa à organização da sessão.
       const db = scopedDb(req.user!.organization_id);
 
-      const [materialsRes, movements, staffRes] = await Promise.all([
+      const [materialsRes, movements, staffRes, unidades, depositos, saldos] = await Promise.all([
         db.from('materials').select('*').order('nome', { ascending: true }),
         fetchAllRows(() =>
           db
@@ -373,14 +388,36 @@ export function createApp() {
         ),
         // Sem filtro de CLIENTE: esta tabela só tem gente do estoque.
         req.db!.from(ESTOQUE_USERS).select('id, nome, matricula, role'),
+        unidadesDaOrg(db),
+        depositosDaOrg(db),
+        saldosDaOrg(db),
       ]);
 
       if (materialsRes.error) throw materialsRes.error;
 
+      // Cada material sai com o saldo por depósito ao lado das colunas antigas.
+      // O front ainda lê as colunas; passa a ler `saldos` na próxima etapa.
+      let divergentes = 0;
+      const materials = (materialsRes.data || []).map((m: any) => {
+        const porDeposito: SaldosPorDeposito = saldos.get(m.id) || {};
+        // Os dois modelos têm que contar a mesma história. Se não contarem,
+        // isso precisa aparecer no log ANTES de o front trocar de fonte —
+        // depois, apareceria como número errado na tela de alguém.
+        const totalColunas = arredondar(Number(m.saldo_central) + Number(m.saldo_obra));
+        if (totalColunas !== totalDosDepositos(porDeposito)) divergentes++;
+        return { ...m, saldos: porDeposito };
+      });
+
+      if (divergentes > 0) {
+        console.warn(`[GET /api/data] ${divergentes} material(is) com saldo divergente entre colunas e depósitos.`);
+      }
+
       res.json({
-        materials: materialsRes.data || [],
+        materials,
         materialMovements: movements,
         staff: staffRes.data || [],
+        unidades,
+        depositos,
       });
     } catch (err: any) {
       console.error('[GET /api/data] erro:', err.message);
@@ -396,7 +433,14 @@ export function createApp() {
         return res.status(400).json({ error: 'Preencha todos os campos obrigatórios.' });
       }
 
-      const saldo_central = Number(qtd_volumes) * Number(fator_multiplicador);
+      const saldoInicial = arredondar(Number(qtd_volumes) * Number(fator_multiplicador));
+
+      // O estoque inicial entra na Central. Resolver o depósito ANTES de criar
+      // o material: se não houver Central, é melhor não deixar material sem
+      // saldo em lugar nenhum.
+      const depositos = await depositosDaOrg(req.db!);
+      const central = acharDeposito(depositos, 'CENTRAL');
+      const obra = acharDeposito(depositos, 'OBRA');
 
       const { data: material, error } = await req.db!
         .from('materials')
@@ -407,7 +451,7 @@ export function createApp() {
           fator_multiplicador,
           estoque_minimo,
           categoria: categoria || 'Outros',
-          saldo_central,
+          saldo_central: saldoInicial,
           saldo_obra: 0,
         })
         .select()
@@ -415,15 +459,21 @@ export function createApp() {
 
       if (error) throw error;
 
+      // Zero explícito na Obra: o saldo é sempre uma consulta, nunca uma
+      // ausência a interpretar.
+      const saldos: SaldosPorDeposito = { [central.id]: saldoInicial, [obra.id]: 0 };
+      await gravarSaldos(req.db!, material.id, saldos, depositos);
+
       await req.db!.from('material_movements').insert({
         material_id: material.id,
         tipo_operacao: 'ENTRADA_CENTRAL',
-        quantidade: saldo_central,
+        quantidade: saldoInicial,
+        warehouse_destino_id: central.id,
         funcionario_matricula: req.user!.matricula,
         justificativa: 'Cadastro inicial de material',
       });
 
-      res.status(201).json(material);
+      res.status(201).json({ ...material, saldos });
     } catch (err: any) {
       console.error('[POST /api/materials] erro:', err.message);
       res.status(500).json({ error: 'Erro ao cadastrar material.' });
@@ -481,12 +531,16 @@ export function createApp() {
           .eq('id', mov.id);
       }
 
+      // O registro guarda o total da empresa. Antes guardava só a Central, e um
+      // material que existia só na Obra era excluído com "saldo era 0".
+      const saldoTotal = totalDosDepositos(await saldosDoMaterial(req.db!, Number(id)));
+
       await req.db!.from('material_movements').insert({
         material_id: null,
         tipo_operacao: 'EXCLUSÃO',
-        quantidade: material.saldo_central,
+        quantidade: saldoTotal,
         funcionario_matricula: req.user!.matricula,
-        justificativa: `EXCLUSÃO DO MATERIAL: O material '${material.nome}' (Saldo em estoque era de ${material.saldo_central} ${material.unidade_medida}) foi excluído do sistema permanentemente por ${req.user!.nome}.`,
+        justificativa: `EXCLUSÃO DO MATERIAL: O material '${material.nome}' (Saldo em estoque era de ${saldoTotal} ${material.unidade_medida}) foi excluído do sistema permanentemente por ${req.user!.nome}.`,
       });
 
       const { error: deleteError } = await req.db!.from('materials').delete().eq('id', id);
@@ -552,24 +606,40 @@ export function createApp() {
         });
       }
 
-      const somaCentral = donors.reduce((s: number, d: any) => s + Number(d.saldo_central), 0);
-      const somaObra = donors.reduce((s: number, d: any) => s + Number(d.saldo_obra), 0);
-      const novoSaldoCentral = Number(target.saldo_central) + somaCentral;
-      const novoSaldoObra = Number(target.saldo_obra) + somaObra;
+      // Soma depósito a depósito: o saldo de cada doador entra no mesmo
+      // depósito do principal. Funciona igual com dois depósitos ou vinte.
+      const depositos = await depositosDaOrg(req.db!);
+      const saldosAlvo = await saldosDoMaterial(req.db!, targetId);
+      const somaPorDeposito: SaldosPorDeposito = {};
+      const totalDoDoador = new Map<number, number>();
 
-      const { error: updateError } = await req.db!
-        .from('materials')
-        .update({ saldo_central: novoSaldoCentral, saldo_obra: novoSaldoObra, updated_at: new Date().toISOString() })
-        .eq('id', targetId);
-      if (updateError) throw updateError;
+      for (const donor of donors) {
+        const saldosDoador = await saldosDoMaterial(req.db!, donor.id);
+        totalDoDoador.set(donor.id, totalDosDepositos(saldosDoador));
+        for (const [depositoId, saldo] of Object.entries(saldosDoador)) {
+          somaPorDeposito[depositoId] = arredondar((somaPorDeposito[depositoId] ?? 0) + saldo);
+        }
+      }
 
-      if (somaCentral !== 0 || somaObra !== 0) {
+      const novosSaldos: SaldosPorDeposito = { ...saldosAlvo };
+      for (const [depositoId, soma] of Object.entries(somaPorDeposito)) {
+        novosSaldos[depositoId] = arredondar((novosSaldos[depositoId] ?? 0) + soma);
+      }
+      await gravarSaldos(req.db!, targetId, novosSaldos, depositos);
+
+      const somaTotal = totalDosDepositos(somaPorDeposito);
+      const nomeDo = (id: string) => depositos.find((d) => d.id === id)?.nome ?? id;
+      if (somaTotal !== 0) {
+        const detalhe = Object.entries(somaPorDeposito)
+          .filter(([, v]) => v !== 0)
+          .map(([id, v]) => `${nomeDo(id)} +${v}`)
+          .join(', ');
         await req.db!.from('material_movements').insert({
           material_id: targetId,
           tipo_operacao: 'UNIFICACAO',
-          quantidade: somaCentral + somaObra,
+          quantidade: somaTotal,
           funcionario_matricula: req.user!.matricula,
-          justificativa: `Unificação: incorporou o saldo de ${donors.map((d: any) => `'${d.nome}'`).join(', ')} (Central +${somaCentral}, Obra +${somaObra}).`,
+          justificativa: `Unificação: incorporou o saldo de ${donors.map((d: any) => `'${d.nome}'`).join(', ')} (${detalhe}).`,
         });
       }
 
@@ -589,7 +659,7 @@ export function createApp() {
         await req.db!.from('material_movements').insert({
           material_id: null,
           tipo_operacao: 'EXCLUSÃO',
-          quantidade: donor.saldo_central + donor.saldo_obra,
+          quantidade: totalDoDoador.get(donor.id) ?? 0,
           funcionario_matricula: req.user!.matricula,
           justificativa: `UNIFICAÇÃO: o material '${donor.nome}' foi unificado com '${target.nome}' e removido do sistema por ${req.user!.nome}.`,
         });
@@ -597,7 +667,7 @@ export function createApp() {
         await req.db!.from('materials').delete().eq('id', donor.id);
       }
 
-      res.json({ success: true, targetId, novoSaldoCentral, novoSaldoObra });
+      res.json({ success: true, targetId, saldos: novosSaldos });
     } catch (err: any) {
       console.error('[POST /api/materials/merge] erro:', err.message);
       res.status(500).json({ error: 'Erro ao unificar materiais.' });
@@ -628,57 +698,35 @@ export function createApp() {
 
       if (fetchError || !material) return res.status(404).json({ error: 'Material não encontrado.' });
 
+      const fluxo = FLUXO_DA_OPERACAO[tipo_operacao];
+      if (!fluxo) return res.status(400).json({ error: 'Operação inválida.' });
+
       const q = Number(quantidade);
-      let novoSaldoCentral = Number(material.saldo_central);
-      let novoSaldoObra = Number(material.saldo_obra);
+      const depositos = await depositosDaOrg(req.db!);
+      const nomeDo = (depositoId: string) => depositos.find((d) => d.id === depositoId)?.nome ?? depositoId;
 
-      switch (tipo_operacao) {
-        case 'ENTRADA_CENTRAL':
-          novoSaldoCentral += q;
-          break;
-        case 'SAIDA':
-          if (q > novoSaldoCentral) return res.status(400).json({ error: 'Saldo Central insuficiente para esta saída.' });
-          novoSaldoCentral -= q;
-          break;
-        case 'REMESSA_OBRA':
-          if (q > novoSaldoCentral) return res.status(400).json({ error: 'Saldo Central insuficiente para esta remessa.' });
-          novoSaldoCentral -= q;
-          novoSaldoObra += q;
-          break;
-        case 'CONSUMO_OBRA':
-          if (q > novoSaldoObra) return res.status(400).json({ error: 'Saldo de Obra insuficiente para este consumo.' });
-          novoSaldoObra -= q;
-          break;
-        case 'DEVOLUCAO_CENTRAL':
-          if (q > novoSaldoObra) return res.status(400).json({ error: 'Saldo de Obra insuficiente para esta devolução.' });
-          novoSaldoObra -= q;
-          novoSaldoCentral += q;
-          break;
-        case 'AJUSTE_CENTRAL':
-          novoSaldoCentral += q;
-          break;
-        case 'AJUSTE_OBRA':
-          novoSaldoObra += q;
-          break;
-        default:
-          return res.status(400).json({ error: 'Operação inválida.' });
+      // Hoje a operação diz "Central" ou "Obra" e o servidor resolve qual
+      // depósito é. Quando o front passar a mandar os ids, esta resolução some
+      // — e com ela a última dependência de existir uma unidade só.
+      let lados: { origem_id?: string; destino_id?: string };
+      try {
+        lados = depositosDoFluxo(fluxo, depositos);
+      } catch (e: any) {
+        return res.status(409).json({ error: e.message });
       }
 
-      if (novoSaldoCentral < 0 || novoSaldoObra < 0) {
-        return res.status(400).json({ error: 'A operação resultaria em saldo negativo.' });
-      }
+      const atuais = await saldosDoMaterial(req.db!, Number(id));
+      const calculo = calcularMovimento(atuais, { ...lados, quantidade: q, ajuste: fluxo.ajuste, rotulo: fluxo.rotulo, nomeDe: nomeDo });
+      if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
 
-      const { error: updateError } = await req.db!
-        .from('materials')
-        .update({ saldo_central: novoSaldoCentral, saldo_obra: novoSaldoObra, updated_at: new Date().toISOString() })
-        .eq('id', id);
-
-      if (updateError) throw updateError;
+      await gravarSaldos(req.db!, Number(id), calculo.novos, depositos);
 
       await req.db!.from('material_movements').insert({
         material_id: id,
         tipo_operacao,
         quantidade: q,
+        warehouse_origem_id: lados.origem_id ?? null,
+        warehouse_destino_id: lados.destino_id ?? null,
         funcionario_matricula: req.user!.matricula,
         justificativa,
       });
@@ -687,6 +735,10 @@ export function createApp() {
       // interface. Quando o servidor tinha a própria cópia, as duas podiam
       // divergir sem ninguém perceber — e é a divergência, não a regra, que
       // volta a produzir alarme falso.
+      const central = depositos.find((d) => d.tipo === 'CENTRAL');
+      const obra = depositos.find((d) => d.tipo === 'OBRA');
+      const novoSaldoCentral = central ? calculo.novos[central.id] ?? 0 : 0;
+      const novoSaldoObra = obra ? calculo.novos[obra.id] ?? 0 : 0;
       const saldoAtualizado = {
         saldo_central: novoSaldoCentral,
         saldo_obra: novoSaldoObra,
@@ -720,7 +772,7 @@ export function createApp() {
         }
       }
 
-      res.json({ success: true, material_id: id, novoSaldo: novoSaldoCentral, saldoObra: novoSaldoObra });
+      res.json({ success: true, material_id: id, novoSaldo: novoSaldoCentral, saldoObra: novoSaldoObra, saldos: calculo.novos });
     } catch (err: any) {
       console.error('[POST /api/materials/:id/movement] erro:', err.message);
       res.status(500).json({ error: 'Erro ao registrar movimentação.' });
@@ -730,12 +782,30 @@ export function createApp() {
   // --------------------------- RECONTAGEM (ajuste em lote) ---------------------------
   app.post('/api/materials/bulk-recount', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
-      const { location, counts } = req.body || {};
-      if (location !== 'CENTRAL' && location !== 'OBRA') {
-        return res.status(400).json({ error: 'Local inválido.' });
+      const { location, warehouse_id, counts } = req.body || {};
+
+      // O depósito vem pelo id (front novo) ou pelo tipo (front atual). Os dois
+      // caminhos acabam no mesmo lugar: um depósito concreto desta organização.
+      const depositos = await depositosDaOrg(req.db!);
+      let deposito: Deposito | undefined;
+      if (warehouse_id) {
+        deposito = depositos.find((d) => d.id === warehouse_id);
+        if (!deposito) return res.status(404).json({ error: 'Depósito não encontrado.' });
+      } else {
+        if (location !== 'CENTRAL' && location !== 'OBRA') {
+          return res.status(400).json({ error: 'Local inválido.' });
+        }
+        try {
+          deposito = acharDeposito(depositos, location);
+        } catch (e: any) {
+          return res.status(409).json({ error: e.message });
+        }
       }
-      const tipo_operacao = location === 'CENTRAL' ? 'AJUSTE_CENTRAL' : 'AJUSTE_OBRA';
-      if (!OPERATION_ROLES[tipo_operacao].includes(req.user!.role)) {
+
+      // A permissão continua por tipo de depósito: quem cuida da Obra ajusta a
+      // Obra. Depósito de outro tipo ainda não tem dono definido — bloqueia.
+      const tipo_operacao = deposito.tipo === 'CENTRAL' ? 'AJUSTE_CENTRAL' : deposito.tipo === 'OBRA' ? 'AJUSTE_OBRA' : null;
+      if (!tipo_operacao || !OPERATION_ROLES[tipo_operacao].includes(req.user!.role)) {
         return res.status(403).json({ error: 'Você não tem permissão para ajustar este estoque.' });
       }
       if (!Array.isArray(counts) || counts.length === 0) {
@@ -747,39 +817,40 @@ export function createApp() {
 
       for (const entry of counts) {
         const materialId = entry?.material_id;
-        const contagem = Number(entry?.contagem);
+        const contagem = arredondar(Number(entry?.contagem));
         if (materialId == null || Number.isNaN(contagem)) continue;
-
-        const { data: material } = await req.db!.from('materials').select('*').eq('id', materialId).single();
-        if (!material) continue;
-
-        const saldoAtual = location === 'CENTRAL' ? Number(material.saldo_central) : Number(material.saldo_obra);
-        const diferenca = contagem - saldoAtual;
-        if (diferenca === 0) continue;
         if (contagem < 0) continue;
 
-        const novoSaldoCentral = location === 'CENTRAL' ? contagem : Number(material.saldo_central);
-        const novoSaldoObra = location === 'OBRA' ? contagem : Number(material.saldo_obra);
+        const { data: material } = await req.db!.from('materials').select('id, nome, estoque_minimo').eq('id', materialId).single();
+        if (!material) continue;
 
-        const { error: updateError } = await req.db!
-          .from('materials')
-          .update({ saldo_central: novoSaldoCentral, saldo_obra: novoSaldoObra, updated_at: new Date().toISOString() })
-          .eq('id', materialId);
-        if (updateError) continue;
+        const atuais = await saldosDoMaterial(req.db!, Number(materialId));
+        const saldoAtual = atuais[deposito.id] ?? 0;
+        const diferenca = arredondar(contagem - saldoAtual);
+        if (diferenca === 0) continue;
+
+        // Recontagem não é um delta: é "o físico diz que tem X". Grava X.
+        const novos: SaldosPorDeposito = { ...atuais, [deposito.id]: contagem };
+        try {
+          await gravarSaldos(req.db!, Number(materialId), novos, depositos);
+        } catch (e: any) {
+          console.error(`[bulk-recount] material ${materialId}:`, e.message);
+          continue;
+        }
 
         await req.db!.from('material_movements').insert({
           material_id: materialId,
           tipo_operacao,
           quantidade: diferenca,
+          warehouse_destino_id: deposito.id,
           funcionario_matricula: req.user!.matricula,
           justificativa: `Recontagem diária: sistema indicava ${saldoAtual}, contagem física apontou ${contagem}.`,
         });
 
         applied.push({ material_id: materialId, nome: material.nome, diferenca });
 
-        const novoSaldoLocal = location === 'CENTRAL' ? novoSaldoCentral : novoSaldoObra;
-        if (novoSaldoLocal <= material.estoque_minimo) {
-          criticalItems.push({ nome: material.nome, novoSaldo: novoSaldoLocal, estoque_minimo: material.estoque_minimo });
+        if (contagem <= material.estoque_minimo) {
+          criticalItems.push({ nome: material.nome, novoSaldo: contagem, estoque_minimo: material.estoque_minimo });
         }
       }
 
@@ -790,7 +861,7 @@ export function createApp() {
             await t.sendMail({
               from: process.env.SMTP_FROM_EMAIL || 'noreply@ssimoveisbrasil.app',
               to: process.env.ADMIN_EMAIL || 'admin@ssimoveis.com',
-              subject: `Recontagem (${location === 'CENTRAL' ? 'Central' : 'Obra'}): ${criticalItems.length} item(ns) em estoque crítico`,
+              subject: `Recontagem (${deposito.nome}): ${criticalItems.length} item(ns) em estoque crítico`,
               html: `<p>Após a recontagem de ${req.user!.nome}, os itens abaixo ficaram em nível crítico:</p>
                      <ul>${criticalItems.map((i) => `<li>${i.nome}: ${i.novoSaldo} (mínimo ${i.estoque_minimo})</li>`).join('')}</ul>`,
             });
