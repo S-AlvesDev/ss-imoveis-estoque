@@ -15,6 +15,7 @@ import {
   FLUXO_DA_OPERACAO,
   calcularMovimento,
   depositosDoFluxo,
+  depositosDaUnidade,
   acharDeposito,
   depositosDaOrg,
   unidadesDaOrg,
@@ -425,22 +426,93 @@ export function createApp() {
     }
   });
 
+  // --------------------------- UNIDADES (admin) ---------------------------
+  /**
+   * Cria uma unidade com os dois depósitos que toda unidade tem, e uma linha
+   * de saldo zero para cada material em cada um. Assim a unidade nova já
+   * aparece em toda tela com "0", em vez de aparecer como ausência.
+   *
+   * Isto é o que o blueprint chamou de "criar Natal sem alterar código".
+   */
+  app.post('/api/units', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const nome = String(req.body?.nome || '').trim();
+      if (nome.length < 2 || nome.length > 60) {
+        return res.status(400).json({ error: 'Informe o nome da unidade (2 a 60 caracteres).' });
+      }
+
+      const slug = nome
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '') // tira os acentos: 'São Gonçalo' -> 'sao-goncalo'
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      if (!slug) return res.status(400).json({ error: 'Nome inválido para unidade.' });
+
+      const { data: unidade, error: unidadeErr } = await req.db!
+        .from('units')
+        .insert({ nome, slug })
+        .select('id, nome, slug, ativo')
+        .single();
+      if (unidadeErr) {
+        if (/duplicate|unique/i.test(unidadeErr.message)) {
+          return res.status(409).json({ error: 'Já existe uma unidade com esse nome.' });
+        }
+        throw unidadeErr;
+      }
+
+      const { data: depositos, error: depErr } = await req.db!
+        .from('warehouses')
+        .insert([
+          { unit_id: unidade.id, nome: 'Almoxarifado Central', tipo: 'CENTRAL' },
+          { unit_id: unidade.id, nome: 'Almoxarifado de Obra', tipo: 'OBRA' },
+        ])
+        .select('id, nome, tipo, unit_id, ativo');
+      if (depErr) throw depErr;
+
+      // Saldo zero explícito em cada depósito novo, para cada material.
+      const { data: materiais, error: matErr } = await req.db!.from('materials').select('id');
+      if (matErr) throw matErr;
+      const zeros = (materiais || []).flatMap((m: any) =>
+        (depositos || []).map((d: any) => ({ material_id: m.id, warehouse_id: d.id, saldo: 0 })),
+      );
+      if (zeros.length > 0) {
+        const { error: zErr } = await req.db!
+          .from('stock_balances')
+          .upsert(zeros, { onConflict: 'warehouse_id,material_id' });
+        if (zErr) throw zErr;
+      }
+
+      console.info(`[POST /api/units] "${nome}" criada por ${req.user!.matricula} com ${depositos?.length} depósitos e ${zeros.length} saldos zerados.`);
+      res.status(201).json({ unidade, depositos });
+    } catch (err: any) {
+      console.error('[POST /api/units] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao criar unidade.' });
+    }
+  });
+
   // --------------------------- MATERIALS CRUD (admin) ---------------------------
   app.post('/api/materials', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const { nome, unidade_medida, qtd_volumes, fator_multiplicador, estoque_minimo, categoria } = req.body || {};
+      const { nome, unidade_medida, qtd_volumes, fator_multiplicador, estoque_minimo, categoria, unit_id } = req.body || {};
       if (!nome || !unidade_medida || qtd_volumes == null || fator_multiplicador == null || estoque_minimo == null) {
         return res.status(400).json({ error: 'Preencha todos os campos obrigatórios.' });
       }
 
       const saldoInicial = arredondar(Number(qtd_volumes) * Number(fator_multiplicador));
 
-      // O estoque inicial entra na Central. Resolver o depósito ANTES de criar
-      // o material: se não houver Central, é melhor não deixar material sem
-      // saldo em lugar nenhum.
+      // O estoque inicial entra na Central da unidade informada. Resolver o
+      // depósito ANTES de criar o material: se não houver Central, é melhor
+      // não deixar material sem saldo em lugar nenhum.
       const depositos = await depositosDaOrg(req.db!);
-      const central = acharDeposito(depositos, 'CENTRAL');
-      const obra = acharDeposito(depositos, 'OBRA');
+      let central: Deposito, obra: Deposito;
+      try {
+        const daUnidade = depositosDaUnidade(depositos, unit_id);
+        central = acharDeposito(daUnidade, 'CENTRAL');
+        obra = acharDeposito(daUnidade, 'OBRA');
+      } catch (e: any) {
+        return res.status(409).json({ error: e.message });
+      }
 
       const { data: material, error } = await req.db!
         .from('materials')
@@ -678,7 +750,7 @@ export function createApp() {
   app.post('/api/materials/:id/movement', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
       const { id } = req.params;
-      const { tipo_operacao, quantidade, justificativa } = req.body || {};
+      const { tipo_operacao, quantidade, justificativa, unit_id } = req.body || {};
 
       if (!tipo_operacao || quantidade == null || !justificativa) {
         return res.status(400).json({ error: 'Preencha operação, quantidade e justificativa.' });
@@ -705,12 +777,11 @@ export function createApp() {
       const depositos = await depositosDaOrg(req.db!);
       const nomeDo = (depositoId: string) => depositos.find((d) => d.id === depositoId)?.nome ?? depositoId;
 
-      // Hoje a operação diz "Central" ou "Obra" e o servidor resolve qual
-      // depósito é. Quando o front passar a mandar os ids, esta resolução some
-      // — e com ela a última dependência de existir uma unidade só.
+      // A operação diz "Central" ou "Obra"; a unidade diz de qual. Sem unidade
+      // informada só funciona enquanto houver uma — depois disso recusa.
       let lados: { origem_id?: string; destino_id?: string };
       try {
-        lados = depositosDoFluxo(fluxo, depositos);
+        lados = depositosDoFluxo(fluxo, depositosDaUnidade(depositos, unit_id));
       } catch (e: any) {
         return res.status(409).json({ error: e.message });
       }
@@ -782,9 +853,9 @@ export function createApp() {
   // --------------------------- RECONTAGEM (ajuste em lote) ---------------------------
   app.post('/api/materials/bulk-recount', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
-      const { location, warehouse_id, counts } = req.body || {};
+      const { location, warehouse_id, unit_id, counts } = req.body || {};
 
-      // O depósito vem pelo id (front novo) ou pelo tipo (front atual). Os dois
+      // O depósito vem pelo id, ou pelo tipo dentro de uma unidade. Os dois
       // caminhos acabam no mesmo lugar: um depósito concreto desta organização.
       const depositos = await depositosDaOrg(req.db!);
       let deposito: Deposito | undefined;
@@ -796,7 +867,7 @@ export function createApp() {
           return res.status(400).json({ error: 'Local inválido.' });
         }
         try {
-          deposito = acharDeposito(depositos, location);
+          deposito = acharDeposito(depositosDaUnidade(depositos, unit_id), location);
         } catch (e: any) {
           return res.status(409).json({ error: e.message });
         }

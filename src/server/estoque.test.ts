@@ -4,6 +4,7 @@ import {
   calcularMovimento,
   acharDeposito,
   depositosDoFluxo,
+  depositosDaUnidade,
   arredondar,
   totalDosDepositos,
   type Deposito,
@@ -147,6 +148,34 @@ describe('calcularMovimento — arredondamento', () => {
     expect(arredondar(987654.321)).toBe(987654.32);
     expect(arredondar(1.005)).toBe(1); // float: 1.005 é 1.00499...; o banco faz o mesmo
     expect(arredondar(-3.456)).toBe(-3.46);
+  });
+});
+
+describe('depositosDaUnidade — com uma unidade tudo serve; com duas, precisa dizer qual', () => {
+  const natal: Deposito[] = [
+    { id: 'nc', nome: 'Central de Natal', tipo: 'CENTRAL', unit_id: 'u2', ativo: true },
+    { id: 'no', nome: 'Obra de Natal', tipo: 'OBRA', unit_id: 'u2', ativo: true },
+  ];
+
+  it('uma unidade só: devolve tudo mesmo sem informar', () => {
+    expect(depositosDaUnidade(depositos)).toHaveLength(2);
+    expect(depositosDaUnidade(depositos, null)).toHaveLength(2);
+  });
+
+  it('duas unidades sem informar: recusa', () => {
+    expect(() => depositosDaUnidade([...depositos, ...natal])).toThrow(/mais de uma unidade/);
+  });
+
+  it('duas unidades informando: devolve só a pedida, e o Central dela é único', () => {
+    const deNatal = depositosDaUnidade([...depositos, ...natal], 'u2');
+    expect(deNatal.map((d) => d.id)).toEqual(['nc', 'no']);
+    expect(acharDeposito(deNatal, 'CENTRAL').id).toBe('nc');
+  });
+
+  it('unidade inexistente: recusa em vez de devolver vazio', () => {
+    // Vazio viraria "sem depósito CENTRAL" mais adiante — erro certo, mas o
+    // motivo real é outro, e a mensagem tem que dizer o motivo real.
+    expect(() => depositosDaUnidade(depositos, 'nao-existe')).toThrow(/Unidade sem depósito/);
   });
 });
 

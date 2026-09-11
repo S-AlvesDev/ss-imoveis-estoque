@@ -152,6 +152,26 @@ export function acharDeposito(depositos: Deposito[], tipo: TipoDeposito): Deposi
   return achados[0];
 }
 
+/**
+ * Os depósitos em que uma operação pode acontecer.
+ *
+ * Com uma unidade só, é tudo. Com mais de uma, a operação precisa dizer em
+ * qual — "o Central" passa a ser ambíguo, e ambiguidade em cima de saldo se
+ * resolve recusando, não escolhendo.
+ */
+export function depositosDaUnidade(depositos: Deposito[], unitId?: string | null): Deposito[] {
+  if (unitId) {
+    const daUnidade = depositos.filter((d) => d.unit_id === unitId);
+    if (daUnidade.length === 0) throw new Error('Unidade sem depósito cadastrado, ou inexistente.');
+    return daUnidade;
+  }
+  const unidades = new Set(depositos.map((d) => d.unit_id));
+  if (unidades.size > 1) {
+    throw new Error('Há mais de uma unidade. A operação precisa informar em qual unidade acontece.');
+  }
+  return depositos;
+}
+
 /** Resolve origem e destino de uma operação em ids de depósito. */
 export function depositosDoFluxo(
   fluxo: Fluxo,
