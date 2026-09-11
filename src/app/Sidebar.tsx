@@ -6,8 +6,8 @@ import {
 import { useAuth } from '@/store/auth';
 import { Stripes } from '@/shared/ui/Stripes';
 import { Logo } from '@/shared/ui/Logo';
-import { ADMIN_ROLES, OBRA_ROLES } from '@/shared/constants';
-import type { Unidade } from '@/shared/types';
+import { ADMIN_ROLES } from '@/shared/constants';
+import type { NivelAcesso, Unidade } from '@/shared/types';
 
 export type AppView = 'dashboard' | 'central' | 'obra' | 'materiais' | 'alertas' | 'suporte' | 'ajuda' | 'usuarios' | 'configuracoes';
 
@@ -54,25 +54,34 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-/** Grupos visíveis para o perfil, já sem os vazios. Operadores só veem o próprio almoxarifado. */
-export function navGroupsForRole(role: string): NavGroup[] {
+/** O que a pessoa pode no Central e na Obra da unidade em uso. */
+export interface AcessoNaUnidade {
+  central: NivelAcesso | null;
+  obra: NivelAcesso | null;
+}
+
+/**
+ * Grupos visíveis, já sem os vazios. As telas de Central e Obra aparecem
+ * para quem tem o depósito (qualquer nível) na unidade em uso — não é mais
+ * o cargo que decide. Administrador vê tudo.
+ */
+export function navGroupsFor(role: string, acesso: AcessoNaUnidade): NavGroup[] {
   const isAdmin = ADMIN_ROLES.includes(role);
-  const isObra = OBRA_ROLES.includes(role);
 
   return NAV_GROUPS.map((group) => ({
     label: group.label,
     items: group.items.filter((item) => {
       if (item.roles) return isAdmin;
-      if (item.view === 'central') return isAdmin || !isObra;
-      if (item.view === 'obra') return isAdmin || isObra;
+      if (item.view === 'central') return isAdmin || acesso.central !== null;
+      if (item.view === 'obra') return isAdmin || acesso.obra !== null;
       return true;
     }),
   })).filter((group) => group.items.length > 0);
 }
 
 /** Lista achatada — usada para decidir a tela inicial de cada perfil. */
-export function navItemsForRole(role: string): NavItem[] {
-  return navGroupsForRole(role).flatMap((g) => g.items);
+export function navItemsFor(role: string, acesso: AcessoNaUnidade): NavItem[] {
+  return navGroupsFor(role, acesso).flatMap((g) => g.items);
 }
 
 interface UnitSwitcherProps {
@@ -181,11 +190,12 @@ interface SidebarProps {
   unidade: Unidade | null;
   onChangeUnidade: (id: string) => void;
   onNovaUnidade?: () => void;
+  acesso: AcessoNaUnidade;
 }
 
-export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades, unidade, onChangeUnidade, onNovaUnidade }: SidebarProps) {
+export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades, unidade, onChangeUnidade, onNovaUnidade, acesso }: SidebarProps) {
   const { user, logout } = useAuth();
-  const groups = navGroupsForRole(user?.role || '');
+  const groups = navGroupsFor(user?.role || '', acesso);
 
   function handleSelect(view: AppView) {
     onChange(view);

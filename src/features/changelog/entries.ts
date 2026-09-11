@@ -24,6 +24,39 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '2.2',
+    data: '2026-09-11',
+    titulo: 'Configurações: cada unidade do seu jeito, e quem opera o quê',
+    resumo:
+      'O administrador desenha a empresa numa tela só: unidades, nome de cada almoxarifado, quais materiais cada unidade trabalha, e o que cada pessoa pode em cada depósito. O cargo deixou de decidir o acesso.',
+    mudancas: [
+      {
+        tipo: 'novo',
+        titulo: 'Aba Configurações',
+        descricao:
+          'Em Sistema → Configurações. Renomeie unidades e almoxarifados, escolha os materiais de cada unidade, desative uma unidade sem apagar nada.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Acesso por depósito, com nível',
+        descricao:
+          'Cada pessoa recebe, em cada depósito, "Opera" (registra entrada, consumo, remessa, recontagem) ou "Só consulta" (vê sem mexer). Quem não tem nenhum depósito de uma unidade não vê essa unidade. Quem tinha cargo de Central ou Obra continua com o mesmo acesso — só que agora dá para mudar.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Cada unidade é um estoque próprio',
+        descricao:
+          'O estoque mínimo se compara com o total da unidade. Faltar numa unidade é compra nela; o que outra unidade tem não entra na conta.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Unidade nova nasce vazia',
+        descricao:
+          'Em vez de 300 materiais zerados, a unidade começa sem nada e o administrador adiciona só o que ela trabalha — em lote, com busca.',
+      },
+    ],
+  },
+  {
     versao: '2.1',
     data: '2026-09-11',
     titulo: 'Unidades: o estoque pode ter mais de uma filial',

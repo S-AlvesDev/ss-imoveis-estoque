@@ -5,6 +5,7 @@ import { EmptyState } from '@/shared/ui/EmptyState';
 import { NovaUnidadeModal } from '@/features/unidades/NovaUnidadeModal';
 import type { Deposito, Material, Unidade } from '@/shared/types';
 import { UnidadeCard } from './UnidadeCard';
+import { AcessosSection } from './AcessosSection';
 
 interface ConfiguracoesProps {
   unidades: Unidade[];
@@ -28,7 +29,7 @@ export function Configuracoes({ unidades, depositos, catalogo, refetch, onSeleci
         <div>
           <h1 className="font-display text-2xl font-bold text-[var(--text)]">Configurações</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            Unidades, almoxarifados e o que cada unidade trabalha.
+            Unidades, almoxarifados, o que cada unidade trabalha e quem opera o quê.
           </p>
         </div>
         <Button icon={<Plus size={15} />} onClick={() => setCriando(true)}>
@@ -62,6 +63,8 @@ export function Configuracoes({ unidades, depositos, catalogo, refetch, onSeleci
           </div>
         )}
       </section>
+
+      <AcessosSection unidades={unidades} depositos={depositos} />
 
       <NovaUnidadeModal
         open={criando}

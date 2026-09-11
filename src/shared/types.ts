@@ -59,6 +59,14 @@ export interface MaterialMovement {
   materials?: { nome: string } | null;
 }
 
+/** O que uma pessoa pode num depósito. Administrador não tem atribuição: vê e opera tudo. */
+export type NivelAcesso = 'OPERA' | 'CONSULTA';
+
+export interface Acesso {
+  warehouse_id: string;
+  nivel: NivelAcesso;
+}
+
 export interface StaffUser {
   id: number;
   nome: string;
@@ -124,4 +132,6 @@ export interface ManagedUser {
   created_at: string;
   /** Sinaliza senha legada não hasheada, para a gestão poder forçar a troca. */
   senha_em_texto_puro: boolean;
+  /** Depósitos que a pessoa vê/opera. Vazio para administrador (acesso implícito e total). */
+  acessos: Acesso[];
 }

@@ -25,6 +25,8 @@ interface ObraProps {
   materialMovements: MaterialMovement[];
   staff: StaffUser[];
   refetch: () => Promise<void>;
+  /** Falso = só consulta: vê o estoque, não registra nada. */
+  podeOperar: boolean;
 }
 
 const OPERATIONS = [
@@ -32,7 +34,7 @@ const OPERATIONS = [
   { value: 'DEVOLUCAO_CENTRAL', label: 'Devolver p/ Central', color: 'bg-indigo-600 text-white' },
 ];
 
-export function Obra({ materials, materialMovements, staff, refetch }: ObraProps) {
+export function Obra({ materials, materialMovements, staff, refetch, podeOperar }: ObraProps) {
   const [category, setCategory] = useState<string>('TODAS');
   const [view, setView] = useState<'OBRA' | 'CENTRAL'>('OBRA');
   const [stockSearch, setStockSearch] = useState('');
@@ -80,9 +82,13 @@ export function Obra({ materials, materialMovements, staff, refetch }: ObraProps
           <h1 className="font-display text-2xl font-bold text-[var(--text)]">Almoxarifado de Obra</h1>
           <p className="text-sm text-[var(--text-muted)]">Consumo de materiais e devoluções para a central.</p>
         </div>
-        <Button variant="accent" icon={<ClipboardCheck size={16} />} onClick={() => setRecontagemOpen(true)}>
-          Recontagem Rápida
-        </Button>
+        {podeOperar ? (
+          <Button variant="accent" icon={<ClipboardCheck size={16} />} onClick={() => setRecontagemOpen(true)}>
+            Recontagem Rápida
+          </Button>
+        ) : (
+          <Badge variant="neutral">Só consulta</Badge>
+        )}
       </div>
 
       <Reveal className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -132,7 +138,13 @@ export function Obra({ materials, materialMovements, staff, refetch }: ObraProps
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <Card className="p-5 lg:col-span-2">
           <p className="mb-4 text-sm font-bold text-[var(--text)]">Registrar Movimentação</p>
-          <MovementForm materials={filteredMaterials} operations={OPERATIONS} onSubmit={handleMovement} />
+          {podeOperar ? (
+            <MovementForm materials={filteredMaterials} operations={OPERATIONS} onSubmit={handleMovement} />
+          ) : (
+            <p className="text-sm text-[var(--text-muted)]">
+              Você tem acesso de consulta a este depósito. Para registrar movimentações, peça ao administrador o nível “Opera” em Configurações.
+            </p>
+          )}
         </Card>
 
         <Card className="p-5 lg:col-span-3">

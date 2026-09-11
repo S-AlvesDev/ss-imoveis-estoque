@@ -47,16 +47,21 @@ export interface Fluxo {
   ajuste?: boolean;
   /** Como a operação aparece numa mensagem de erro, com artigo: "esta remessa", "este consumo". */
   rotulo: string;
+  /**
+   * De que lado a pessoa precisa ter permissão de operar. Quem manda a remessa
+   * é a origem; quem recebe entrada é o destino; devolução, qualquer um.
+   */
+  quemOpera: 'origem' | 'destino' | 'qualquer';
 }
 
 export const FLUXO_DA_OPERACAO: Record<string, Fluxo> = {
-  ENTRADA_CENTRAL: { destino: 'CENTRAL', rotulo: 'esta entrada' },
-  SAIDA: { origem: 'CENTRAL', rotulo: 'esta saída' },
-  REMESSA_OBRA: { origem: 'CENTRAL', destino: 'OBRA', rotulo: 'esta remessa' },
-  DEVOLUCAO_CENTRAL: { origem: 'OBRA', destino: 'CENTRAL', rotulo: 'esta devolução' },
-  CONSUMO_OBRA: { origem: 'OBRA', rotulo: 'este consumo' },
-  AJUSTE_CENTRAL: { destino: 'CENTRAL', ajuste: true, rotulo: 'este ajuste' },
-  AJUSTE_OBRA: { destino: 'OBRA', ajuste: true, rotulo: 'este ajuste' },
+  ENTRADA_CENTRAL: { destino: 'CENTRAL', rotulo: 'esta entrada', quemOpera: 'destino' },
+  SAIDA: { origem: 'CENTRAL', rotulo: 'esta saída', quemOpera: 'origem' },
+  REMESSA_OBRA: { origem: 'CENTRAL', destino: 'OBRA', rotulo: 'esta remessa', quemOpera: 'origem' },
+  DEVOLUCAO_CENTRAL: { origem: 'OBRA', destino: 'CENTRAL', rotulo: 'esta devolução', quemOpera: 'qualquer' },
+  CONSUMO_OBRA: { origem: 'OBRA', rotulo: 'este consumo', quemOpera: 'origem' },
+  AJUSTE_CENTRAL: { destino: 'CENTRAL', ajuste: true, rotulo: 'este ajuste', quemOpera: 'destino' },
+  AJUSTE_OBRA: { destino: 'OBRA', ajuste: true, rotulo: 'este ajuste', quemOpera: 'destino' },
 };
 
 /**

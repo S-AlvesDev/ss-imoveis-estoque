@@ -53,6 +53,7 @@ describe('scopedDb — leitura', () => {
       'units',
       'warehouses',
       'stock_balances',
+      'estoque_user_warehouses',
     ]) {
       expect(filtroDe(scopedDb(ORG_A).from(t).select('*'))).toBe(`eq.${ORG_A}`);
     }

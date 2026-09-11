@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import { supabaseServer } from '../lib/supabaseServer';
-import { ADMIN_ROLES, CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants';
+import { ADMIN_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants';
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
 import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
 import { scopedDb, type ScopedDb } from './tenant';
@@ -27,6 +27,7 @@ import {
   type Deposito,
   type SaldosPorDeposito,
 } from './estoque';
+import { acessosDoUsuario, podeVer, podeOperar, podeExecutar, type Acessos } from './acessos';
 
 /**
  * Tabela de identidades DO ESTOQUE. Antes o login vinha de `users`, que é
@@ -73,18 +74,6 @@ async function fetchAllRows<T = any>(buildQuery: () => any): Promise<T[]> {
   return all;
 }
 
-// Operações de movimentação de estoque e quais papéis podem executá-las.
-const OPERATION_ROLES: Record<string, string[]> = {
-  ENTRADA_CENTRAL: CENTRAL_ROLES,
-  SAIDA: CENTRAL_ROLES,
-  REMESSA_OBRA: CENTRAL_ROLES,
-  DEVOLUCAO_CENTRAL: ALL_INVENTORY_ROLES,
-  CONSUMO_OBRA: OBRA_ROLES,
-  // Ajustes de recontagem: cada equipe pode corrigir o saldo do próprio local (fica tudo auditado por quem fez).
-  AJUSTE_CENTRAL: CENTRAL_ROLES,
-  AJUSTE_OBRA: OBRA_ROLES,
-};
-
 interface AuthedUser {
   id: number;
   nome: string;
@@ -100,6 +89,8 @@ declare global {
       user?: AuthedUser;
       /** Acesso a dados já preso à organização da sessão. Ver withTenant. */
       db?: ScopedDb;
+      /** Depósitos que a pessoa pode ver/operar. `null` = administrador. Ver withAcessos. */
+      acessos?: Acessos;
     }
   }
 }
@@ -133,6 +124,20 @@ function withTenant(req: express.Request, res: express.Response, next: express.N
   }
   req.db = scopedDb(organizationId);
   next();
+}
+
+/**
+ * Carrega o que a pessoa pode ver e operar, por depósito. Depois de withTenant.
+ * Administrador não consulta nada: `null` significa "tudo".
+ */
+async function withAcessos(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    req.acessos = await acessosDoUsuario(req.db!, req.user!.id, req.user!.role);
+    next();
+  } catch (err: any) {
+    console.error('[withAcessos] erro:', err.message);
+    res.status(500).json({ error: 'Erro ao carregar permissões.' });
+  }
 }
 
 function requireRole(allowed: string[]) {
@@ -373,7 +378,7 @@ export function createApp() {
   });
 
   // --------------------------- DATA ---------------------------
-  app.get('/api/data', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.get('/api/data', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       // Toda leitura desta rota já nasce presa à organização da sessão.
       const db = scopedDb(req.user!.organization_id);
@@ -396,16 +401,27 @@ export function createApp() {
 
       if (materialsRes.error) throw materialsRes.error;
 
+      // Quem não é admin só recebe os depósitos que pode ver — e as unidades
+      // que têm algum deles. O saldo dos outros não sai do servidor.
+      const acessos = req.acessos ?? null;
+      const depositosVisiveis = depositos.filter((d) => podeVer(acessos, d.id));
+      const unidadesComAcesso = new Set(depositosVisiveis.map((d) => d.unit_id));
+      const unidadesVisiveis = unidades.filter((u) => unidadesComAcesso.has(u.id));
+      const visivel = new Set(depositosVisiveis.map((d) => d.id));
+
       // Cada material sai com o saldo por depósito ao lado das colunas antigas.
       // O front ainda lê as colunas; passa a ler `saldos` na próxima etapa.
       let divergentes = 0;
       const materials = (materialsRes.data || []).map((m: any) => {
-        const porDeposito: SaldosPorDeposito = saldos.get(m.id) || {};
+        const todos: SaldosPorDeposito = saldos.get(m.id) || {};
+        const porDeposito: SaldosPorDeposito = acessos === null
+          ? todos
+          : Object.fromEntries(Object.entries(todos).filter(([id]) => visivel.has(id)));
         // Os dois modelos têm que contar a mesma história. Se não contarem,
         // isso precisa aparecer no log ANTES de o front trocar de fonte —
         // depois, apareceria como número errado na tela de alguém.
         const totalColunas = arredondar(Number(m.saldo_central) + Number(m.saldo_obra));
-        if (totalColunas !== totalDosDepositos(porDeposito)) divergentes++;
+        if (totalColunas !== totalDosDepositos(todos)) divergentes++;
         return { ...m, saldos: porDeposito };
       });
 
@@ -417,8 +433,10 @@ export function createApp() {
         materials,
         materialMovements: movements,
         staff: staffRes.data || [],
-        unidades,
-        depositos,
+        unidades: unidadesVisiveis,
+        depositos: depositosVisiveis,
+        // O que ESTA pessoa pode fazer, para o front montar o menu. Admin: null.
+        acessos: acessos === null ? null : [...acessos.entries()].map(([warehouse_id, nivel]) => ({ warehouse_id, nivel })),
       });
     } catch (err: any) {
       console.error('[GET /api/data] erro:', err.message);
@@ -896,19 +914,13 @@ export function createApp() {
   });
 
   // --------------------------- MOVEMENTS ---------------------------
-  app.post('/api/materials/:id/movement', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.post('/api/materials/:id/movement', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       const { id } = req.params;
       const { tipo_operacao, quantidade, justificativa, unit_id } = req.body || {};
 
       if (!tipo_operacao || quantidade == null || !justificativa) {
         return res.status(400).json({ error: 'Preencha operação, quantidade e justificativa.' });
-      }
-
-      const allowedRoles = OPERATION_ROLES[tipo_operacao];
-      if (!allowedRoles) return res.status(400).json({ error: 'Operação inválida.' });
-      if (!allowedRoles.includes(req.user!.role)) {
-        return res.status(403).json({ error: 'Você não tem permissão para esta operação.' });
       }
 
       const { data: material, error: fetchError } = await req.db!
@@ -933,6 +945,12 @@ export function createApp() {
         lados = depositosDoFluxo(fluxo, depositosDaUnidade(depositos, unit_id));
       } catch (e: any) {
         return res.status(409).json({ error: e.message });
+      }
+
+      // Quem pode: a pessoa precisa OPERAR o lado certo da operação. Não é
+      // mais o cargo que responde isso — é a atribuição por depósito.
+      if (!podeExecutar(req.acessos ?? null, lados, fluxo.quemOpera)) {
+        return res.status(403).json({ error: 'Você não tem permissão para esta operação neste depósito.' });
       }
 
       const atuais = await saldosDoMaterial(req.db!, Number(id));
@@ -1000,7 +1018,7 @@ export function createApp() {
   });
 
   // --------------------------- RECONTAGEM (ajuste em lote) ---------------------------
-  app.post('/api/materials/bulk-recount', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+  app.post('/api/materials/bulk-recount', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       const { location, warehouse_id, unit_id, counts } = req.body || {};
 
@@ -1022,11 +1040,11 @@ export function createApp() {
         }
       }
 
-      // A permissão continua por tipo de depósito: quem cuida da Obra ajusta a
-      // Obra. Depósito de outro tipo ainda não tem dono definido — bloqueia.
+      // Quem opera o depósito pode recontá-lo. Depósito de outro tipo ainda
+      // não tem operação de ajuste definida — bloqueia.
       const tipo_operacao = deposito.tipo === 'CENTRAL' ? 'AJUSTE_CENTRAL' : deposito.tipo === 'OBRA' ? 'AJUSTE_OBRA' : null;
-      if (!tipo_operacao || !OPERATION_ROLES[tipo_operacao].includes(req.user!.role)) {
-        return res.status(403).json({ error: 'Você não tem permissão para ajustar este estoque.' });
+      if (!tipo_operacao || !podeOperar(req.acessos ?? null, deposito.id)) {
+        return res.status(403).json({ error: 'Você não tem permissão para ajustar este depósito.' });
       }
       if (!Array.isArray(counts) || counts.length === 0) {
         return res.status(400).json({ error: 'Nenhuma contagem enviada.' });
@@ -1305,10 +1323,23 @@ export function createApp() {
         .order('nome', { ascending: true });
       if (error) throw error;
 
+      // As atribuições de todo mundo numa consulta só, agrupadas por pessoa.
+      const { data: atribuicoes, error: aErr } = await req.db!
+        .from('estoque_user_warehouses')
+        .select('user_id, warehouse_id, nivel');
+      if (aErr) throw aErr;
+      const porUsuario = new Map<number, { warehouse_id: string; nivel: string }[]>();
+      for (const a of atribuicoes || []) {
+        const lista = porUsuario.get(a.user_id) || [];
+        lista.push({ warehouse_id: a.warehouse_id, nivel: a.nivel });
+        porUsuario.set(a.user_id, lista);
+      }
+
       // A senha nunca sai daqui — só o indicador de que ainda está em texto puro.
       const users = (data || []).map(({ senha, ...u }: any) => ({
         ...u,
         senha_em_texto_puro: !/^\$2[aby]\$/.test(String(senha || '')),
+        acessos: porUsuario.get(u.id) || [],
       }));
       res.json({ users });
     } catch (err: any) {
@@ -1415,6 +1446,54 @@ export function createApp() {
     } catch (err: any) {
       console.error('[DELETE /api/users/:id] erro:', err.message);
       res.status(500).json({ error: 'Erro ao excluir usuário.' });
+    }
+  });
+
+  /**
+   * Define o que uma pessoa pode ver e operar, depósito a depósito. Substitui
+   * o conjunto inteiro: o que não vier na lista deixa de valer. Administrador
+   * não tem atribuição — a dele é implícita e total.
+   */
+  app.put('/api/users/:id/acessos', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { data: alvo } = await req.db!.from(ESTOQUE_USERS).select('id, nome, role').eq('id', id).maybeSingle();
+      if (!alvo) return res.status(404).json({ error: 'Usuário não encontrado.' });
+      if (!assertManageable(alvo.role)) return res.status(403).json({ error: 'Este usuário não pertence ao estoque.' });
+      if (ADMIN_ROLES.includes(alvo.role)) {
+        return res.status(400).json({ error: 'Administrador vê e opera tudo; não recebe atribuição por depósito.' });
+      }
+
+      const pedidos: { warehouse_id: string; nivel: string }[] = Array.isArray(req.body?.acessos) ? req.body.acessos : [];
+      for (const a of pedidos) {
+        if (!a?.warehouse_id || !['OPERA', 'CONSULTA'].includes(a?.nivel)) {
+          return res.status(400).json({ error: 'Cada acesso precisa de depósito e nível (OPERA ou CONSULTA).' });
+        }
+      }
+
+      // Só depósitos desta organização — o req.db já filtra, então um id de
+      // fora simplesmente não aparece e é recusado.
+      const depositos = await depositosDaOrg(req.db!);
+      const validos = new Set(depositos.map((d) => d.id));
+      const invalido = pedidos.find((a) => !validos.has(a.warehouse_id));
+      if (invalido) return res.status(404).json({ error: 'Depósito não encontrado.' });
+
+      // Troca tudo: apaga o que havia e grava o novo conjunto. Um por depósito.
+      const { error: dErr } = await req.db!.from('estoque_user_warehouses').delete().eq('user_id', id);
+      if (dErr) throw dErr;
+      const unicos = new Map(pedidos.map((a) => [a.warehouse_id, a.nivel]));
+      if (unicos.size > 0) {
+        const { error: iErr } = await req.db!.from('estoque_user_warehouses').insert(
+          [...unicos.entries()].map(([warehouse_id, nivel]) => ({ user_id: id, warehouse_id, nivel })),
+        );
+        if (iErr) throw iErr;
+      }
+
+      console.info(`[PUT /api/users/:id/acessos] ${alvo.nome} agora tem ${unicos.size} atribuição(ões), por ${req.user!.matricula}.`);
+      res.json({ success: true, acessos: [...unicos.entries()].map(([warehouse_id, nivel]) => ({ warehouse_id, nivel })) });
+    } catch (err: any) {
+      console.error('[PUT /api/users/:id/acessos] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao salvar acessos.' });
     }
   });
 

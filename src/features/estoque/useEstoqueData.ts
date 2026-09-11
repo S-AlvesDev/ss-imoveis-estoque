@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { useUnidade } from '@/store/unidade';
-import type { Deposito, Material, MaterialMovement, StaffUser, Unidade } from '@/shared/types';
+import type { Acesso, Deposito, Material, MaterialMovement, NivelAcesso, StaffUser, Unidade } from '@/shared/types';
 import { toast } from 'sonner';
 
 /** O que o servidor devolve. Os materiais vêm com `saldos` por depósito. */
@@ -11,9 +11,11 @@ interface EstoqueResposta {
   staff: StaffUser[];
   unidades: Unidade[];
   depositos: Deposito[];
+  /** O que ESTA pessoa pode, por depósito. `null` = administrador. */
+  acessos: Acesso[] | null;
 }
 
-const VAZIO: EstoqueResposta = { materials: [], materialMovements: [], staff: [], unidades: [], depositos: [] };
+const VAZIO: EstoqueResposta = { materials: [], materialMovements: [], staff: [], unidades: [], depositos: [], acessos: null };
 
 /**
  * Carrega o estoque e o entrega já visto de uma unidade.
@@ -89,6 +91,18 @@ export function useEstoqueData() {
   // O que as telas de operação mostram: só o que existe nesta unidade.
   const materials = useMemo(() => catalogo.filter((m) => m.na_unidade), [catalogo]);
 
+  // O nível da pessoa num depósito da unidade em uso. Administrador opera
+  // tudo; quem não tem o depósito não o vê — e a tela dele nem aparece.
+  const nivelEm = useCallback(
+    (tipo: 'CENTRAL' | 'OBRA'): NivelAcesso | null => {
+      const deposito = depositosDaUnidade.find((d) => d.tipo === tipo);
+      if (!deposito) return null;
+      if (data.acessos === null) return 'OPERA';
+      return data.acessos.find((a) => a.warehouse_id === deposito.id)?.nivel ?? null;
+    },
+    [depositosDaUnidade, data.acessos],
+  );
+
   return {
     /** Materiais que existem na unidade em uso. É o que Central, Obra, alertas e dashboard mostram. */
     materials,
@@ -102,6 +116,8 @@ export function useEstoqueData() {
     unidade,
     /** Só os depósitos da unidade em uso. */
     depositosDaUnidade,
+    /** Nível da pessoa no Central/Obra da unidade em uso: 'OPERA', 'CONSULTA' ou null (não vê). */
+    nivelEm,
     loading,
     refetch,
   };

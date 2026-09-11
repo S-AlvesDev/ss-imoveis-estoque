@@ -15,11 +15,11 @@ import { Ajuda } from '@/pages/Ajuda/Ajuda';
 import { Configuracoes } from '@/pages/Configuracoes/Configuracoes';
 import { UpdateBanner } from '@/features/changelog/UpdateGuide';
 import { useUnidade } from '@/store/unidade';
-import { Sidebar, navItemsForRole, type AppView } from '@/app/Sidebar';
+import { Sidebar, navItemsFor, type AppView } from '@/app/Sidebar';
 import { TopBar } from '@/app/TopBar';
 import { Stripes } from '@/shared/ui/Stripes';
 import { Logo } from '@/shared/ui/Logo';
-import { ADMIN_ROLES, OBRA_ROLES } from '@/shared/constants';
+import { ADMIN_ROLES } from '@/shared/constants';
 
 function LoadingScreen() {
   return (
@@ -66,22 +66,27 @@ const VIEW_TITLES: Record<AppView, string> = {
 };
 
 function InventoryApp({ role }: { role: string }) {
-  // A tela inicial varia por perfil: admin no dashboard, operador no seu almoxarifado.
-  const landingView = navItemsForRole(role)[0]?.view ?? 'suporte';
-  const [view, setView] = useState<AppView>(landingView);
+  const [view, setView] = useState<AppView | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { materials, catalogo, materialMovements, staff, unidades, depositos, unidade, loading, refetch } = useEstoqueData();
+  const { materials, catalogo, materialMovements, staff, unidades, depositos, unidade, nivelEm, loading, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
 
   if (loading) return <LoadingScreen />;
 
   const isAdmin = ADMIN_ROLES.includes(role);
-  const isObra = OBRA_ROLES.includes(role) && !isAdmin;
+  const acesso = { central: nivelEm('CENTRAL'), obra: nivelEm('OBRA') };
+  const itens = navItemsFor(role, acesso);
+
+  // A tela inicial é a primeira que a pessoa pode ver: admin no dashboard,
+  // operador no depósito dele. Se a tela atual sumiu (trocou de unidade e
+  // não tem acesso lá), volta para a primeira disponível.
+  const landingView: AppView = itens[0]?.view ?? 'suporte';
+  const viewAtual: AppView = view && itens.some((i) => i.view === view) ? view : landingView;
 
   return (
     <div className="flex min-h-screen bg-[var(--bg)]">
       <Sidebar
-        active={view}
+        active={viewAtual}
         onChange={setView}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
@@ -89,28 +94,29 @@ function InventoryApp({ role }: { role: string }) {
         unidade={unidade}
         onChangeUnidade={setUnidade}
         onNovaUnidade={isAdmin ? () => setView('configuracoes') : undefined}
+        acesso={acesso}
       />
       <div className="min-w-0 flex-1">
-        <TopBar title={VIEW_TITLES[view]} subtitle={unidade?.nome} onMenuClick={() => setMobileNavOpen(true)} />
+        <TopBar title={VIEW_TITLES[viewAtual]} subtitle={unidade?.nome} onMenuClick={() => setMobileNavOpen(true)} />
         <main className="p-6">
           {/* Novidades aparecem uma vez por versao, na tela inicial de cada perfil. */}
-          {view === landingView && <UpdateBanner />}
-          <ViewTransition viewKey={view}>
-            {view === 'dashboard' && <Dashboard materials={materials} materialMovements={materialMovements} />}
-            {view === 'alertas' && <Alertas materials={materials} />}
-            {view === 'materiais' && (
+          {viewAtual === landingView && <UpdateBanner />}
+          <ViewTransition viewKey={viewAtual}>
+            {viewAtual === 'dashboard' && <Dashboard materials={materials} materialMovements={materialMovements} />}
+            {viewAtual === 'alertas' && <Alertas materials={materials} />}
+            {viewAtual === 'materiais' && (
               <Admin materials={catalogo} materialMovements={materialMovements} staff={staff} refetch={refetch} />
             )}
-            {view === 'central' && (
-              <Central materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} />
+            {viewAtual === 'central' && (
+              <Central materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} podeOperar={acesso.central === 'OPERA'} />
             )}
-            {view === 'obra' && (
-              <Obra materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} />
+            {viewAtual === 'obra' && (
+              <Obra materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} podeOperar={acesso.obra === 'OPERA'} />
             )}
-            {view === 'suporte' && <Suporte materials={catalogo} />}
-            {view === 'ajuda' && <Ajuda />}
-            {view === 'usuarios' && isAdmin && <Usuarios />}
-            {view === 'configuracoes' && isAdmin && (
+            {viewAtual === 'suporte' && <Suporte materials={catalogo} />}
+            {viewAtual === 'ajuda' && <Ajuda />}
+            {viewAtual === 'usuarios' && isAdmin && <Usuarios />}
+            {viewAtual === 'configuracoes' && isAdmin && (
               <Configuracoes unidades={unidades} depositos={depositos} catalogo={catalogo} refetch={refetch} onSelecionarUnidade={setUnidade} />
             )}
           </ViewTransition>

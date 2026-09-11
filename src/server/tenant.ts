@@ -42,6 +42,7 @@ const TABELAS_DA_ORGANIZACAO = new Set([
   'units',
   'warehouses',
   'stock_balances',
+  'estoque_user_warehouses',
 ]);
 
 const clientesPorOrg = new Map<string, SupabaseClient>();
