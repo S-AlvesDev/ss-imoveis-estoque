@@ -27,6 +27,8 @@ export interface Deposito {
   tipo: TipoDeposito;
   unit_id: string;
   ativo: boolean;
+  /** Quando a unidade dele foi criada. Serve para achar a unidade original. */
+  unidade_criada_em?: string;
 }
 
 /** Quanto existe de um material, por depósito. */
@@ -195,11 +197,26 @@ export function depositosDoFluxo(
 export async function depositosDaOrg(db: ScopedDb): Promise<Deposito[]> {
   const { data, error } = await db
     .from('warehouses')
-    .select('id, nome, tipo, unit_id, ativo')
+    .select('id, nome, tipo, unit_id, ativo, units(created_at)')
     .eq('ativo', true)
     .order('nome', { ascending: true });
   if (error) throw error;
-  return (data || []) as Deposito[];
+  return (data || []).map(({ units, ...d }: any) => ({ ...d, unidade_criada_em: units?.created_at })) as Deposito[];
+}
+
+/**
+ * Os depósitos da unidade ORIGINAL — a mais antiga da organização.
+ *
+ * As colunas saldo_central/saldo_obra existem desde antes de haver unidades,
+ * e a migração 009 copiou o que elas tinham para os depósitos da primeira
+ * unidade. Enquanto as colunas existirem, elas espelham essa unidade e só
+ * ela: qualquer outra é invisível para o modelo antigo, de propósito.
+ */
+export function depositosOriginais(depositos: Deposito[]): Deposito[] {
+  const datas = depositos.map((d) => d.unidade_criada_em).filter(Boolean) as string[];
+  if (datas.length === 0) return depositos;
+  const primeira = datas.reduce((a, b) => (a < b ? a : b));
+  return depositos.filter((d) => d.unidade_criada_em === primeira);
 }
 
 export interface Unidade {
@@ -310,8 +327,12 @@ async function espelharColunas(
 ): Promise<void> {
   const patch: Record<string, any> = { updated_at: agora };
 
-  const central = depositos.find((d) => d.tipo === 'CENTRAL');
-  const obra = depositos.find((d) => d.tipo === 'OBRA');
+  // Só a unidade original. `find` na lista inteira escolheria "o primeiro
+  // Central por ordem de nome" — e uma entrada em Natal iria parar na
+  // coluna de Nova Cruz assim que Natal tivesse um nome que viesse antes.
+  const originais = depositosOriginais(depositos);
+  const central = originais.find((d) => d.tipo === 'CENTRAL');
+  const obra = originais.find((d) => d.tipo === 'OBRA');
   if (central && novos[central.id] !== undefined) patch.saldo_central = arredondar(novos[central.id]);
   if (obra && novos[obra.id] !== undefined) patch.saldo_obra = arredondar(novos[obra.id]);
 

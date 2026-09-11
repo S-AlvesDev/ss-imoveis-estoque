@@ -16,6 +16,7 @@ import {
   calcularMovimento,
   depositosDoFluxo,
   depositosDaUnidade,
+  depositosOriginais,
   acharDeposito,
   depositosDaOrg,
   unidadesDaOrg,
@@ -408,6 +409,8 @@ export function createApp() {
       const unidadesComAcesso = new Set(depositosVisiveis.map((d) => d.unit_id));
       const unidadesVisiveis = unidades.filter((u) => unidadesComAcesso.has(u.id));
       const visivel = new Set(depositosVisiveis.map((d) => d.id));
+      // As colunas antigas espelham só a unidade original; é com ela que se compara.
+      const originais = new Set(depositosOriginais(depositos).map((d) => d.id));
 
       // Cada material sai com o saldo por depósito ao lado das colunas antigas.
       // O front ainda lê as colunas; passa a ler `saldos` na próxima etapa.
@@ -421,7 +424,8 @@ export function createApp() {
         // isso precisa aparecer no log ANTES de o front trocar de fonte —
         // depois, apareceria como número errado na tela de alguém.
         const totalColunas = arredondar(Number(m.saldo_central) + Number(m.saldo_obra));
-        if (totalColunas !== totalDosDepositos(todos)) divergentes++;
+        const totalOriginal = totalDosDepositos(Object.fromEntries(Object.entries(todos).filter(([id]) => originais.has(id))));
+        if (totalColunas !== totalOriginal) divergentes++;
         return { ...m, saldos: porDeposito };
       });
 
@@ -973,10 +977,12 @@ export function createApp() {
       // interface. Quando o servidor tinha a própria cópia, as duas podiam
       // divergir sem ninguém perceber — e é a divergência, não a regra, que
       // volta a produzir alarme falso.
-      const central = depositos.find((d) => d.tipo === 'CENTRAL');
-      const obra = depositos.find((d) => d.tipo === 'OBRA');
-      const novoSaldoCentral = central ? calculo.novos[central.id] ?? 0 : 0;
-      const novoSaldoObra = obra ? calculo.novos[obra.id] ?? 0 : 0;
+      // Da unidade onde a operação aconteceu — não "o primeiro Central da lista".
+      const daUnidade = depositosDaUnidade(depositos, unit_id);
+      const central = daUnidade.find((d) => d.tipo === 'CENTRAL');
+      const obra = daUnidade.find((d) => d.tipo === 'OBRA');
+      const novoSaldoCentral = central ? calculo.novos[central.id] ?? atuais[central.id] ?? 0 : 0;
+      const novoSaldoObra = obra ? calculo.novos[obra.id] ?? atuais[obra.id] ?? 0 : 0;
       const saldoAtualizado = {
         saldo_central: novoSaldoCentral,
         saldo_obra: novoSaldoObra,

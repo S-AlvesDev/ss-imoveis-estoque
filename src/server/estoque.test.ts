@@ -5,6 +5,7 @@ import {
   acharDeposito,
   depositosDoFluxo,
   depositosDaUnidade,
+  depositosOriginais,
   arredondar,
   totalDosDepositos,
   type Deposito,
@@ -256,5 +257,25 @@ describe('equivalência com a lógica antiga', () => {
     }
 
     expect(comparadas).toBe(5000);
+  });
+});
+
+describe('depositosOriginais — as colunas antigas espelham só a primeira unidade', () => {
+  it('escolhe pela data da unidade, nunca pela ordem de nome', () => {
+    // Natal batizou o Central de "A-Depósito": por nome ele vem ANTES do de
+    // Nova Cruz. Um find() na lista inteira pegaria o de Natal, e uma entrada
+    // lá iria parar na coluna de Nova Cruz. A data não tem essa armadilha.
+    const lista: Deposito[] = [
+      { id: 'natal-c', nome: 'A-Depósito', tipo: 'CENTRAL', unit_id: 'u2', ativo: true, unidade_criada_em: '2026-09-11T11:13:00Z' },
+      { id: 'natal-o', nome: 'A-Obra', tipo: 'OBRA', unit_id: 'u2', ativo: true, unidade_criada_em: '2026-09-11T11:13:00Z' },
+      { id: CENTRAL, nome: 'Almoxarifado Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true, unidade_criada_em: '2026-09-10T11:59:00Z' },
+      { id: OBRA, nome: 'Almoxarifado de Obra', tipo: 'OBRA', unit_id: 'u1', ativo: true, unidade_criada_em: '2026-09-10T11:59:00Z' },
+    ];
+    expect(depositosOriginais(lista).map((d) => d.id).sort()).toEqual([CENTRAL, OBRA].sort());
+    expect(acharDeposito(depositosOriginais(lista), 'CENTRAL').id).toBe(CENTRAL);
+  });
+
+  it('sem data (dado antigo) devolve tudo, em vez de devolver nada', () => {
+    expect(depositosOriginais(depositos)).toHaveLength(2);
   });
 });
