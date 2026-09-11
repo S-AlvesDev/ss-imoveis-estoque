@@ -38,6 +38,10 @@ const TABELAS_DA_ORGANIZACAO = new Set([
   'support_ticket_materials',
   'support_ticket_comments',
   'estoque_users',
+  // Fase 2: unidade, depósito e saldo por depósito.
+  'units',
+  'warehouses',
+  'stock_balances',
 ]);
 
 const clientesPorOrg = new Map<string, SupabaseClient>();
@@ -107,6 +111,11 @@ export function scopedDb(organizationId: string) {
           return daOrg ? q.eq('organization_id', organizationId) : q;
         },
         insert: (linhas: any): any => base.insert(daOrg ? comOrganizacao(linhas, organizationId) : linhas),
+        // O saldo por depósito é gravado por upsert: a linha pode já existir
+        // (material antigo) ou não (depósito recém-criado), e o caminho tem que
+        // ser o mesmo nos dois casos.
+        upsert: (linhas: any, opcoes?: any): any =>
+          base.upsert(daOrg ? comOrganizacao(linhas, organizationId) : linhas, opcoes),
         update: (patch: any): any => {
           const q = base.update(patch);
           return daOrg ? q.eq('organization_id', organizationId) : q;

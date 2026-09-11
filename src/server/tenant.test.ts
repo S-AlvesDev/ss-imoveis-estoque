@@ -50,6 +50,9 @@ describe('scopedDb — leitura', () => {
       'support_ticket_materials',
       'support_ticket_comments',
       'estoque_users',
+      'units',
+      'warehouses',
+      'stock_balances',
     ]) {
       expect(filtroDe(scopedDb(ORG_A).from(t).select('*'))).toBe(`eq.${ORG_A}`);
     }
@@ -78,6 +81,25 @@ describe('scopedDb — escrita', () => {
     // Uma rota que passasse organization_id à mão não pode gravar em outra conta.
     const q = scopedDb(ORG_A).from('materials').insert({ nome: 'X', organization_id: ORG_B });
     expect((q as any).body.organization_id).toBe(ORG_A);
+  });
+
+  it('marca a linha do upsert com a organização', () => {
+    // O saldo por depósito é gravado por upsert; se escapar do filtro, uma
+    // organização sobrescreveria o saldo da outra.
+    const q = scopedDb(ORG_A)
+      .from('stock_balances')
+      .upsert({ material_id: 1, warehouse_id: 'w1', saldo: 10 }, { onConflict: 'warehouse_id,material_id' });
+    expect((q as any).body).toMatchObject({ material_id: 1, organization_id: ORG_A });
+  });
+
+  it('marca todas as linhas de um upsert em lote', () => {
+    const q = scopedDb(ORG_A).from('stock_balances').upsert([
+      { material_id: 1, warehouse_id: 'w1', saldo: 10 },
+      { material_id: 1, warehouse_id: 'w2', saldo: 5 },
+    ]);
+    const body = (q as any).body as any[];
+    expect(body).toHaveLength(2);
+    expect(body.every((r) => r.organization_id === ORG_A)).toBe(true);
   });
 
   it('limita update e delete à própria organização', () => {
