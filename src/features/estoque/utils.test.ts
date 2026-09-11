@@ -25,6 +25,37 @@ describe('stockTotal', () => {
     const doBanco = { saldo_central: '30', saldo_obra: '12', estoque_minimo: '5' } as never;
     expect(stockTotal(doBanco)).toBe(42);
   });
+
+  it('com mais de uma unidade, soma TODOS os depósitos — não só os da tela', () => {
+    // saldo_central/saldo_obra são a visão de Nova Cruz (30 + 12). Natal tem
+    // mais 100. O mínimo da empresa se compara com 142, não com 42.
+    const m = {
+      ...material(30, 12, 0),
+      saldos: { 'nova-cruz-central': 30, 'nova-cruz-obra': 12, 'natal-central': 100, 'natal-obra': 0 },
+    };
+    expect(stockTotal(m)).toBe(142);
+  });
+
+  it('saldos vazio cai para os dois campos, nunca para zero', () => {
+    expect(stockTotal({ ...material(30, 12, 0), saldos: {} })).toBe(42);
+  });
+});
+
+describe('stockStatus — com mais de uma unidade', () => {
+  it('zerado nesta unidade mas existindo em outra é TRANSFERIR, não RUPTURA', () => {
+    // Nova Cruz está em 0/0; Natal tem 50. Para quem olha de Nova Cruz, falta
+    // aqui mas existe na empresa: é remessa entre unidades, não compra.
+    const m = { ...material(0, 0, 10), saldos: { ncC: 0, ncO: 0, natalC: 50, natalO: 0 } };
+    expect(stockStatus(m, 'obra')).toBe('TRANSFERIR');
+    expect(stockStatus(m, 'central')).toBe('TRANSFERIR');
+    // Visto da empresa: 50 está acima do mínimo 10.
+    expect(stockStatus(m, 'empresa')).toBe('OK');
+  });
+
+  it('zerado em TODAS as unidades é RUPTURA', () => {
+    const m = { ...material(0, 0, 10), saldos: { ncC: 0, ncO: 0, natalC: 0, natalO: 0 } };
+    expect(stockStatus(m, 'obra')).toBe('RUPTURA');
+  });
 });
 
 describe('stockStatus — o bug dos 99 alarmes falsos', () => {

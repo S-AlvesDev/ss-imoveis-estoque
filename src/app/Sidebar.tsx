@@ -1,9 +1,13 @@
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AlertTriangle, BookOpen, HardHat, LayoutDashboard, LifeBuoy, LogOut, Package, Users, Warehouse } from 'lucide-react';
+import {
+  AlertTriangle, BookOpen, Building2, Check, ChevronsUpDown, HardHat, LayoutDashboard, LifeBuoy, LogOut, Package, Plus, Users, Warehouse,
+} from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { Stripes } from '@/shared/ui/Stripes';
 import { Logo } from '@/shared/ui/Logo';
 import { ADMIN_ROLES, OBRA_ROLES } from '@/shared/constants';
+import type { Unidade } from '@/shared/types';
 
 export type AppView = 'dashboard' | 'central' | 'obra' | 'materiais' | 'alertas' | 'suporte' | 'ajuda' | 'usuarios';
 
@@ -70,14 +74,115 @@ export function navItemsForRole(role: string): NavItem[] {
   return navGroupsForRole(role).flatMap((g) => g.items);
 }
 
+interface UnitSwitcherProps {
+  unidades: Unidade[];
+  unidade: Unidade | null;
+  onChange: (id: string) => void;
+  /** Só admin cria unidade; para os demais o botão não aparece. */
+  onCreate?: () => void;
+}
+
+/**
+ * A unidade que as telas estão mostrando. Trocar aqui troca o que "Central" e
+ * "Obra" significam em todo o sistema — e para onde cada operação vai.
+ */
+function UnitSwitcher({ unidades, unidade, onChange, onCreate }: UnitSwitcherProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const fechar = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', fechar);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', fechar);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+
+  if (!unidade) return null;
+
+  return (
+    <div ref={ref} className="relative px-3 pb-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-left transition-colors hover:border-[var(--brand)]/40"
+      >
+        <Building2 size={15} className="shrink-0 text-[var(--brand)]" />
+        <span className="min-w-0 flex-1 leading-tight">
+          <span className="block font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Unidade</span>
+          <span className="block truncate text-sm font-semibold text-[var(--text)]">{unidade.nome}</span>
+        </span>
+        <ChevronsUpDown size={14} className="shrink-0 text-[var(--text-muted)]" />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.ul
+            role="listbox"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.12 }}
+            className="absolute inset-x-3 z-10 mt-1 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] py-1 shadow-xl"
+          >
+            {unidades.map((u) => {
+              const atual = u.id === unidade.id;
+              return (
+                <li key={u.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={atual}
+                    onClick={() => { onChange(u.id); setOpen(false); }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--brand)]/10 ${
+                      atual ? 'font-semibold text-[var(--text)]' : 'text-[var(--text-muted)]'
+                    }`}
+                  >
+                    <span className="w-4 shrink-0">{atual && <Check size={14} className="text-[var(--brand)]" />}</span>
+                    <span className="truncate">{u.nome}</span>
+                  </button>
+                </li>
+              );
+            })}
+            {onCreate && (
+              <li className="mt-1 border-t border-[var(--border)] pt-1">
+                <button
+                  type="button"
+                  onClick={() => { onCreate(); setOpen(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-[var(--brand)] transition-colors hover:bg-[var(--brand)]/10"
+                >
+                  <Plus size={14} className="w-4 shrink-0" />
+                  Nova unidade
+                </button>
+              </li>
+            )}
+          </motion.ul>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 interface SidebarProps {
   active: AppView;
   onChange: (v: AppView) => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
+  unidades: Unidade[];
+  unidade: Unidade | null;
+  onChangeUnidade: (id: string) => void;
+  onNovaUnidade?: () => void;
 }
 
-export function Sidebar({ active, onChange, mobileOpen, onMobileClose }: SidebarProps) {
+export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades, unidade, onChangeUnidade, onNovaUnidade }: SidebarProps) {
   const { user, logout } = useAuth();
   const groups = navGroupsForRole(user?.role || '');
 
@@ -121,6 +226,10 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose }: Sidebar
             <p className="font-display text-sm font-bold text-[var(--text)]">SS Imóveis</p>
             <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--text-muted)]">Estoque</p>
           </div>
+        </div>
+
+        <div className="relative">
+          <UnitSwitcher unidades={unidades} unidade={unidade} onChange={onChangeUnidade} onCreate={onNovaUnidade} />
         </div>
 
         {/* Rola por dentro se um dia a navegação passar da altura da tela. */}

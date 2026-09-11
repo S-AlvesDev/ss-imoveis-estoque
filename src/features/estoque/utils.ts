@@ -14,13 +14,31 @@ export type StockScope = 'central' | 'obra' | 'empresa';
  */
 export type StockStatus = 'RUPTURA' | 'TRANSFERIR' | 'ABAIXO' | 'ATENCAO' | 'OK';
 
-type StockFields = Pick<Material, 'saldo_central' | 'saldo_obra' | 'estoque_minimo'>;
+/**
+ * O que a regra de saldo precisa saber de um material. `saldos` é opcional
+ * porque o servidor, ao avaliar um alerta, monta este objeto só com os dois
+ * campos — e porque um material sem `saldos` deve continuar funcionando com
+ * as duas colunas, nunca sumir da conta.
+ */
+type StockFields = Pick<Material, 'saldo_central' | 'saldo_obra' | 'estoque_minimo'> & {
+  saldos?: Record<string, number>;
+};
 
 /** Margem acima do mínimo que ainda merece atenção (1.5x = 50% de folga). */
 const ATTENTION_FACTOR = 1.5;
 
-/** Saldo da empresa: o que existe somando os dois almoxarifados. */
+/**
+ * Saldo da EMPRESA: tudo que existe, em todos os depósitos de todas as
+ * unidades. É contra isso que o estoque mínimo é comparado — faltar em Natal
+ * enquanto sobra em Nova Cruz é problema de transferência, não de compra.
+ *
+ * Sem `saldos`, soma os dois campos: é o que o servidor faz ao avaliar um
+ * alerta, e o que qualquer material vindo de uma versão antiga faria.
+ */
 export function stockTotal(m: StockFields): number {
+  if (m.saldos && Object.keys(m.saldos).length > 0) {
+    return Object.values(m.saldos).reduce((s, v) => s + Number(v), 0);
+  }
   return Number(m.saldo_central) + Number(m.saldo_obra);
 }
 
@@ -36,11 +54,12 @@ export function stockStatus(m: StockFields, scope: StockScope = 'empresa'): Stoc
   // Zerado nos dois almoxarifados: falta de verdade.
   if (total <= 0) return 'RUPTURA';
 
-  // Visto de um almoxarifado: vazio aqui mas disponível no outro -> basta transferir.
+  // Visto de um almoxarifado: vazio aqui, mas existe em algum lugar da
+  // empresa -> basta transferir. "Algum lugar" é o total, não só o vizinho:
+  // com mais de uma unidade, o material pode estar na Central de outra.
   if (scope !== 'empresa') {
     const aqui = scope === 'central' ? Number(m.saldo_central) : Number(m.saldo_obra);
-    const outro = scope === 'central' ? Number(m.saldo_obra) : Number(m.saldo_central);
-    if (aqui <= 0 && outro > 0) return 'TRANSFERIR';
+    if (aqui <= 0 && total > 0) return 'TRANSFERIR';
   }
 
   if (minimo > 0) {

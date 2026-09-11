@@ -6,6 +6,7 @@ import { Button } from '@/shared/ui/Button';
 import { Stripes } from '@/shared/ui/Stripes';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { api } from '@/lib/api';
+import { naUnidade } from '@/store/unidade';
 import type { Material } from '@/shared/types';
 import { formatNumber } from './utils';
 import { CATEGORIES } from '@/shared/constants';
@@ -115,10 +116,10 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
     }
     setSubmitting(true);
     try {
-      await api.post('/api/materials/bulk-recount', {
+      await api.post('/api/materials/bulk-recount', naUnidade({
         location,
         counts: diffs.map((d) => ({ material_id: d.material.id, contagem: d.contagem })),
-      });
+      }));
       toast.success(`${diffs.length} ajuste(s) de recontagem aplicado(s).`);
       const remainingCounts = { ...counts };
       const nextMatched = new Set(matched);

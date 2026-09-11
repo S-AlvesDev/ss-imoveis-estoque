@@ -24,6 +24,50 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '2.1',
+    data: '2026-09-11',
+    titulo: 'Unidades: o estoque pode ter mais de uma filial',
+    resumo:
+      'O sistema deixou de pensar em "um Central e uma Obra". Cada unidade tem os seus, e o administrador cria uma nova pela tela, sem mexer em nada. Para quem usa uma unidade só, nada muda.',
+    mudancas: [
+      {
+        tipo: 'novo',
+        titulo: 'Seletor de unidade na barra lateral',
+        descricao:
+          'Logo abaixo do logo. As telas de Central e Obra passam a mostrar os almoxarifados da unidade escolhida, e toda operação vai para ela. A escolha fica salva no seu navegador.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Criar unidade pela tela',
+        descricao:
+          'No seletor, o administrador tem "Nova unidade". Ela nasce com Central e Obra próprios e todos os materiais com saldo zero — o estoque das outras unidades não muda.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Estoque mínimo continua sendo da empresa',
+        descricao:
+          'Com mais de uma unidade, o total que se compara ao mínimo soma todas elas. Faltar numa unidade enquanto sobra em outra aparece como "requer remessa", não como compra.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Histórico sabe de onde saiu e para onde foi',
+        descricao:
+          'Cada movimentação registra o depósito de origem e o de destino. Uma remessa não é "saída" nem "entrada": é a mesma quantidade mudando de lugar.',
+      },
+      {
+        tipo: 'correcao',
+        titulo: 'Exclusão registrava só o saldo da Central',
+        descricao:
+          'Um material que existia só na Obra era excluído com "saldo era 0" no histórico. Agora o registro guarda o total.',
+      },
+      {
+        tipo: 'correcao',
+        titulo: 'Entrada com quantidade negativa era aceita',
+        descricao: 'Reduzia o saldo e o histórico dizia "entrada". Agora é recusada; só o ajuste de recontagem aceita valor negativo.',
+      },
+    ],
+  },
+  {
     versao: '2.0',
     data: '2026-09-08',
     titulo: 'Alertas confiáveis, novas telas e visual novo',

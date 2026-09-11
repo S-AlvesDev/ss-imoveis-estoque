@@ -15,6 +15,7 @@ import { HistoryModal } from '@/features/estoque/HistoryModal';
 import { MovementForm } from '@/features/estoque/MovementForm';
 import { Recontagem } from '@/features/estoque/Recontagem';
 import { api } from '@/lib/api';
+import { naUnidade } from '@/store/unidade';
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 import { formatNumber, stockStatus } from '@/features/estoque/utils';
 import { CATEGORIES } from '@/shared/constants';
@@ -67,7 +68,7 @@ export function Central({ materials, materialMovements, staff, refetch }: Centra
   }, [filteredMaterials, stockSearch]);
 
   async function handleMovement(payload: { material_id: number; tipo_operacao: string; quantidade: number; justificativa: string }) {
-    await api.post(`/api/materials/${payload.material_id}/movement`, payload);
+    await api.post(`/api/materials/${payload.material_id}/movement`, naUnidade(payload));
     await refetch();
   }
 

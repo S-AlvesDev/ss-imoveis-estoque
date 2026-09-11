@@ -13,6 +13,7 @@ import { BulkMinimoModal } from './BulkMinimoModal';
 import { MergeModal } from './MergeModal';
 import { exportMaterialsToWord } from './exportWord';
 import { api } from '@/lib/api';
+import { naUnidade } from '@/store/unidade';
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 import { formatNumber, stockStatus } from '@/features/estoque/utils';
 import { CATEGORIES } from '@/shared/constants';
@@ -108,14 +109,14 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
     }
     setCreating(true);
     try {
-      await api.post('/api/materials', {
+      await api.post('/api/materials', naUnidade({
         nome: form.nome,
         categoria: form.categoria,
         unidade_medida: form.unidade_medida,
         qtd_volumes: Number(form.qtd_volumes),
         fator_multiplicador: Number(form.fator_multiplicador),
         estoque_minimo: Number(form.estoque_minimo),
-      });
+      }));
       toast.success('Material cadastrado com sucesso.');
       setForm(emptyForm);
       setAllowDuplicate(false);

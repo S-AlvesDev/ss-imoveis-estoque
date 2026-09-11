@@ -6,6 +6,7 @@ import { Button } from '@/shared/ui/Button';
 import { Input, Select } from '@/shared/ui/Field';
 import { MovementForm } from '@/features/estoque/MovementForm';
 import { api } from '@/lib/api';
+import { naUnidade } from '@/store/unidade';
 import type { Material } from '@/shared/types';
 import { CATEGORIES } from '@/shared/constants';
 import { formatNumber } from '@/features/estoque/utils';
@@ -53,7 +54,7 @@ export function ManageModal({ material, onClose, onUpdated }: ManageModalProps) 
   }
 
   async function handleMovement(payload: { material_id: number; tipo_operacao: string; quantidade: number; justificativa: string }) {
-    await api.post(`/api/materials/${payload.material_id}/movement`, payload);
+    await api.post(`/api/materials/${payload.material_id}/movement`, naUnidade(payload));
     await onUpdated();
   }
 

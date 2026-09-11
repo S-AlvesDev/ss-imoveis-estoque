@@ -1,9 +1,39 @@
+/** Uma filial: "Nova Cruz", "Natal". Toda unidade tem um Central e uma Obra. */
+export interface Unidade {
+  id: string;
+  nome: string;
+  slug: string;
+  ativo: boolean;
+}
+
+export type TipoDeposito = 'CENTRAL' | 'OBRA' | 'OUTRO';
+
+/** O lugar onde o material fica. Pertence a uma unidade. */
+export interface Deposito {
+  id: string;
+  nome: string;
+  tipo: TipoDeposito;
+  unit_id: string;
+  ativo: boolean;
+}
+
 export interface Material {
   id: number;
   nome: string;
   unidade_medida: string;
   qtd_volumes: number;
   fator_multiplicador: number;
+  /**
+   * Saldo por depósito, para TODAS as unidades: { [depositoId]: saldo }.
+   * É a fonte da verdade; os dois campos abaixo derivam dela.
+   */
+  saldos: Record<string, number>;
+  /**
+   * Saldo no Central e na Obra DA UNIDADE SELECIONADA. Derivados de `saldos`
+   * no cliente (useEstoqueData), não lidos do servidor. Existem porque todo
+   * lugar da interface que fala "Central" e "Obra" está falando da unidade
+   * que a pessoa escolheu — e uma tela de almoxarifado mostra um almoxarifado.
+   */
   saldo_central: number;
   saldo_obra: number;
   estoque_minimo: number;

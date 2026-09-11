@@ -19,10 +19,12 @@ function initials(name?: string) {
 
 interface TopBarProps {
   title: string;
+  /** A unidade em uso. Ao lado do título, para nunca restar dúvida de qual almoxarifado é. */
+  subtitle?: string;
   onMenuClick?: () => void;
 }
 
-export function TopBar({ title, onMenuClick }: TopBarProps) {
+export function TopBar({ title, subtitle, onMenuClick }: TopBarProps) {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
 
@@ -39,7 +41,12 @@ export function TopBar({ title, onMenuClick }: TopBarProps) {
           </button>
         )}
         <Logo size={28} />
-        <span className="hidden font-display text-sm font-bold text-[var(--text)] sm:inline">{title}</span>
+        <span className="hidden min-w-0 items-baseline gap-2 sm:flex">
+          <span className="font-display text-sm font-bold text-[var(--text)]">{title}</span>
+          {subtitle && (
+            <span className="truncate font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--text-muted)]">{subtitle}</span>
+          )}
+        </span>
       </div>
 
       <div className="flex flex-1 items-center justify-end gap-2 sm:gap-3">
