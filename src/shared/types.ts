@@ -36,6 +36,12 @@ export interface Material {
    */
   saldo_central: number;
   saldo_obra: number;
+  /**
+   * Se o material existe na unidade selecionada (tem linha de saldo em algum
+   * depósito dela). Derivado no cliente. Falso = a unidade não trabalha com
+   * ele; não aparece nas telas de operação.
+   */
+  na_unidade: boolean;
   estoque_minimo: number;
   categoria: string;
   created_at: string;

@@ -1,6 +1,10 @@
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 
-/** Onde o saldo está sendo avaliado. 'empresa' = Central + Obra somados. */
+/**
+ * Onde o saldo está sendo avaliado. 'empresa' = Central + Obra da unidade
+ * somados (o nome vem de quando só existia uma unidade; o significado é "a
+ * unidade inteira").
+ */
 export type StockScope = 'central' | 'obra' | 'empresa';
 
 /**
@@ -15,30 +19,23 @@ export type StockScope = 'central' | 'obra' | 'empresa';
 export type StockStatus = 'RUPTURA' | 'TRANSFERIR' | 'ABAIXO' | 'ATENCAO' | 'OK';
 
 /**
- * O que a regra de saldo precisa saber de um material. `saldos` é opcional
- * porque o servidor, ao avaliar um alerta, monta este objeto só com os dois
- * campos — e porque um material sem `saldos` deve continuar funcionando com
- * as duas colunas, nunca sumir da conta.
+ * O que a regra de saldo precisa saber de um material: o saldo nos dois
+ * almoxarifados DA UNIDADE que está sendo olhada, e o mínimo.
  */
-type StockFields = Pick<Material, 'saldo_central' | 'saldo_obra' | 'estoque_minimo'> & {
-  saldos?: Record<string, number>;
-};
+type StockFields = Pick<Material, 'saldo_central' | 'saldo_obra' | 'estoque_minimo'>;
 
 /** Margem acima do mínimo que ainda merece atenção (1.5x = 50% de folga). */
 const ATTENTION_FACTOR = 1.5;
 
 /**
- * Saldo da EMPRESA: tudo que existe, em todos os depósitos de todas as
- * unidades. É contra isso que o estoque mínimo é comparado — faltar em Natal
- * enquanto sobra em Nova Cruz é problema de transferência, não de compra.
+ * Saldo da UNIDADE: Central + Obra dela.
  *
- * Sem `saldos`, soma os dois campos: é o que o servidor faz ao avaliar um
- * alerta, e o que qualquer material vindo de uma versão antiga faria.
+ * É contra isso que o estoque mínimo é comparado. Cada unidade é um estoque
+ * próprio, com os próprios almoxarifados: faltar em Natal enquanto sobra em
+ * Nova Cruz é compra em Natal, não pedido a Nova Cruz. Só o que está dentro
+ * da mesma unidade se resolve com remessa.
  */
 export function stockTotal(m: StockFields): number {
-  if (m.saldos && Object.keys(m.saldos).length > 0) {
-    return Object.values(m.saldos).reduce((s, v) => s + Number(v), 0);
-  }
   return Number(m.saldo_central) + Number(m.saldo_obra);
 }
 
@@ -54,12 +51,13 @@ export function stockStatus(m: StockFields, scope: StockScope = 'empresa'): Stoc
   // Zerado nos dois almoxarifados: falta de verdade.
   if (total <= 0) return 'RUPTURA';
 
-  // Visto de um almoxarifado: vazio aqui, mas existe em algum lugar da
-  // empresa -> basta transferir. "Algum lugar" é o total, não só o vizinho:
-  // com mais de uma unidade, o material pode estar na Central de outra.
+  // Visto de um almoxarifado: vazio aqui mas disponível no outro almoxarifado
+  // da MESMA unidade -> basta transferir. Outra unidade não conta: é outro
+  // estoque, e o que falta aqui se resolve comprando aqui.
   if (scope !== 'empresa') {
     const aqui = scope === 'central' ? Number(m.saldo_central) : Number(m.saldo_obra);
-    if (aqui <= 0 && total > 0) return 'TRANSFERIR';
+    const outro = scope === 'central' ? Number(m.saldo_obra) : Number(m.saldo_central);
+    if (aqui <= 0 && outro > 0) return 'TRANSFERIR';
   }
 
   if (minimo > 0) {

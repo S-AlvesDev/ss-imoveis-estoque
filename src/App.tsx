@@ -12,8 +12,8 @@ import { Alertas } from '@/pages/Alertas/Alertas';
 import { Suporte } from '@/pages/Suporte/Suporte';
 import { Usuarios } from '@/pages/Usuarios/Usuarios';
 import { Ajuda } from '@/pages/Ajuda/Ajuda';
+import { Configuracoes } from '@/pages/Configuracoes/Configuracoes';
 import { UpdateBanner } from '@/features/changelog/UpdateGuide';
-import { NovaUnidadeModal } from '@/features/unidades/NovaUnidadeModal';
 import { useUnidade } from '@/store/unidade';
 import { Sidebar, navItemsForRole, type AppView } from '@/app/Sidebar';
 import { TopBar } from '@/app/TopBar';
@@ -62,28 +62,21 @@ const VIEW_TITLES: Record<AppView, string> = {
   suporte: 'Suporte',
   ajuda: 'Ajuda',
   usuarios: 'Usuários',
+  configuracoes: 'Configurações',
 };
 
 function InventoryApp({ role }: { role: string }) {
-  // Cada perfil abre na própria tela: admin no dashboard, operador no seu almoxarifado.
   // A tela inicial varia por perfil: admin no dashboard, operador no seu almoxarifado.
   const landingView = navItemsForRole(role)[0]?.view ?? 'suporte';
   const [view, setView] = useState<AppView>(landingView);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [novaUnidadeOpen, setNovaUnidadeOpen] = useState(false);
-  const { materials, materialMovements, staff, unidades, unidade, loading, refetch } = useEstoqueData();
+  const { materials, catalogo, materialMovements, staff, unidades, depositos, unidade, loading, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
 
   if (loading) return <LoadingScreen />;
 
   const isAdmin = ADMIN_ROLES.includes(role);
   const isObra = OBRA_ROLES.includes(role) && !isAdmin;
-
-  // A unidade nova já abre selecionada: quem cria quer ver que ela existe.
-  async function handleUnidadeCriada(nova: { id: string }) {
-    await refetch();
-    setUnidade(nova.id);
-  }
 
   return (
     <div className="flex min-h-screen bg-[var(--bg)]">
@@ -95,11 +88,8 @@ function InventoryApp({ role }: { role: string }) {
         unidades={unidades}
         unidade={unidade}
         onChangeUnidade={setUnidade}
-        onNovaUnidade={isAdmin ? () => setNovaUnidadeOpen(true) : undefined}
+        onNovaUnidade={isAdmin ? () => setView('configuracoes') : undefined}
       />
-      {isAdmin && (
-        <NovaUnidadeModal open={novaUnidadeOpen} onClose={() => setNovaUnidadeOpen(false)} onCreated={handleUnidadeCriada} />
-      )}
       <div className="min-w-0 flex-1">
         <TopBar title={VIEW_TITLES[view]} subtitle={unidade?.nome} onMenuClick={() => setMobileNavOpen(true)} />
         <main className="p-6">
@@ -109,7 +99,7 @@ function InventoryApp({ role }: { role: string }) {
             {view === 'dashboard' && <Dashboard materials={materials} materialMovements={materialMovements} />}
             {view === 'alertas' && <Alertas materials={materials} />}
             {view === 'materiais' && (
-              <Admin materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} />
+              <Admin materials={catalogo} materialMovements={materialMovements} staff={staff} refetch={refetch} />
             )}
             {view === 'central' && (
               <Central materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} />
@@ -117,9 +107,12 @@ function InventoryApp({ role }: { role: string }) {
             {view === 'obra' && (
               <Obra materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} />
             )}
-            {view === 'suporte' && <Suporte materials={materials} />}
+            {view === 'suporte' && <Suporte materials={catalogo} />}
             {view === 'ajuda' && <Ajuda />}
             {view === 'usuarios' && isAdmin && <Usuarios />}
+            {view === 'configuracoes' && isAdmin && (
+              <Configuracoes unidades={unidades} depositos={depositos} catalogo={catalogo} refetch={refetch} onSelecionarUnidade={setUnidade} />
+            )}
           </ViewTransition>
         </main>
       </div>

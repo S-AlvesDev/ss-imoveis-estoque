@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, BookOpen, Building2, Check, ChevronsUpDown, HardHat, LayoutDashboard, LifeBuoy, LogOut, Package, Plus, Users, Warehouse,
+  AlertTriangle, BookOpen, Building2, Check, ChevronsUpDown, HardHat, LayoutDashboard, LifeBuoy, LogOut, Package, Plus, Settings, Users, Warehouse,
 } from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { Stripes } from '@/shared/ui/Stripes';
@@ -9,7 +9,7 @@ import { Logo } from '@/shared/ui/Logo';
 import { ADMIN_ROLES, OBRA_ROLES } from '@/shared/constants';
 import type { Unidade } from '@/shared/types';
 
-export type AppView = 'dashboard' | 'central' | 'obra' | 'materiais' | 'alertas' | 'suporte' | 'ajuda' | 'usuarios';
+export type AppView = 'dashboard' | 'central' | 'obra' | 'materiais' | 'alertas' | 'suporte' | 'ajuda' | 'usuarios' | 'configuracoes';
 
 /** Compatibilidade com o nome antigo, ainda usado em algumas assinaturas. */
 export type AdminView = AppView;
@@ -49,6 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
       { view: 'suporte', label: 'Suporte', icon: <LifeBuoy size={17} /> },
       { view: 'ajuda', label: 'Ajuda', icon: <BookOpen size={17} /> },
       { view: 'usuarios', label: 'Usuários', icon: <Users size={17} />, roles: ADMIN_ROLES },
+      { view: 'configuracoes', label: 'Configurações', icon: <Settings size={17} />, roles: ADMIN_ROLES },
     ],
   },
 ];

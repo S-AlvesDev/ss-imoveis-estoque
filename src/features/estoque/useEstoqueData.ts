@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 
 /** O que o servidor devolve. Os materiais vêm com `saldos` por depósito. */
 interface EstoqueResposta {
-  materials: Omit<Material, 'saldo_central' | 'saldo_obra'>[];
+  materials: Omit<Material, 'saldo_central' | 'saldo_obra' | 'na_unidade'>[];
   materialMovements: MaterialMovement[];
   staff: StaffUser[];
   unidades: Unidade[];
@@ -24,8 +24,8 @@ const VAZIO: EstoqueResposta = { materials: [], materialMovements: [], staff: []
  * `saldo_central` e `saldo_obra` de cada material passam a ser o saldo nos
  * depósitos desta unidade. Nenhuma tela precisa saber que existe outra.
  *
- * O total da empresa (alertas, mínimo) continua somando TODAS as unidades:
- * ver stockTotal em utils.ts, que usa `saldos` inteiro.
+ * Cada unidade é um estoque próprio: o mínimo se compara com o total DELA
+ * (ver stockTotal em utils.ts), e só o que ela tem aparece nas telas.
  */
 export function useEstoqueData() {
   const [data, setData] = useState<EstoqueResposta>(VAZIO);
@@ -66,20 +66,34 @@ export function useEstoqueData() {
     [data.depositos, unidade],
   );
 
-  const materials = useMemo<Material[]>(() => {
+  // Catálogo: todos os materiais da organização, vistos da unidade em uso.
+  // Um material ESTÁ na unidade quando tem linha de saldo em algum depósito
+  // dela — é o admin quem o coloca lá. Zero é saldo; ausência de linha é
+  // "não trabalha com isso aqui".
+  const catalogo = useMemo<Material[]>(() => {
     const central = depositosDaUnidade.find((d) => d.tipo === 'CENTRAL');
     const obra = depositosDaUnidade.find((d) => d.tipo === 'OBRA');
-    return data.materials.map((m) => ({
-      ...m,
-      saldos: m.saldos ?? {},
-      // Depósito sem linha ainda (unidade recém-criada) é zero, não ausência.
-      saldo_central: central ? Number(m.saldos?.[central.id] ?? 0) : 0,
-      saldo_obra: obra ? Number(m.saldos?.[obra.id] ?? 0) : 0,
-    }));
+    const idsDaUnidade = new Set(depositosDaUnidade.map((d) => d.id));
+    return data.materials.map((m) => {
+      const saldos = m.saldos ?? {};
+      return {
+        ...m,
+        saldos,
+        na_unidade: Object.keys(saldos).some((depositoId) => idsDaUnidade.has(depositoId)),
+        saldo_central: central ? Number(saldos[central.id] ?? 0) : 0,
+        saldo_obra: obra ? Number(saldos[obra.id] ?? 0) : 0,
+      };
+    });
   }, [data.materials, depositosDaUnidade]);
 
+  // O que as telas de operação mostram: só o que existe nesta unidade.
+  const materials = useMemo(() => catalogo.filter((m) => m.na_unidade), [catalogo]);
+
   return {
+    /** Materiais que existem na unidade em uso. É o que Central, Obra, alertas e dashboard mostram. */
     materials,
+    /** Todos os materiais da organização, com `na_unidade` dizendo se estão nesta. */
+    catalogo,
     materialMovements: data.materialMovements,
     staff: data.staff,
     unidades: data.unidades,

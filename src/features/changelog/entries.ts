@@ -44,9 +44,9 @@ export const RELEASES: Release[] = [
       },
       {
         tipo: 'melhoria',
-        titulo: 'Estoque mínimo continua sendo da empresa',
+        titulo: 'Cada unidade é um estoque próprio',
         descricao:
-          'Com mais de uma unidade, o total que se compara ao mínimo soma todas elas. Faltar numa unidade enquanto sobra em outra aparece como "requer remessa", não como compra.',
+          'O estoque mínimo se compara com o total da unidade (Central + Obra dela). Faltar numa unidade é compra nela — o que outra unidade tem não entra na conta. Remessa continua valendo só entre a Central e a Obra da mesma unidade.',
       },
       {
         tipo: 'melhoria',

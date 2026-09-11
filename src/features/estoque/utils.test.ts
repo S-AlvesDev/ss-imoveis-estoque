@@ -26,35 +26,31 @@ describe('stockTotal', () => {
     expect(stockTotal(doBanco)).toBe(42);
   });
 
-  it('com mais de uma unidade, soma TODOS os depósitos — não só os da tela', () => {
-    // saldo_central/saldo_obra são a visão de Nova Cruz (30 + 12). Natal tem
-    // mais 100. O mínimo da empresa se compara com 142, não com 42.
+  it('com mais de uma unidade, conta SÓ a unidade que está sendo olhada', () => {
+    // saldo_central/saldo_obra são a visão de Nova Cruz (30 + 12). Natal ter
+    // mais 100 não muda nada aqui: é outro estoque. O mínimo se compara com
+    // 42, e o que faltar em Nova Cruz se compra em Nova Cruz.
     const m = {
       ...material(30, 12, 0),
       saldos: { 'nova-cruz-central': 30, 'nova-cruz-obra': 12, 'natal-central': 100, 'natal-obra': 0 },
     };
-    expect(stockTotal(m)).toBe(142);
-  });
-
-  it('saldos vazio cai para os dois campos, nunca para zero', () => {
-    expect(stockTotal({ ...material(30, 12, 0), saldos: {} })).toBe(42);
+    expect(stockTotal(m)).toBe(42);
   });
 });
 
 describe('stockStatus — com mais de uma unidade', () => {
-  it('zerado nesta unidade mas existindo em outra é TRANSFERIR, não RUPTURA', () => {
-    // Nova Cruz está em 0/0; Natal tem 50. Para quem olha de Nova Cruz, falta
-    // aqui mas existe na empresa: é remessa entre unidades, não compra.
+  it('zerado nesta unidade é RUPTURA mesmo que outra unidade tenha', () => {
+    // Nova Cruz está em 0/0; Natal tem 50. Para Nova Cruz isso é falta de
+    // verdade — a decisão certa é comprar, não pedir a Natal.
     const m = { ...material(0, 0, 10), saldos: { ncC: 0, ncO: 0, natalC: 50, natalO: 0 } };
-    expect(stockStatus(m, 'obra')).toBe('TRANSFERIR');
-    expect(stockStatus(m, 'central')).toBe('TRANSFERIR');
-    // Visto da empresa: 50 está acima do mínimo 10.
-    expect(stockStatus(m, 'empresa')).toBe('OK');
+    expect(stockStatus(m, 'obra')).toBe('RUPTURA');
+    expect(stockStatus(m, 'central')).toBe('RUPTURA');
+    expect(stockStatus(m, 'empresa')).toBe('RUPTURA');
   });
 
-  it('zerado em TODAS as unidades é RUPTURA', () => {
-    const m = { ...material(0, 0, 10), saldos: { ncC: 0, ncO: 0, natalC: 0, natalO: 0 } };
-    expect(stockStatus(m, 'obra')).toBe('RUPTURA');
+  it('remessa só vale dentro da mesma unidade', () => {
+    // Obra de Nova Cruz vazia, Central de Nova Cruz com 20: remessa.
+    expect(stockStatus(material(20, 0, 10), 'obra')).toBe('TRANSFERIR');
   });
 });
 

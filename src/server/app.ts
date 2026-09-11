@@ -428,9 +428,11 @@ export function createApp() {
 
   // --------------------------- UNIDADES (admin) ---------------------------
   /**
-   * Cria uma unidade com os dois depósitos que toda unidade tem, e uma linha
-   * de saldo zero para cada material em cada um. Assim a unidade nova já
-   * aparece em toda tela com "0", em vez de aparecer como ausência.
+   * Cria uma unidade com os dois depósitos que toda unidade tem. Nasce SEM
+   * material: um material existe numa unidade quando o admin o coloca lá
+   * (POST /api/units/:id/materials). Uma filial nova não trabalha com o
+   * catálogo inteiro da matriz, e listar 300 itens zerados esconderia os que
+   * ela de fato tem.
    *
    * Isto é o que o blueprint chamou de "criar Natal sem alterar código".
    */
@@ -470,24 +472,171 @@ export function createApp() {
         .select('id, nome, tipo, unit_id, ativo');
       if (depErr) throw depErr;
 
-      // Saldo zero explícito em cada depósito novo, para cada material.
-      const { data: materiais, error: matErr } = await req.db!.from('materials').select('id');
-      if (matErr) throw matErr;
-      const zeros = (materiais || []).flatMap((m: any) =>
-        (depositos || []).map((d: any) => ({ material_id: m.id, warehouse_id: d.id, saldo: 0 })),
-      );
-      if (zeros.length > 0) {
-        const { error: zErr } = await req.db!
-          .from('stock_balances')
-          .upsert(zeros, { onConflict: 'warehouse_id,material_id' });
-        if (zErr) throw zErr;
-      }
-
-      console.info(`[POST /api/units] "${nome}" criada por ${req.user!.matricula} com ${depositos?.length} depósitos e ${zeros.length} saldos zerados.`);
+      console.info(`[POST /api/units] "${nome}" criada por ${req.user!.matricula} com ${depositos?.length} depósitos.`);
       res.status(201).json({ unidade, depositos });
     } catch (err: any) {
       console.error('[POST /api/units] erro:', err.message);
       res.status(500).json({ error: 'Erro ao criar unidade.' });
+    }
+  });
+
+  /** Renomeia ou desativa uma unidade. Desativar não apaga nada: some do seletor. */
+  app.patch('/api/units/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const patch: Record<string, any> = {};
+      if (req.body?.nome !== undefined) {
+        const nome = String(req.body.nome).trim();
+        if (nome.length < 2 || nome.length > 60) return res.status(400).json({ error: 'Nome deve ter de 2 a 60 caracteres.' });
+        patch.nome = nome;
+      }
+      if (req.body?.ativo !== undefined) patch.ativo = Boolean(req.body.ativo);
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para alterar.' });
+
+      if (patch.ativo === false) {
+        // A última unidade ativa não pode ser desativada: sem unidade não há
+        // onde operar, e a tela ficaria sem "Central" nem "Obra" para mostrar.
+        const { count } = await req.db!.from('units').select('*', { count: 'exact', head: true }).eq('ativo', true);
+        if ((count ?? 0) <= 1) return res.status(409).json({ error: 'Não dá para desativar a única unidade ativa.' });
+      }
+
+      const { data, error } = await req.db!.from('units').update(patch).eq('id', req.params.id).select('id, nome, slug, ativo').single();
+      if (error || !data) return res.status(404).json({ error: 'Unidade não encontrada.' });
+      res.json({ unidade: data });
+    } catch (err: any) {
+      console.error('[PATCH /api/units/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao atualizar unidade.' });
+    }
+  });
+
+  /** Renomeia um depósito. O tipo (CENTRAL/OBRA) não muda: é o que diz quem opera ali. */
+  app.patch('/api/warehouses/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const nome = String(req.body?.nome || '').trim();
+      if (nome.length < 2 || nome.length > 60) return res.status(400).json({ error: 'Nome deve ter de 2 a 60 caracteres.' });
+
+      const { data, error } = await req.db!.from('warehouses').update({ nome }).eq('id', req.params.id).select('id, nome, tipo, unit_id, ativo').single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'Já existe um depósito com esse nome nesta unidade.' });
+        throw error;
+      }
+      if (!data) return res.status(404).json({ error: 'Depósito não encontrado.' });
+      res.json({ deposito: data });
+    } catch (err: any) {
+      console.error('[PATCH /api/warehouses/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao renomear depósito.' });
+    }
+  });
+
+  /**
+   * Coloca materiais numa unidade: cria a linha de saldo zero em cada depósito
+   * dela. Idempotente — material que já está lá continua com o saldo que tem.
+   */
+  app.post('/api/units/:id/materials', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const ids: number[] = Array.isArray(req.body?.material_ids) ? req.body.material_ids.map(Number).filter(Number.isFinite) : [];
+      if (ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um material.' });
+
+      const depositos = (await depositosDaOrg(req.db!)).filter((d) => d.unit_id === req.params.id);
+      if (depositos.length === 0) return res.status(404).json({ error: 'Unidade não encontrada.' });
+
+      // Só materiais que existem nesta organização — o filtro do req.db garante.
+      const { data: existentes, error: matErr } = await req.db!.from('materials').select('id').in('id', ids);
+      if (matErr) throw matErr;
+      const validos = (existentes || []).map((m: any) => m.id as number);
+
+      // "ignoreDuplicates" é o que faz ser idempotente: quem já tem linha
+      // mantém o saldo, em vez de ser zerado por engano.
+      const zeros = validos.flatMap((materialId: number) => depositos.map((d) => ({ material_id: materialId, warehouse_id: d.id, saldo: 0 })));
+      if (zeros.length > 0) {
+        const { error } = await req.db!
+          .from('stock_balances')
+          .upsert(zeros, { onConflict: 'warehouse_id,material_id', ignoreDuplicates: true });
+        if (error) throw error;
+      }
+
+      res.json({ success: true, adicionados: validos.length });
+    } catch (err: any) {
+      console.error('[POST /api/units/:id/materials] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao adicionar materiais à unidade.' });
+    }
+  });
+
+  /**
+   * Tira de uma unidade todo material que pode sair: saldo zero em todos os
+   * depósitos dela e nenhuma movimentação ali. Existe para desfazer o "entrou
+   * o catálogo inteiro" de uma unidade nova — 300 cliques um a um não é opção.
+   */
+  app.delete('/api/units/:id/materials', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const depositos = (await depositosDaOrg(req.db!)).filter((d) => d.unit_id === req.params.id);
+      if (depositos.length === 0) return res.status(404).json({ error: 'Unidade não encontrada.' });
+      const depositoIds = depositos.map((d) => d.id);
+
+      // Materiais que têm linha nesta unidade e, entre elas, algum saldo ≠ 0.
+      const { data: linhas, error: lErr } = await req.db!
+        .from('stock_balances').select('material_id, saldo').in('warehouse_id', depositoIds);
+      if (lErr) throw lErr;
+      const comSaldo = new Set<number>();
+      const todos = new Set<number>();
+      for (const l of linhas || []) {
+        todos.add(l.material_id);
+        if (Number(l.saldo) !== 0) comSaldo.add(l.material_id);
+      }
+
+      // E os que já tiveram movimentação em algum depósito daqui.
+      const { data: movs, error: mErr } = await req.db!
+        .from('material_movements').select('material_id')
+        .or(`warehouse_origem_id.in.(${depositoIds.join(',')}),warehouse_destino_id.in.(${depositoIds.join(',')})`);
+      if (mErr) throw mErr;
+      const comHistorico = new Set<number>((movs || []).map((m: any) => m.material_id).filter((x: any) => x != null));
+
+      const removiveis = [...todos].filter((id) => !comSaldo.has(id) && !comHistorico.has(id));
+      if (removiveis.length > 0) {
+        const { error } = await req.db!.from('stock_balances').delete().in('material_id', removiveis).in('warehouse_id', depositoIds);
+        if (error) throw error;
+      }
+
+      console.info(`[DELETE /api/units/:id/materials] ${removiveis.length} material(is) removidos da unidade ${req.params.id} por ${req.user!.matricula}.`);
+      res.json({ success: true, removidos: removiveis.length, mantidos: todos.size - removiveis.length });
+    } catch (err: any) {
+      console.error('[DELETE /api/units/:id/materials] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao remover materiais da unidade.' });
+    }
+  });
+
+  /**
+   * Tira um material de uma unidade. Só se o saldo for zero em todos os
+   * depósitos dela e nunca tiver havido movimentação ali: saldo nunca some
+   * em silêncio, e histórico nunca fica apontando para o nada.
+   */
+  app.delete('/api/units/:id/materials/:materialId', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const materialId = Number(req.params.materialId);
+      const depositos = (await depositosDaOrg(req.db!)).filter((d) => d.unit_id === req.params.id);
+      if (depositos.length === 0) return res.status(404).json({ error: 'Unidade não encontrada.' });
+      const depositoIds = depositos.map((d) => d.id);
+
+      const saldos = await saldosDoMaterial(req.db!, materialId);
+      const comSaldo = depositoIds.filter((id) => Number(saldos[id] ?? 0) !== 0);
+      if (comSaldo.length > 0) {
+        return res.status(409).json({ error: 'Este material ainda tem saldo nesta unidade. Zere o saldo antes de removê-lo.' });
+      }
+
+      const { count } = await req.db!
+        .from('material_movements')
+        .select('*', { count: 'exact', head: true })
+        .eq('material_id', materialId)
+        .or(`warehouse_origem_id.in.(${depositoIds.join(',')}),warehouse_destino_id.in.(${depositoIds.join(',')})`);
+      if ((count ?? 0) > 0) {
+        return res.status(409).json({ error: 'Este material já teve movimentação nesta unidade. O histórico precisa continuar apontando para ela.' });
+      }
+
+      const { error } = await req.db!.from('stock_balances').delete().eq('material_id', materialId).in('warehouse_id', depositoIds);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error('[DELETE /api/units/:id/materials/:materialId] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao remover material da unidade.' });
     }
   });
 
