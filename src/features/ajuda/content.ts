@@ -45,15 +45,15 @@ export const GUIA: Section[] = [
         audiencia: ['todos'],
         resumo: 'Você entra com a sua matrícula (ou e-mail cadastrado) e a sua senha.',
         passos: [
-          'Abra o endereço do sistema no navegador.',
+          'Abra stokai.app e clique em Entrar.',
           'Digite sua matrícula ou o e-mail que a gestão cadastrou.',
           'Digite sua senha e clique em Entrar.',
         ],
         dicas: [
           {
-            tipo: 'atencao',
+            tipo: 'dica',
             texto:
-              'Esqueceu a senha? O sistema não tem "recuperar senha". Peça para a gestão gerar uma nova em Usuários.',
+              'Esqueceu a senha? Clique em "Esqueci minha senha" na tela de entrada: se a sua conta tem e-mail, chega um link para criar uma senha nova. Se você entra por matrícula e não tem e-mail, peça à gestão uma senha nova em Usuários.',
           },
         ],
       },
@@ -66,7 +66,8 @@ export const GUIA: Section[] = [
         passos: [
           'No computador, o menu fica sempre visível à esquerda.',
           'No celular, toque no ícone de três riscos no canto superior esquerdo.',
-          'Clique no item desejado — o item ativo fica destacado em laranja.',
+          'Clique no item desejado — o item ativo fica destacado na cor da empresa.',
+          'Com pressa? Aperte Ctrl+K (⌘K no Mac) ou clique na busca do topo: digite o nome de um material ou de uma tela e aperte Enter.',
         ],
       },
       {
@@ -75,7 +76,8 @@ export const GUIA: Section[] = [
         audiencia: ['todos'],
         resumo: 'Dá para deixar a tela clara ou escura, o que for mais confortável.',
         passos: [
-          'No topo da tela, clique no ícone de lua (tema escuro) ou sol (tema claro).',
+          'No canto superior direito, clique no seu nome.',
+          'Escolha "Tema escuro" ou "Tema claro".',
           'A escolha fica salva no seu navegador e volta assim quando você entrar de novo.',
         ],
       },

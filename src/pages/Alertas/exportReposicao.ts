@@ -34,7 +34,7 @@ export function exportReposicaoToWord(materials: Material[]) {
     return `<h2>${cat}</h2>
       <table border="1" cellspacing="0" cellpadding="6" style="border-collapse:collapse;width:100%;font-size:12px;">
         <thead>
-          <tr style="background:#ff8e29;color:#fff;">
+          <tr style="background:#ff8a24;color:#fff;">
             <th align="left">Material</th>
             <th align="right">Central</th>
             <th align="right">Obra</th>

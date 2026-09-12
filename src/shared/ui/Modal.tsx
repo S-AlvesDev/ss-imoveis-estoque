@@ -32,7 +32,7 @@ export function Modal({ open, onClose, title, subtitle, children, footer, maxWid
             onClick={(e) => e.stopPropagation()}
             className={`relative w-full ${maxWidth} max-h-[90vh] flex flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_60px_-12px_rgba(2,6,23,0.45)]`}
           >
-            <Stripes className="absolute inset-x-0 top-0 h-1" color="rgba(255,142,41,0.9)" dense />
+            <Stripes className="absolute inset-x-0 top-0 h-1" color="rgba(255,138,36,0.9)" dense />
             <div className="flex items-start justify-between gap-4 px-6 pb-5 pt-6 border-b border-[var(--border)]">
               <div>
                 <h3 className="font-display text-lg font-bold text-[var(--text)]">{title}</h3>

@@ -19,6 +19,7 @@ import { naUnidade } from '@/store/unidade';
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 import { formatNumber, stockStatus } from '@/features/estoque/utils';
 import { CATEGORIES } from '@/shared/constants';
+import { buscaInicial } from '@/store/busca';
 
 interface ObraProps {
   materials: Material[];
@@ -37,7 +38,7 @@ const OPERATIONS = [
 export function Obra({ materials, materialMovements, staff, refetch, podeOperar }: ObraProps) {
   const [category, setCategory] = useState<string>('TODAS');
   const [view, setView] = useState<'OBRA' | 'CENTRAL'>('OBRA');
-  const [stockSearch, setStockSearch] = useState('');
+  const [stockSearch, setStockSearch] = useState(buscaInicial); // preenchido pela busca ⌘K
   const [onlyTransfer, setOnlyTransfer] = useState(false);
   const [historyMaterial, setHistoryMaterial] = useState<Material | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);

@@ -17,6 +17,7 @@ import { naUnidade } from '@/store/unidade';
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 import { formatNumber, stockStatus } from '@/features/estoque/utils';
 import { CATEGORIES } from '@/shared/constants';
+import { buscaInicial } from '@/store/busca';
 
 /**
  * Filtros por situação. TRANSFERIR é avaliado da ótica da Obra: são os itens
@@ -59,7 +60,8 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>('TODOS');
   const [categoria, setCategoria] = useState('TODAS');
-  const [search, setSearch] = useState('');
+  // Vem preenchido quando a pessoa escolheu um material na busca ⌘K.
+  const [search, setSearch] = useState(buscaInicial);
   const [manageMaterial, setManageMaterial] = useState<Material | null>(null);
   const [historyMaterial, setHistoryMaterial] = useState<Material | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);

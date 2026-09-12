@@ -2,8 +2,8 @@ import { create } from 'zustand';
 import type { Organizacao } from '@/shared/types';
 import { PRODUTO } from '@/shared/produto';
 
-/** A cor de fábrica — a do tema Elegent. Vale até a organização escolher outra. */
-export const COR_PADRAO = '#ff8e29';
+/** A cor de fábrica — o laranja do Stok Aí. Vale até a organização escolher outra. */
+export const COR_PADRAO = '#ff8a24';
 
 /**
  * A identidade da organização em uso: nome, cor, logo.

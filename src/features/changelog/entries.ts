@@ -24,6 +24,44 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '3.0',
+    data: '2026-09-12',
+    titulo: 'Stok Aí: nome novo, cara nova, e a senha você recupera sozinho',
+    resumo:
+      'O sistema passa a se chamar Stok Aí, com um painel redesenhado — escuro ou claro — e uma busca que acha qualquer material ou tela num atalho. Quem tem e-mail na conta recupera a própria senha.',
+    mudancas: [
+      {
+        tipo: 'novo',
+        titulo: 'Painel novo',
+        descricao:
+          'Saudação com data e hora, quatro cartões com tendência dos últimos 30 dias, entradas e saídas por dia (7, 30 ou 90 dias), materiais por categoria, top 5 e as últimas atividades. Tudo da unidade em uso.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Busca com Ctrl+K',
+        descricao:
+          'Aperte Ctrl+K (⌘K no Mac) ou clique na busca do topo. Digite o nome de um material para abri-lo já filtrado, ou o nome de uma tela para pular direto para ela.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Esqueci minha senha',
+        descricao:
+          'Na tela de entrada. Quem tem e-mail cadastrado recebe um link que vale por uma hora, cria a senha nova e já entra. Quem entra por matrícula sem e-mail continua pedindo à gestão em Usuários.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Visual Stok Aí, claro ou escuro',
+        descricao:
+          'Barra lateral navy nos dois temas, cartões e gráficos no mesmo estilo em todas as telas. O tema fica no menu do seu nome, no canto superior direito. A cor e o logo da sua empresa continuam valendo por dentro.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Sino de alertas',
+        descricao: 'O número no sino do topo é quantos materiais precisam de compra na unidade em uso. Clique para abrir Alertas.',
+      },
+    ],
+  },
+  {
     versao: '2.2',
     data: '2026-09-11',
     titulo: 'Configurações: cada unidade do seu jeito, e quem opera o quê',

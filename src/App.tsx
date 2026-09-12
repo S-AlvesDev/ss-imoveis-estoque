@@ -22,6 +22,8 @@ import { TopBar } from '@/app/TopBar';
 import { Stripes } from '@/shared/ui/Stripes';
 import { Logo } from '@/shared/ui/Logo';
 import { ADMIN_ROLES } from '@/shared/constants';
+import { PRODUTO } from '@/shared/produto';
+import { needsPurchase } from '@/features/estoque/utils';
 
 function LoadingScreen() {
   return (
@@ -34,7 +36,7 @@ function LoadingScreen() {
         <Logo size={40} />
       </motion.div>
       <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-[var(--text-muted)]">Carregando estoque</p>
-      <Stripes className="h-1 w-24 rounded-full" color="rgba(255,142,41,0.85)" dense />
+      <Stripes className="h-1 w-24 rounded-full" color="rgba(255,138,36,0.85)" dense />
     </div>
   );
 }
@@ -56,7 +58,7 @@ function ViewTransition({ viewKey, children }: { viewKey: string; children: Reac
 }
 
 const VIEW_TITLES: Record<AppView, string> = {
-  dashboard: 'Painel Administrativo',
+  dashboard: 'Painel',
   materiais: 'Materiais',
   alertas: 'Alertas de Estoque',
   central: 'Almoxarifado Central',
@@ -70,10 +72,8 @@ const VIEW_TITLES: Record<AppView, string> = {
 function InventoryApp({ role }: { role: string }) {
   const [view, setView] = useState<AppView | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, unidade, nivelEm, loading, refetch } = useEstoqueData();
+  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, loading, atualizadoEm, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
-
-  if (loading) return <LoadingScreen />;
 
   const isAdmin = ADMIN_ROLES.includes(role);
   const acesso = { central: nivelEm('CENTRAL'), obra: nivelEm('OBRA') };
@@ -84,6 +84,17 @@ function InventoryApp({ role }: { role: string }) {
   // não tem acesso lá), volta para a primeira disponível.
   const landingView: AppView = itens[0]?.view ?? 'suporte';
   const viewAtual: AppView = view && itens.some((i) => i.view === view) ? view : landingView;
+
+  // Onde um material "abre" pela busca: Materiais para quem administra, o depósito da pessoa para quem opera.
+  const telaDeMaterial: AppView | null = isAdmin ? 'materiais' : (itens.find((i) => i.view === 'central' || i.view === 'obra')?.view ?? null);
+  const alertas = materials.filter(needsPurchase).length;
+
+  // O título da tela saiu da barra do topo e foi para a aba do navegador.
+  useEffect(() => {
+    document.title = loading ? PRODUTO.nome : `${VIEW_TITLES[viewAtual]} · ${PRODUTO.nome}`;
+  }, [loading, viewAtual]);
+
+  if (loading) return <LoadingScreen />;
 
   return (
     <div className="flex min-h-screen bg-[var(--bg)]">
@@ -99,12 +110,30 @@ function InventoryApp({ role }: { role: string }) {
         acesso={acesso}
       />
       <div className="min-w-0 flex-1">
-        <TopBar title={VIEW_TITLES[viewAtual]} subtitle={unidade?.nome} onMenuClick={() => setMobileNavOpen(true)} />
+        <TopBar
+          onMenuClick={() => setMobileNavOpen(true)}
+          materials={materials}
+          destinos={itens}
+          telaDeMaterial={telaDeMaterial}
+          onNavigate={setView}
+          alertas={alertas}
+          podeVerAlertas={isAdmin}
+        />
         <main className="p-6">
           {/* Novidades aparecem uma vez por versao, na tela inicial de cada perfil. */}
           {viewAtual === landingView && <UpdateBanner />}
           <ViewTransition viewKey={viewAtual}>
-            {viewAtual === 'dashboard' && <Dashboard materials={materials} materialMovements={materialMovements} />}
+            {viewAtual === 'dashboard' && (
+              <Dashboard
+                materials={materials}
+                materialMovements={materialMovements}
+                unidade={unidade}
+                depositos={depositosDaUnidade}
+                unidadeUnica={unidadesAtivas.length <= 1}
+                atualizadoEm={atualizadoEm}
+                onNavigate={setView}
+              />
+            )}
             {viewAtual === 'alertas' && <Alertas materials={materials} />}
             {viewAtual === 'materiais' && (
               <Admin materials={catalogo} materialMovements={materialMovements} staff={staff} refetch={refetch} />

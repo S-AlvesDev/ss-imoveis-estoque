@@ -125,14 +125,14 @@ function UnitSwitcher({ unidades, unidade, onChange, onCreate }: UnitSwitcherPro
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-left transition-colors hover:border-[var(--brand)]/40"
+        className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--sidebar-border)] bg-white/[0.04] px-3 py-2 text-left transition-colors hover:border-[var(--brand)]/50 hover:bg-white/[0.06]"
       >
         <Building2 size={15} className="shrink-0 text-[var(--brand)]" />
         <span className="min-w-0 flex-1 leading-tight">
-          <span className="block font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Unidade</span>
-          <span className="block truncate text-sm font-semibold text-[var(--text)]">{unidade.nome}</span>
+          <span className="block font-mono text-[9px] uppercase tracking-[0.18em] text-[var(--sidebar-muted)]">Unidade</span>
+          <span className="block truncate text-sm font-semibold text-white">{unidade.nome}</span>
         </span>
-        <ChevronsUpDown size={14} className="shrink-0 text-[var(--text-muted)]" />
+        <ChevronsUpDown size={14} className="shrink-0 text-[var(--sidebar-muted)]" />
       </button>
 
       <AnimatePresence>
@@ -143,7 +143,7 @@ function UnitSwitcher({ unidades, unidade, onChange, onCreate }: UnitSwitcherPro
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.12 }}
-            className="absolute inset-x-3 z-10 mt-1 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] py-1 shadow-xl"
+            className="absolute inset-x-3 z-10 mt-1 overflow-hidden rounded-xl border border-[var(--sidebar-border)] bg-[var(--sidebar-bg-2)] py-1 shadow-2xl"
           >
             {unidades.map((u) => {
               const atual = u.id === unidade.id;
@@ -155,7 +155,7 @@ function UnitSwitcher({ unidades, unidade, onChange, onCreate }: UnitSwitcherPro
                     aria-selected={atual}
                     onClick={() => { onChange(u.id); setOpen(false); }}
                     className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--brand)]/10 ${
-                      atual ? 'font-semibold text-[var(--text)]' : 'text-[var(--text-muted)]'
+                      atual ? 'font-semibold text-white' : 'text-[var(--sidebar-text)]'
                     }`}
                   >
                     <span className="w-4 shrink-0">{atual && <Check size={14} className="text-[var(--brand)]" />}</span>
@@ -165,7 +165,7 @@ function UnitSwitcher({ unidades, unidade, onChange, onCreate }: UnitSwitcherPro
               );
             })}
             {onCreate && (
-              <li className="mt-1 border-t border-[var(--border)] pt-1">
+              <li className="mt-1 border-t border-[var(--sidebar-border)] pt-1">
                 <button
                   type="button"
                   onClick={() => { onCreate(); setOpen(false); }}
@@ -227,18 +227,20 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
         e o sticky não tem folga para grudar.
       */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--surface)] text-[var(--text)] transition-transform duration-300 lg:sticky lg:top-0 lg:translate-x-0 lg:self-start ${
+        className={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col overflow-hidden border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)] text-[var(--sidebar-text)] transition-transform duration-300 lg:sticky lg:top-0 lg:translate-x-0 lg:self-start ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="grain pointer-events-none absolute inset-0 hidden opacity-[0.3] dark:block" />
-        <Stripes className="absolute inset-x-0 top-0 h-1" color="rgba(255,142,41,0.9)" dense />
+        <div className="grain pointer-events-none absolute inset-0 opacity-[0.25]" />
+        {/* um brilho da cor da marca no canto, como no painel */}
+        <div className="pointer-events-none absolute -left-24 -top-24 h-64 w-64 rounded-full bg-[var(--brand)]/15 blur-3xl" />
+        <Stripes className="absolute inset-x-0 top-0 h-1" color="rgba(255,138,36,0.9)" dense />
 
         <div className="relative flex h-16 shrink-0 items-center gap-2.5 px-6">
           <Logo size={30} className="rounded-xl" />
           <div className="min-w-0 leading-tight">
-            <p className="truncate font-display text-sm font-bold text-[var(--text)]">{organizacao?.nome ?? PRODUTO.nome}</p>
-            <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{organizacao ? PRODUTO.nome : 'Estoque'}</p>
+            <p className="truncate text-sm font-bold text-white">{organizacao?.nome ?? PRODUTO.nome}</p>
+            <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--sidebar-muted)]">{organizacao ? PRODUTO.nome : 'Estoque'}</p>
           </div>
         </div>
 
@@ -250,7 +252,7 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
         <nav className="relative mt-2 flex-1 space-y-5 overflow-y-auto px-3 pb-2">
           {groups.map((group) => (
             <div key={group.label}>
-              <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+              <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--sidebar-muted)]">
                 {group.label}
               </p>
               <div className="space-y-1">
@@ -263,7 +265,7 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
                       className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
                         isActive
                           ? 'text-white'
-                          : 'text-[var(--text-muted)] hover:bg-[var(--brand)]/10 hover:text-[var(--brand)]'
+                          : 'text-[var(--sidebar-text)] hover:bg-white/[0.06] hover:text-white'
                       }`}
                     >
                       {isActive && (
@@ -283,10 +285,10 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
           ))}
         </nav>
 
-        <div className="relative shrink-0 border-t border-[var(--border)] p-4">
+        <div className="relative shrink-0 border-t border-[var(--sidebar-border)] p-4">
           <div className="mb-3 px-1">
-            <p className="truncate text-sm font-semibold text-[var(--text)]">{user?.nome}</p>
-            <p className="font-mono text-[10px] tracking-wide text-[var(--text-muted)]">{user?.role}</p>
+            <p className="truncate text-sm font-semibold text-white">{user?.nome}</p>
+            <p className="font-mono text-[10px] tracking-wide text-[var(--sidebar-muted)]">{user?.role}</p>
           </div>
           <button
             onClick={logout}

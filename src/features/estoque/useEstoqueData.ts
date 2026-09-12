@@ -34,6 +34,7 @@ const VAZIO: EstoqueResposta = { materials: [], materialMovements: [], staff: []
 export function useEstoqueData() {
   const [data, setData] = useState<EstoqueResposta>(VAZIO);
   const [loading, setLoading] = useState(true);
+  const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
   const unidadeEscolhida = useUnidade((s) => s.unidadeId);
   const setUnidade = useUnidade((s) => s.setUnidade);
   const setOrganizacao = useMarca((s) => s.setOrganizacao);
@@ -42,6 +43,7 @@ export function useEstoqueData() {
     try {
       const result = await api.get<EstoqueResposta>('/api/data');
       setData({ ...VAZIO, ...result });
+      setAtualizadoEm(new Date());
       // Veste a cor e o logo desta organização assim que se sabe qual é.
       setOrganizacao(result.organizacao ?? null);
     } catch (err: any) {
@@ -131,6 +133,8 @@ export function useEstoqueData() {
     nivelEm,
     organizacao: data.organizacao,
     loading,
+    /** Quando os dados chegaram pela última vez — o "última atualização" do painel. */
+    atualizadoEm,
     refetch,
   };
 }

@@ -19,6 +19,7 @@ import { naUnidade } from '@/store/unidade';
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 import { formatNumber, stockStatus } from '@/features/estoque/utils';
 import { CATEGORIES } from '@/shared/constants';
+import { buscaInicial } from '@/store/busca';
 
 interface CentralProps {
   materials: Material[];
@@ -39,7 +40,7 @@ const OPERATIONS = [
 export function Central({ materials, materialMovements, staff, refetch, podeOperar }: CentralProps) {
   const [category, setCategory] = useState<string>('TODAS');
   const [view, setView] = useState<'CENTRAL' | 'OBRA'>('CENTRAL');
-  const [stockSearch, setStockSearch] = useState('');
+  const [stockSearch, setStockSearch] = useState(buscaInicial); // preenchido pela busca ⌘K
   const [historyMaterial, setHistoryMaterial] = useState<Material | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);
   const [recontagemOpen, setRecontagemOpen] = useState(false);

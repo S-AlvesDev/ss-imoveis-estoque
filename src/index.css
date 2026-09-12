@@ -5,45 +5,60 @@
 
 :root {
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
-  --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, sans-serif;
+  /* Títulos na mesma família do logo: Inter pesada, sem segunda fonte. */
+  --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
   --ink: #0b0f19;
 
-  /* ---- Elegent "Free Admin Dashboard" brand tokens ---- */
-  --brand: #ff8e29; /* Primary  */
-  --brand-deep: #f7942e;
-  --brand-soft: #ffc796; /* Shade 6 */
-  --brand-secondary: #27d095; /* green  */
-  --brand-tertiary: #67cadf; /* cyan   */
+  /* ---- Marca ----
+     --brand é o laranja do Stok Aí, e é o que a organização pode trocar em
+     Configurações → Identidade (store/marca.ts). Tudo que é "cor da marca"
+     lê daqui; as cores semânticas abaixo não mudam com a organização. */
+  --brand: #ff8a24;
+  --brand-deep: #ff7a00;
+  --brand-soft: #ffc796;
+  --brand-secondary: #22c55e; /* verde  */
+  --brand-tertiary: #3b82f6; /* azul   */
+
+  /* Cores semânticas dos cartões, gráficos e situações. Iguais nos dois temas. */
+  --azul: #3b82f6;
+  --verde: #22c55e;
+  --vermelho: #ef4444;
+  --amarelo: #f59e0b;
+  --roxo: #8b5cf6;
 
   /* legacy aliases still referenced in a few spots */
-  --amber: #ff8e29;
-  --amber-deep: #f7942e;
+  --amber: #ff8a24;
+  --amber-deep: #ff7a00;
 
-  /* ---- Light surfaces ---- */
-  /* Um tom quase branco puxado para a cor da marca. Muda junto com --brand. */
-  --bg: color-mix(in srgb, var(--brand) 9%, #ffffff);
-  --bg-2: #f5f5f5; /* Background II */
-  --surface: #ffffff; /* White        */
-  --border: #e1e1e1; /* Border       */
-  --text: #050f24; /* Text Dark    */
-  --text-muted: #6f757e; /* Text Light   */
-  --text-disable: #cccdcd; /* Text Disable */
+  /* ---- Superfícies (tema claro) ---- */
+  --bg: #f4f6fb; /* a página */
+  --bg-2: #eceff5; /* um degrau abaixo de um cartão: trilhos, zebra, rodapé de modal */
+  --surface: #ffffff; /* cartões, barras */
+  --border: #e4e7ee;
+  --text: #0b1020;
+  --text-muted: #667085;
+  --text-disable: #c5c9d3;
+
+  /* ---- Barra lateral: navy nos dois temas, âncora da marca ---- */
+  --sidebar-bg: #0b1020;
+  --sidebar-bg-2: #111a30;
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-text: #d2d7e2;
+  --sidebar-muted: #7f8aa3;
 }
 
-/* ---- Dark surfaces ---- */
+/* ---- Superfícies (tema escuro) — o navy do mockup ---- */
 /* :root.dark, not :where(.dark) — :where() is zero-specificity and would lose to :root above. */
 :root.dark {
-  --bg: #151d32; /* Background 1 */
-  /* Recessed tone *inside* a card. Sits below --surface so segmented tracks,
-     table stripes and modal footers stay visible against the card itself. */
-  --bg-2: #1e2639;
-  --surface: #292f45; /* Background 2 */
-  --border: #353c56; /* Border       */
-  --text: #f3f4f7; /* Text White   */
-  --text-muted: #c7cad0; /* Text Light   */
-  --text-disable: #6f7687; /* Disable      */
+  --bg: #090c15;
+  --bg-2: #0f1424;
+  --surface: #111729;
+  --border: #1e2539;
+  --text: #f3f4f7;
+  --text-muted: #8b93a7;
+  --text-disable: #4b5266;
 }
 
 * {
@@ -81,10 +96,10 @@ body {
   background: #94a3b8;
 }
 .dark ::-webkit-scrollbar-thumb {
-  background: #3f4766;
+  background: #2a3348;
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: #556084;
+  background: #3a4560;
 }
 
 .hide-scrollbar::-webkit-scrollbar {
@@ -99,8 +114,8 @@ body {
 .stripes {
   background-image: repeating-linear-gradient(
     -45deg,
-    var(--stripe-color, rgba(255, 142, 41, 0.9)) 0,
-    var(--stripe-color, rgba(255, 142, 41, 0.9)) 10px,
+    var(--stripe-color, rgba(255, 138, 36, 0.9)) 0,
+    var(--stripe-color, rgba(255, 138, 36, 0.9)) 10px,
     transparent 10px,
     transparent 20px
   );
@@ -145,7 +160,7 @@ body {
   animation: shimmer 1.6s infinite linear;
 }
 .dark .animate-shimmer {
-  background: linear-gradient(90deg, #1f2740 0%, #2b344f 50%, #1f2740 100%);
+  background: linear-gradient(90deg, #151c30 0%, #1e2740 50%, #151c30 100%);
   background-size: 800px 100%;
 }
 

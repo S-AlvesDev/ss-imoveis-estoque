@@ -14,7 +14,7 @@ const LOGO_TIPOS = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
 
 /** Cores prontas para quem não quer digitar hexadecimal. */
 const PALETA = [
-  { nome: 'Laranja', hex: '#ff8e29' },
+  { nome: 'Laranja', hex: '#ff8a24' },
   { nome: 'Azul', hex: '#2563eb' },
   { nome: 'Verde', hex: '#059669' },
   { nome: 'Roxo', hex: '#7c3aed' },
