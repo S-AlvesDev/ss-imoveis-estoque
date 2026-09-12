@@ -337,7 +337,11 @@ export async function procurarEAplicar(organizationId: string, emails: string[])
     if (pre.payer_email && meus.has(pre.payer_email.toLowerCase())) return true;
     return modoTeste() && pre.preapproval_plan_id === MP_PLANO_DE_TESTE;
   });
-  if (!candidata) return { casou: false, organizationId, assinatura: null, motivo: 'nenhuma assinatura recente no Mercado Pago corresponde a esta conta' };
+  if (!candidata) {
+    // Diz o que viu, para o suporte entender sem abrir o painel do MP (sem e-mails de terceiros).
+    const vistas = recentes.slice(0, 10).map((p) => `${p.status}/${p.preapproval_plan_id ?? 'sem-plano'}/${p.date_created?.slice(0, 10) ?? '?'}${p.payer_email && meus.has(p.payer_email.toLowerCase()) ? '/seu-email' : ''}`);
+    return { casou: false, organizationId, assinatura: null, motivo: `nenhuma das ${recentes.length} assinaturas recentes da conta do Mercado Pago corresponde a esta organização${vistas.length ? ` (${vistas.join('; ')})` : ''}` };
+  }
   const pre = await buscarAssinatura(candidata.id);
   return aplicarPreapproval(pre, { organizationId });
 }
