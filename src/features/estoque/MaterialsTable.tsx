@@ -3,11 +3,13 @@ import { motion } from 'motion/react';
 import { Check, ChevronDown, Clock, Pencil, Trash2 } from 'lucide-react';
 import { StockBar } from '@/shared/ui/StockBar';
 import { StockStatusBadge } from '@/shared/ui/StockStatusBadge';
-import type { Material } from '@/shared/types';
-import { formatNumber, percentOfMinimum, stockStatus, stockTotal, type StockScope } from './utils';
+import type { Deposito, Material } from '@/shared/types';
+import { formatNumber, ondeTem, percentOfMinimum, saldoEm, stockStatus, stockTotal, type StockScope } from './utils';
 
 interface MaterialsTableProps {
   materials: Material[];
+  /** Os estoques ativos da unidade em uso: uma coluna de saldo para cada. */
+  depositos: Deposito[];
   /** De onde o estoque é avaliado — muda o significado de "falta". */
   scope?: StockScope;
   selectMode?: boolean;
@@ -30,6 +32,7 @@ function Saldo({ value, unidade }: { value: number; unidade: string }) {
 
 export function MaterialsTable({
   materials,
+  depositos,
   scope = 'empresa',
   selectMode,
   selectedIds,
@@ -48,8 +51,11 @@ export function MaterialsTable({
         <thead className="sticky top-0 z-10 bg-[var(--surface)]">
           <tr className="border-b border-[var(--border)] text-left">
             <th className="px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Material</th>
-            <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Central</th>
-            <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Obra</th>
+            {depositos.map((d) => (
+              <th key={d.id} className="max-w-[9rem] truncate px-3 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]" title={d.nome}>
+                {d.nome}
+              </th>
+            ))}
             <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Total</th>
             <th className="hidden px-3 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] sm:table-cell">
               Mín.
@@ -95,12 +101,11 @@ export function MaterialsTable({
                       </div>
                     </div>
                   </td>
-                  <td className="px-3 py-3 text-right tabular-nums">
-                    <Saldo value={m.saldo_central} unidade={m.unidade_medida} />
-                  </td>
-                  <td className="px-3 py-3 text-right tabular-nums">
-                    <Saldo value={m.saldo_obra} unidade={m.unidade_medida} />
-                  </td>
+                  {depositos.map((d) => (
+                    <td key={d.id} className="px-3 py-3 text-right tabular-nums">
+                      <Saldo value={saldoEm(m, d.id)} unidade={m.unidade_medida} />
+                    </td>
+                  ))}
                   <td className="px-3 py-3 text-right tabular-nums">
                     <span
                       className={`font-bold ${
@@ -118,7 +123,7 @@ export function MaterialsTable({
                     {m.estoque_minimo > 0 ? formatNumber(m.estoque_minimo) : '—'}
                   </td>
                   <td className="whitespace-nowrap px-3 py-3">
-                    <StockStatusBadge status={status} scope={scope} />
+                    <StockStatusBadge status={status} scope={scope} ondeTem={status === 'TRANSFERIR' && scope !== 'empresa' ? ondeTem(m, depositos, scope) : undefined} />
                   </td>
                   <td className="px-2 py-3 text-[var(--text-muted)]">
                     {!selectMode && (

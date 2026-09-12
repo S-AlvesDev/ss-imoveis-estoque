@@ -3,25 +3,28 @@ import { Building2, Plus } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { NovaUnidadeModal } from '@/features/unidades/NovaUnidadeModal';
-import type { Deposito, Material, Unidade } from '@/shared/types';
+import type { Categoria, Deposito, Material, Unidade } from '@/shared/types';
 import { UnidadeCard } from './UnidadeCard';
 import { AcessosSection } from './AcessosSection';
 import { IdentidadeSection } from './IdentidadeSection';
+import { CategoriasSection } from './CategoriasSection';
 
 interface ConfiguracoesProps {
   unidades: Unidade[];
   depositos: Deposito[];
   /** Todos os materiais da organização, para escolher o que entra em cada unidade. */
   catalogo: Material[];
+  categorias: Categoria[];
   refetch: () => Promise<void>;
   onSelecionarUnidade: (id: string) => void;
 }
 
 /**
- * Onde o administrador desenha a empresa: quais unidades existem, como cada
- * almoxarifado se chama, e quais materiais cada unidade trabalha.
+ * Onde o administrador desenha a empresa: quais unidades existem, quais
+ * estoques cada uma tem (e em que modo), as categorias de material e quem
+ * opera o quê.
  */
-export function Configuracoes({ unidades, depositos, catalogo, refetch, onSelecionarUnidade }: ConfiguracoesProps) {
+export function Configuracoes({ unidades, depositos, catalogo, categorias, refetch, onSelecionarUnidade }: ConfiguracoesProps) {
   const [criando, setCriando] = useState(false);
 
   return (
@@ -30,7 +33,7 @@ export function Configuracoes({ unidades, depositos, catalogo, refetch, onSeleci
         <div>
           <h1 className="font-display text-2xl font-bold text-[var(--text)]">Configurações</h1>
           <p className="text-sm text-[var(--text-muted)]">
-            Identidade, unidades, almoxarifados, o que cada unidade trabalha e quem opera o quê.
+            Identidade, unidades e seus estoques, categorias, o que cada unidade trabalha e quem opera o quê.
           </p>
         </div>
         <Button icon={<Plus size={15} />} onClick={() => setCriando(true)}>
@@ -44,7 +47,7 @@ export function Configuracoes({ unidades, depositos, catalogo, refetch, onSeleci
         <div>
           <h2 className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--text-muted)]">Unidades</h2>
           <p className="mt-1 text-xs text-[var(--text-muted)]">
-            Cada unidade é um estoque próprio, com o seu Central e a sua Obra. O estoque mínimo se compara com o total dela.
+            Cada unidade tem os próprios estoques — um almoxarifado, um armário de empréstimo, o que a operação pedir. O estoque mínimo se compara com o total dela.
           </p>
         </div>
 
@@ -66,6 +69,8 @@ export function Configuracoes({ unidades, depositos, catalogo, refetch, onSeleci
           </div>
         )}
       </section>
+
+      <CategoriasSection categorias={categorias} catalogo={catalogo} refetch={refetch} />
 
       <AcessosSection unidades={unidades} depositos={depositos} />
 

@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Flame,
   HardHat,
+  PackageOpen,
   PieChart as PieIcon,
   Plus,
   RotateCcw,
@@ -25,8 +26,9 @@ import { Reveal, RevealItem } from '@/shared/ui/Reveal';
 import { SegmentedControl } from '@/shared/ui/SegmentedControl';
 import { MarcaProduto } from '@/shared/ui/Logo';
 import type { Deposito, Material, MaterialMovement, Unidade } from '@/shared/types';
-import { formatNumber, needsPurchase, stockStatus } from '@/features/estoque/utils';
-import { CATEGORIES, OPERATION_LABELS } from '@/shared/constants';
+import { formatNumber, needsPurchase, saldoEm, stockStatus } from '@/features/estoque/utils';
+import { OPERATION_LABELS } from '@/shared/constants';
+import { viewDoEstoque } from '@/app/Sidebar';
 import { useTheme } from '@/store/theme';
 import { useAuth } from '@/store/auth';
 import type { AppView } from '@/app/Sidebar';
@@ -54,6 +56,11 @@ const ESTILO_OPERACAO: Record<string, { icone: React.ReactNode; cls: string }> =
   DEVOLUCAO: { icone: <RotateCcw size={15} />, cls: 'bg-[var(--azul)]/15 text-[var(--azul)]' },
   AJUSTE_CENTRAL: { icone: <SlidersHorizontal size={15} />, cls: 'bg-[var(--amarelo)]/15 text-[var(--amarelo)]' },
   AJUSTE_OBRA: { icone: <SlidersHorizontal size={15} />, cls: 'bg-[var(--amarelo)]/15 text-[var(--amarelo)]' },
+  AJUSTE: { icone: <SlidersHorizontal size={15} />, cls: 'bg-[var(--amarelo)]/15 text-[var(--amarelo)]' },
+  CONSUMO: { icone: <HardHat size={15} />, cls: 'bg-[var(--vermelho)]/15 text-[var(--vermelho)]' },
+  TRANSFERENCIA: { icone: <ArrowLeftRight size={15} />, cls: 'bg-[var(--brand)]/15 text-[var(--brand)]' },
+  EMPRESTIMO: { icone: <PackageOpen size={15} />, cls: 'bg-[var(--brand)]/15 text-[var(--brand)]' },
+  DEVOLUCAO_EMPRESTIMO: { icone: <RotateCcw size={15} />, cls: 'bg-[var(--azul)]/15 text-[var(--azul)]' },
 };
 const ESTILO_PADRAO = { icone: <Activity size={15} />, cls: 'bg-[var(--bg-2)] text-[var(--text-muted)]' };
 
@@ -123,10 +130,12 @@ interface DashboardProps {
   /** Com uma unidade só, as movimentações antigas (sem depósito gravado) contam. */
   unidadeUnica: boolean;
   atualizadoEm: Date | null;
+  /** Nomes das categorias da organização, na ordem dela. */
+  categorias: string[];
   onNavigate: (view: AppView) => void;
 }
 
-export function Dashboard({ materials, materialMovements, unidade, depositos, unidadeUnica, atualizadoEm, onNavigate }: DashboardProps) {
+export function Dashboard({ materials, materialMovements, unidade, depositos, unidadeUnica, atualizadoEm, categorias: nomesDeCategorias, onNavigate }: DashboardProps) {
   const user = useAuth((s) => s.user);
   const dark = useTheme((s) => s.theme === 'dark');
   const agora = useAgora();
@@ -136,16 +145,24 @@ export function Dashboard({ materials, materialMovements, unidade, depositos, un
   const movs = useMemo(() => filtrarPorUnidade(materialMovements, depositos, unidadeUnica), [materialMovements, depositos, unidadeUnica]);
 
   const catalogo = useMemo(() => catalogoComHistorico(materials), [materials]);
-  const central = useMemo(() => saldoComHistorico(materials.reduce((s, m) => s + Number(m.saldo_central), 0), movs, 'central'), [materials, movs]);
-  const obra = useMemo(() => saldoComHistorico(materials.reduce((s, m) => s + Number(m.saldo_obra), 0), movs, 'obra'), [materials, movs]);
+  // Um cartão por estoque ativo da unidade, com o saldo somado e a tendência.
+  // As movimentações antigas (sem depósito) sabem só "Central"/"Obra": o
+  // legado diz quais estoques eram esses.
+  const estoques = useMemo(() => {
+    const legado = { central: depositos.find((d) => d.tipo === 'CENTRAL')?.id, obra: depositos.find((d) => d.tipo === 'OBRA')?.id };
+    return depositos
+      .filter((d) => d.ativo)
+      .map((d) => ({ deposito: d, ...saldoComHistorico(materials.reduce((s, m) => s + saldoEm(m, d.id), 0), movs, d.id, new Date(), legado) }));
+  }, [materials, movs, depositos]);
+  const primeiroEstoque = depositos.find((d) => d.ativo && d.modo === 'almoxarifado') ?? depositos.find((d) => d.ativo) ?? null;
   const alertas = useMemo(() => {
     const comprar = materials.filter(needsPurchase).length;
-    const remessa = materials.filter((m) => stockStatus(m, 'obra') === 'TRANSFERIR').length;
+    const remessa = materials.filter((m) => depositos.some((d) => stockStatus(m, d.id) === 'TRANSFERIR')).length;
     return { comprar, remessa };
-  }, [materials]);
+  }, [materials, depositos]);
 
   const serie = useMemo(() => serieDiaria(movs, periodo), [movs, periodo]);
-  const categorias = useMemo(() => porCategoria(materials, CATEGORIES), [materials]);
+  const categorias = useMemo(() => porCategoria(materials, nomesDeCategorias), [materials, nomesDeCategorias]);
   const top = useMemo(() => topMateriais(materials, movs), [materials, movs]);
   const atividades = useMemo(() => atividadesRecentes(movs, materials), [movs, materials]);
 
@@ -205,7 +222,7 @@ export function Dashboard({ materials, materialMovements, unidade, depositos, un
       </Card>
 
       {/* ---------- Resumo ---------- */}
-      <Reveal className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <Reveal className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${estoques.length + 2 >= 4 ? 'xl:grid-cols-4' : 'xl:grid-cols-3'}`}>
         <RevealItem>
           <StatCard
             label="Materiais"
@@ -218,30 +235,20 @@ export function Dashboard({ materials, materialMovements, unidade, depositos, un
             onClick={() => onNavigate('materiais')}
           />
         </RevealItem>
-        <RevealItem>
-          <StatCard
-            label="Saldo Central"
-            value={central.atual}
-            icon={<Warehouse size={20} />}
-            accent="blue"
-            trend={{ value: central.tendencia, label: 'em 30 dias' }}
-            sublabel="sem movimentação recente"
-            serie={central.serie}
-            onClick={() => onNavigate('central')}
-          />
-        </RevealItem>
-        <RevealItem>
-          <StatCard
-            label="Saldo Obra"
-            value={obra.atual}
-            icon={<HardHat size={20} />}
-            accent="green"
-            trend={{ value: obra.tendencia, label: 'em 30 dias' }}
-            sublabel="sem movimentação recente"
-            serie={obra.serie}
-            onClick={() => onNavigate('obra')}
-          />
-        </RevealItem>
+        {estoques.map(({ deposito, atual, tendencia, serie }, i) => (
+          <RevealItem key={deposito.id}>
+            <StatCard
+              label={deposito.nome}
+              value={atual}
+              icon={deposito.modo === 'emprestimo' ? <PackageOpen size={20} /> : <Warehouse size={20} />}
+              accent={(['blue', 'green', 'violet', 'amber'] as const)[i % 4]}
+              trend={{ value: tendencia, label: 'em 30 dias' }}
+              sublabel="sem movimentação recente"
+              serie={serie}
+              onClick={() => onNavigate(viewDoEstoque(deposito.id))}
+            />
+          </RevealItem>
+        ))}
         <RevealItem>
           <StatCard
             label="Precisa comprar"
@@ -411,7 +418,7 @@ export function Dashboard({ materials, materialMovements, unidade, depositos, un
               icon={<Flame size={15} />}
               title="Atividades recentes"
               actions={
-                <button type="button" onClick={() => onNavigate('central')} className="text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--brand)]">
+                <button type="button" onClick={() => primeiroEstoque && onNavigate(viewDoEstoque(primeiroEstoque.id))} className="text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--brand)]">
                   Ver todas
                 </button>
               }
@@ -448,7 +455,7 @@ export function Dashboard({ materials, materialMovements, unidade, depositos, un
             </div>
             <button
               type="button"
-              onClick={() => onNavigate('central')}
+              onClick={() => primeiroEstoque && onNavigate(viewDoEstoque(primeiroEstoque.id))}
               className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--brand)] px-3 py-2.5 text-xs font-bold text-white shadow-md shadow-[var(--brand)]/30 transition hover:brightness-110"
             >
               <Plus size={14} /> Nova movimentação

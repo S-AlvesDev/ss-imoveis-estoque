@@ -15,12 +15,70 @@ import type { ScopedDb } from './tenant';
 
 export type TipoDeposito = 'CENTRAL' | 'OBRA' | 'OUTRO';
 
+/**
+ * Como se opera um estoque (migração 018).
+ *   almoxarifado  entrada, saída, consumo, ajuste, transferência na unidade.
+ *   emprestimo    retirada por tempo limitado, com devolução.
+ */
+export type ModoEstoque = 'almoxarifado' | 'emprestimo';
+export const MODOS: readonly ModoEstoque[] = ['almoxarifado', 'emprestimo'];
+
 export interface Deposito {
   id: string;
   nome: string;
+  /** Marca de transição (Central/Obra de antes). Estoque novo é OUTRO e ninguém decide nada por ele. */
   tipo: TipoDeposito;
   unit_id: string;
   ativo: boolean;
+  modo: ModoEstoque;
+  /** Só no modo empréstimo: quantas horas uma retirada tem, por padrão. */
+  prazo_padrao_horas: number | null;
+}
+
+/**
+ * As operações de um estoque no modo almoxarifado, já sem "Central" e "Obra"
+ * no nome: cada uma diz de que lado do estoque escolhido ela acontece.
+ * TRANSFERENCIA tem os dois lados (o estoque escolhido é a origem).
+ */
+export type OperacaoGenerica = 'ENTRADA' | 'SAIDA' | 'CONSUMO' | 'AJUSTE' | 'TRANSFERENCIA';
+
+export interface DefinicaoDeOperacao {
+  /** O estoque escolhido na tela é a origem ou o destino? */
+  lado: 'origem' | 'destino';
+  /** Precisa de um segundo estoque (o destino da transferência). */
+  precisaDestino?: boolean;
+  ajuste?: boolean;
+  rotulo: string;
+}
+
+export const OPERACOES: Record<OperacaoGenerica, DefinicaoDeOperacao> = {
+  ENTRADA: { lado: 'destino', rotulo: 'esta entrada' },
+  SAIDA: { lado: 'origem', rotulo: 'esta saída' },
+  CONSUMO: { lado: 'origem', rotulo: 'este consumo' },
+  AJUSTE: { lado: 'destino', ajuste: true, rotulo: 'este ajuste' },
+  TRANSFERENCIA: { lado: 'origem', precisaDestino: true, rotulo: 'esta transferência' },
+};
+
+export function ehOperacaoGenerica(s: unknown): s is OperacaoGenerica {
+  return typeof s === 'string' && s in OPERACOES;
+}
+
+/**
+ * Nome e modo de um estoque novo ou editado. Devolve o erro para a pessoa,
+ * ou os campos limpos. Prazo só existe (e é obrigatório) no modo empréstimo.
+ */
+export function validarEstoque(body: unknown): { ok: true; nome: string; modo: ModoEstoque; prazo_padrao_horas: number | null } | { ok: false; erro: string } {
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  const nome = typeof b.nome === 'string' ? b.nome.trim() : '';
+  if (nome.length < 2 || nome.length > 60) return { ok: false, erro: 'Informe o nome do estoque (2 a 60 caracteres).' };
+  const modo = (typeof b.modo === 'string' ? b.modo : 'almoxarifado') as ModoEstoque;
+  if (!MODOS.includes(modo)) return { ok: false, erro: 'Modo de estoque inválido.' };
+  let prazo: number | null = null;
+  if (modo === 'emprestimo') {
+    prazo = Number(b.prazo_padrao_horas ?? 2);
+    if (!Number.isInteger(prazo) || prazo < 1 || prazo > 8760) return { ok: false, erro: 'O prazo padrão deve ser de 1 a 8760 horas.' };
+  }
+  return { ok: true, nome, modo, prazo_padrao_horas: prazo };
 }
 
 /** Quanto existe de um material, por depósito. */
@@ -200,7 +258,7 @@ export async function depositosDaOrg(
 ): Promise<Deposito[]> {
   let q = db
     .from('warehouses')
-    .select('id, nome, tipo, unit_id, ativo, units!inner(ativo)')
+    .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, units!inner(ativo)')
     .eq('ativo', true);
   if (!opcoes.incluirUnidadesInativas) q = q.eq('units.ativo', true);
   const { data, error } = await q.order('nome', { ascending: true });

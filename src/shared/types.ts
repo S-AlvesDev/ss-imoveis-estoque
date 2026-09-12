@@ -8,7 +8,7 @@ export interface Organizacao {
   logo_url: string | null;
 }
 
-/** Uma filial: "Nova Cruz", "Natal". Toda unidade tem um Central e uma Obra. */
+/** Uma filial: "Nova Cruz", "Natal". Cada unidade tem os próprios estoques. */
 export interface Unidade {
   id: string;
   nome: string;
@@ -16,15 +16,52 @@ export interface Unidade {
   ativo: boolean;
 }
 
+/** Marca de transição: o que era Central/Obra. Estoque novo é OUTRO. */
 export type TipoDeposito = 'CENTRAL' | 'OBRA' | 'OUTRO';
 
-/** O lugar onde o material fica. Pertence a uma unidade. */
+/**
+ * Como se opera um estoque.
+ *   almoxarifado  entrada, saída, consumo, ajuste, transferência na unidade.
+ *   emprestimo    retirada por tempo limitado, com devolução.
+ */
+export type ModoEstoque = 'almoxarifado' | 'emprestimo';
+
+/** Um estoque: o lugar onde o material fica, com nome livre e um modo. Pertence a uma unidade. */
 export interface Deposito {
   id: string;
   nome: string;
   tipo: TipoDeposito;
   unit_id: string;
   ativo: boolean;
+  modo: ModoEstoque;
+  /** Só no modo empréstimo: horas que uma retirada tem por padrão. */
+  prazo_padrao_horas: number | null;
+}
+
+/** Categoria de material, cadastro da organização. */
+export interface Categoria {
+  id: string;
+  nome: string;
+  ordem: number;
+}
+
+/** Uma retirada num estoque de empréstimo. Pendente enquanto `devolvido_em` for nulo. */
+export interface Emprestimo {
+  id: string;
+  warehouse_id: string;
+  material_id: number;
+  material_nome: string;
+  unidade_medida: string;
+  quantidade: number;
+  quantidade_devolvida: number;
+  tomador_nome: string;
+  tomador_referencia: string | null;
+  observacao: string | null;
+  retirado_em: string;
+  prazo_em: string;
+  devolvido_em: string | null;
+  retirada_matricula: string;
+  devolucao_matricula: string | null;
 }
 
 export interface Material {
@@ -39,13 +76,12 @@ export interface Material {
    */
   saldos: Record<string, number>;
   /**
-   * Saldo no Central e na Obra DA UNIDADE SELECIONADA. Derivados de `saldos`
-   * no cliente (useEstoqueData), não lidos do servidor. Existem porque todo
-   * lugar da interface que fala "Central" e "Obra" está falando da unidade
-   * que a pessoa escolheu — e uma tela de almoxarifado mostra um almoxarifado.
+   * O saldo visto da UNIDADE SELECIONADA: a soma dos estoques dela e o saldo
+   * em cada um. Derivados de `saldos` no cliente (useEstoqueData), não lidos
+   * do servidor. É contra `saldo_unidade` que o mínimo se compara.
    */
-  saldo_central: number;
-  saldo_obra: number;
+  saldo_unidade: number;
+  saldos_unidade: Record<string, number>;
   /**
    * Se o material existe na unidade selecionada (tem linha de saldo em algum
    * depósito dela). Derivado no cliente. Falso = a unidade não trabalha com

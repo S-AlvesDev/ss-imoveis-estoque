@@ -1,63 +1,66 @@
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 
 /**
- * Onde o saldo está sendo avaliado. 'empresa' = Central + Obra da unidade
- * somados (o nome vem de quando só existia uma unidade; o significado é "a
- * unidade inteira").
+ * Onde o saldo está sendo avaliado: a unidade inteira ('empresa' — o nome
+ * vem de quando só existia uma), ou um estoque dela, pelo id.
  */
-export type StockScope = 'central' | 'obra' | 'empresa';
+export type StockScope = 'empresa' | string;
 
 /**
  * Situação de um material. Cada status implica uma ação diferente:
  *
- * - RUPTURA     não existe em lugar nenhum          -> comprar
- * - TRANSFERIR  zerado aqui, mas existe no outro local -> remessa (NÃO é falta)
- * - ABAIXO      total abaixo do mínimo da empresa   -> comprar
- * - ATENCAO     total perto do mínimo               -> monitorar
+ * - RUPTURA     não existe em lugar nenhum da unidade   -> comprar
+ * - TRANSFERIR  zerado aqui, mas existe em outro estoque -> transferir (NÃO é falta)
+ * - ABAIXO      total abaixo do mínimo                  -> comprar
+ * - ATENCAO     total perto do mínimo                   -> monitorar
  * - OK          nada a fazer
  */
 export type StockStatus = 'RUPTURA' | 'TRANSFERIR' | 'ABAIXO' | 'ATENCAO' | 'OK';
 
 /**
- * O que a regra de saldo precisa saber de um material: o saldo nos dois
- * almoxarifados DA UNIDADE que está sendo olhada, e o mínimo.
+ * O que a regra de saldo precisa saber de um material: o saldo somado da
+ * unidade que está sendo olhada, o saldo em cada estoque dela, e o mínimo.
  */
-type StockFields = Pick<Material, 'saldo_central' | 'saldo_obra' | 'estoque_minimo'>;
+export type StockFields = Pick<Material, 'saldo_unidade' | 'saldos_unidade' | 'estoque_minimo'>;
 
 /** Margem acima do mínimo que ainda merece atenção (1.5x = 50% de folga). */
 const ATTENTION_FACTOR = 1.5;
 
 /**
- * Saldo da UNIDADE: Central + Obra dela.
+ * Saldo da UNIDADE: todos os estoques dela somados.
  *
  * É contra isso que o estoque mínimo é comparado. Cada unidade é um estoque
- * próprio, com os próprios almoxarifados: faltar em Natal enquanto sobra em
- * Nova Cruz é compra em Natal, não pedido a Nova Cruz. Só o que está dentro
- * da mesma unidade se resolve com remessa.
+ * próprio: faltar em Natal enquanto sobra em Nova Cruz é compra em Natal,
+ * não pedido a Nova Cruz. Só o que está dentro da mesma unidade se resolve
+ * com transferência.
  */
 export function stockTotal(m: StockFields): number {
-  return Number(m.saldo_central) + Number(m.saldo_obra);
+  return Number(m.saldo_unidade);
+}
+
+/** Saldo num estoque específico da unidade. Sem linha = zero. */
+export function saldoEm(m: StockFields, depositoId: string): number {
+  return Number(m.saldos_unidade?.[depositoId] ?? 0);
 }
 
 /**
- * `estoque_minimo` é o ponto de recompra da EMPRESA (Central + Obra), não de
- * cada local. Faltar só em um almoxarifado é problema de remessa, não de compra.
+ * `estoque_minimo` é o ponto de recompra da UNIDADE, não de cada estoque.
+ * Faltar só em um estoque é problema de transferência, não de compra.
  * Mínimo 0 significa "sem controle de mínimo": só alerta se zerar em tudo.
  */
 export function stockStatus(m: StockFields, scope: StockScope = 'empresa'): StockStatus {
   const total = stockTotal(m);
   const minimo = Number(m.estoque_minimo);
 
-  // Zerado nos dois almoxarifados: falta de verdade.
+  // Zerado em todos os estoques da unidade: falta de verdade.
   if (total <= 0) return 'RUPTURA';
 
-  // Visto de um almoxarifado: vazio aqui mas disponível no outro almoxarifado
-  // da MESMA unidade -> basta transferir. Outra unidade não conta: é outro
-  // estoque, e o que falta aqui se resolve comprando aqui.
+  // Visto de um estoque: vazio aqui mas disponível em outro estoque da MESMA
+  // unidade -> basta transferir. Outra unidade não conta: é outro estoque,
+  // e o que falta aqui se resolve comprando aqui.
   if (scope !== 'empresa') {
-    const aqui = scope === 'central' ? Number(m.saldo_central) : Number(m.saldo_obra);
-    const outro = scope === 'central' ? Number(m.saldo_obra) : Number(m.saldo_central);
-    if (aqui <= 0 && outro > 0) return 'TRANSFERIR';
+    const aqui = saldoEm(m, scope);
+    if (aqui <= 0 && total - aqui > 0) return 'TRANSFERIR';
   }
 
   if (minimo > 0) {
@@ -68,15 +71,15 @@ export function stockStatus(m: StockFields, scope: StockScope = 'empresa'): Stoc
   return 'OK';
 }
 
-/** Precisa de compra: ou não existe, ou o total caiu abaixo do mínimo da empresa. */
+/** Precisa de compra: ou não existe, ou o total caiu abaixo do mínimo da unidade. */
 export function needsPurchase(m: StockFields): boolean {
   const s = stockStatus(m, 'empresa');
   return s === 'RUPTURA' || s === 'ABAIXO';
 }
 
-/** Falta neste almoxarifado, mas existe no outro — resolve-se com remessa. */
-export function needsTransfer(m: StockFields, scope: 'central' | 'obra'): boolean {
-  return stockStatus(m, scope) === 'TRANSFERIR';
+/** Falta neste estoque, mas existe em outro — resolve-se com transferência. */
+export function needsTransfer(m: StockFields, depositoId: string): boolean {
+  return stockStatus(m, depositoId) === 'TRANSFERIR';
 }
 
 /** Quanto do mínimo o saldo total cobre. `null` quando não há mínimo definido. */
@@ -88,18 +91,27 @@ export function percentOfMinimum(m: StockFields): number | null {
 
 export const STATUS_LABELS: Record<StockStatus, string> = {
   RUPTURA: 'Sem estoque',
-  TRANSFERIR: 'Requer remessa',
+  TRANSFERIR: 'Tem em outro estoque',
   ABAIXO: 'Abaixo do mínimo',
   ATENCAO: 'Atenção',
   OK: 'OK',
 };
 
-/** O rótulo de TRANSFERIR depende de quem olha: a Obra repõe da Central, e vice-versa. */
-export function statusLabel(status: StockStatus, scope: StockScope = 'empresa'): string {
-  if (status !== 'TRANSFERIR') return STATUS_LABELS[status];
-  if (scope === 'obra') return 'Tem na Central';
-  if (scope === 'central') return 'Tem na Obra';
-  return STATUS_LABELS.TRANSFERIR;
+/**
+ * Onde o material existe, fora do estoque `excetoId`: "Almoxarifado Central",
+ * "A e B", "A, B e C". Vazio se não existe em mais nenhum.
+ */
+export function ondeTem(m: StockFields, depositos: Array<{ id: string; nome: string }>, excetoId?: string): string {
+  const nomes = depositos.filter((d) => d.id !== excetoId && saldoEm(m, d.id) > 0).map((d) => d.nome);
+  if (nomes.length === 0) return '';
+  if (nomes.length === 1) return nomes[0];
+  return `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`;
+}
+
+/** O rótulo de TRANSFERIR pode dizer onde tem, quando quem chama sabe. */
+export function statusLabel(status: StockStatus, _scope: StockScope = 'empresa', ondeTemNome?: string): string {
+  if (status === 'TRANSFERIR' && ondeTemNome) return `Tem em ${ondeTemNome}`;
+  return STATUS_LABELS[status];
 }
 
 /**
@@ -109,7 +121,9 @@ export function statusLabel(status: StockStatus, scope: StockScope = 'empresa'):
 export type MovementDirection = 'in' | 'out' | 'transfer' | 'neutral';
 
 export function movementDirection(tipo: string): MovementDirection {
-  if (tipo.includes('REMESSA') || tipo.includes('DEVOLUCAO')) return 'transfer';
+  if (tipo === 'EMPRESTIMO') return 'out';
+  if (tipo === 'DEVOLUCAO_EMPRESTIMO') return 'in';
+  if (tipo.includes('REMESSA') || tipo.includes('DEVOLUCAO') || tipo === 'TRANSFERENCIA') return 'transfer';
   if (tipo.includes('ENTRADA')) return 'in';
   if (tipo.includes('SAIDA') || tipo.includes('CONSUMO') || tipo === 'EXCLUSÃO') return 'out';
   return 'neutral';

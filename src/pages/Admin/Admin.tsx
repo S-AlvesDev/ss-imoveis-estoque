@@ -14,9 +14,8 @@ import { MergeModal } from './MergeModal';
 import { exportMaterialsToWord } from './exportWord';
 import { api } from '@/lib/api';
 import { naUnidade } from '@/store/unidade';
-import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
+import type { Material, MaterialMovement, StaffUser, Deposito } from '@/shared/types';
 import { formatNumber, stockStatus } from '@/features/estoque/utils';
-import { CATEGORIES } from '@/shared/constants';
 import { buscaInicial } from '@/store/busca';
 
 /**
@@ -29,12 +28,13 @@ const STATUS_FILTERS: { value: StatusFilter; label: string; tone: string }[] = [
   { value: 'TODOS', label: 'Todos', tone: 'text-[var(--text)]' },
   { value: 'RUPTURA', label: 'Sem estoque', tone: 'text-rose-500' },
   { value: 'ABAIXO', label: 'Abaixo do mínimo', tone: 'text-[var(--brand)]' },
-  { value: 'TRANSFERIR', label: 'Tem na Central', tone: 'text-sky-500' },
+  { value: 'TRANSFERIR', label: 'Tem em outro estoque', tone: 'text-sky-500' },
 ];
 
-function matchesStatusFilter(m: Material, filter: StatusFilter): boolean {
+function matchesStatusFilter(m: Material, filter: StatusFilter, depositos: Deposito[]): boolean {
   if (filter === 'TODOS') return true;
-  if (filter === 'TRANSFERIR') return stockStatus(m, 'obra') === 'TRANSFERIR';
+  // Zerado em algum estoque da unidade e disponível em outro.
+  if (filter === 'TRANSFERIR') return depositos.some((d) => stockStatus(m, d.id) === 'TRANSFERIR');
   return stockStatus(m, 'empresa') === filter;
 }
 
@@ -42,20 +42,27 @@ interface AdminProps {
   materials: Material[];
   materialMovements: MaterialMovement[];
   staff: StaffUser[];
+  /** Nomes das categorias da organização. */
+  categorias: string[];
+  /** Estoques ativos da unidade em uso — as colunas de saldo da tabela. */
+  depositos: Deposito[];
   refetch: () => Promise<void>;
 }
 
 const emptyForm = {
   nome: '',
-  categoria: CATEGORIES[0] as string,
+  categoria: '',
   unidade_medida: '',
   qtd_volumes: '',
   fator_multiplicador: '1',
   estoque_minimo: '0',
 };
 
-export function Admin({ materials, materialMovements, staff, refetch }: AdminProps) {
-  const [form, setForm] = useState(emptyForm);
+export function Admin({ materials, materialMovements, staff, categorias, depositos, refetch }: AdminProps) {
+  const [form, setForm] = useState({ ...emptyForm, categoria: categorias[0] ?? '' });
+  // Onde o saldo inicial entra. Com um estoque só, nem pergunta.
+  const estoquesAtivos = depositos.filter((d) => d.ativo);
+  const [estoqueInicial, setEstoqueInicial] = useState(() => (estoquesAtivos.find((d) => d.modo === 'almoxarifado') ?? estoquesAtivos[0])?.id ?? '');
   const [allowDuplicate, setAllowDuplicate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>('TODOS');
@@ -80,7 +87,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
   const visibleMaterials = useMemo(() => {
     let list = materials;
     if (categoria !== 'TODAS') list = list.filter((m) => m.categoria === categoria);
-    list = list.filter((m) => matchesStatusFilter(m, filter));
+    list = list.filter((m) => matchesStatusFilter(m, filter, depositos));
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((m) => m.nome.toLowerCase().includes(q) || m.categoria.toLowerCase().includes(q));
@@ -95,7 +102,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
       TODOS: base.length,
       RUPTURA: base.filter((m) => stockStatus(m, 'empresa') === 'RUPTURA').length,
       ABAIXO: base.filter((m) => stockStatus(m, 'empresa') === 'ABAIXO').length,
-      TRANSFERIR: base.filter((m) => stockStatus(m, 'obra') === 'TRANSFERIR').length,
+      TRANSFERIR: base.filter((m) => depositos.some((d) => stockStatus(m, d.id) === 'TRANSFERIR')).length,
     } satisfies Record<StatusFilter, number>;
   }, [materials, categoria]);
 
@@ -112,6 +119,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
     setCreating(true);
     try {
       await api.post('/api/materials', naUnidade({
+        warehouse_id: estoqueInicial || undefined,
         nome: form.nome,
         categoria: form.categoria,
         unidade_medida: form.unidade_medida,
@@ -182,7 +190,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
           >
             {selectMode ? 'Cancelar Seleção' : 'Selecionar Múltiplos'}
           </Button>
-          <Button variant="outline" icon={<FileDown size={15} />} onClick={() => exportMaterialsToWord(materials)}>
+          <Button variant="outline" icon={<FileDown size={15} />} onClick={() => exportMaterialsToWord(materials, categorias, depositos)}>
             Exportar Word
           </Button>
           <Button variant="outline" icon={<Clock size={15} />} onClick={() => setAuditOpen(true)}>
@@ -230,7 +238,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
                 <ul className="mt-1.5 space-y-0.5">
                   {similarMaterials.slice(0, 3).map((m) => (
                     <li key={m.id}>
-                      &bull; {m.nome} (Saldo Central: {formatNumber(m.saldo_central)})
+                      &bull; {m.nome} (saldo na unidade: {formatNumber(m.saldo_unidade)})
                     </li>
                   ))}
                   {similarMaterials.length > 3 && <li>+{similarMaterials.length - 3} mais</li>}
@@ -243,7 +251,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
             )}
 
             <Select label="Categoria" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}>
-              {CATEGORIES.map((c) => (
+              {categorias.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -284,8 +292,19 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
               onChange={(e) => setForm({ ...form, estoque_minimo: e.target.value })}
             />
 
+            {estoquesAtivos.length > 1 && (
+              <Select label="Saldo inicial entra em" value={estoqueInicial} onChange={(e) => setEstoqueInicial(e.target.value)}>
+                {estoquesAtivos.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.nome}
+                  </option>
+                ))}
+              </Select>
+            )}
+
             <div className="rounded-lg bg-[var(--brand)]/10 px-3 py-2 text-xs font-semibold text-[var(--brand)]">
               Saldo Calculado: {formatNumber(saldoCalculado)} {form.unidade_medida}
+              {estoquesAtivos.length > 1 ? ` em ${estoquesAtivos.find((d) => d.id === estoqueInicial)?.nome ?? ''}` : ''}
             </div>
 
             <Button type="submit" fullWidth loading={creating}>
@@ -311,7 +330,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
               className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--brand)] focus:ring-2 focus:ring-[var(--brand)]/20"
             >
               <option value="TODAS">Todas as categorias</option>
-              {CATEGORIES.map((c) => (
+              {categorias.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -345,8 +364,8 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
             {visibleMaterials.length > 0 ? (
               <MaterialsTable
                 materials={visibleMaterials}
-                // Com o filtro de remessa ativo, o status faz sentido pela ótica da Obra.
-                scope={filter === 'TRANSFERIR' ? 'obra' : 'empresa'}
+                depositos={depositos}
+                scope="empresa"
                 selectMode={selectMode}
                 selectedIds={selectedIds}
                 onToggleSelect={toggleSelected}
@@ -365,7 +384,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
         </div>
       </div>
 
-      <ManageModal key={manageMaterial?.id ?? 'none'} material={manageMaterial} onClose={() => setManageMaterial(null)} onUpdated={refetch} />
+      <ManageModal key={manageMaterial?.id ?? 'none'} material={manageMaterial} categorias={categorias} depositos={depositos} onClose={() => setManageMaterial(null)} onUpdated={refetch} />
       <HistoryModal material={historyMaterial} movements={materialMovements} staff={staff} onClose={() => setHistoryMaterial(null)} />
       <AuditModal
         open={auditOpen}
@@ -383,7 +402,7 @@ export function Admin({ materials, materialMovements, staff, refetch }: AdminPro
         onClose={() => setBulkMinimoOpen(false)}
         onDone={handleBulkActionDone}
       />
-      <MergeModal open={mergeOpen} materials={selectedMaterials} onClose={() => setMergeOpen(false)} onDone={handleBulkActionDone} />
+      <MergeModal open={mergeOpen} materials={selectedMaterials} depositos={depositos} onClose={() => setMergeOpen(false)} onDone={handleBulkActionDone} />
     </div>
   );
 }

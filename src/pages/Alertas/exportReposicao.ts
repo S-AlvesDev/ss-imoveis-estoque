@@ -1,16 +1,17 @@
-import type { Material } from '@/shared/types';
-import { CATEGORIES } from '@/shared/constants';
+import type { Deposito, Material } from '@/shared/types';
 import { nomeDaOrganizacao } from '@/store/marca';
-import { formatNumber, stockStatus, stockTotal } from '@/features/estoque/utils';
+import { formatNumber, saldoEm, stockStatus, stockTotal } from '@/features/estoque/utils';
+import { categoriasPresentes } from '@/pages/Admin/exportWord';
 
 /**
  * Lista de compras: apenas o que precisa de reposição externa. Itens que faltam
- * só em um almoxarifado ficam de fora — esses resolvem-se com remessa interna.
+ * só em um estoque ficam de fora — esses resolvem-se com transferência.
  */
-export function exportReposicaoToWord(materials: Material[]) {
+export function exportReposicaoToWord(materials: Material[], categorias: string[], depositos: Deposito[]) {
   const generatedAt = new Date().toLocaleString('pt-BR');
+  const estoques = depositos.filter((d) => d.ativo);
 
-  const sections = CATEGORIES.map((cat) => {
+  const sections = categoriasPresentes(materials, categorias).map((cat) => {
     const items = materials.filter((m) => m.categoria === cat);
     if (items.length === 0) return '';
 
@@ -21,8 +22,7 @@ export function exportReposicaoToWord(materials: Material[]) {
         const sugestao = Math.max(m.estoque_minimo * 2 - total, m.estoque_minimo || 1);
         return `<tr style="${semEstoque ? 'background:#fee2e2;' : ''}">
           <td>${m.nome}${semEstoque ? ' &#9888;' : ''}</td>
-          <td style="text-align:right">${formatNumber(m.saldo_central)}</td>
-          <td style="text-align:right">${formatNumber(m.saldo_obra)}</td>
+          ${estoques.map((d) => `<td style="text-align:right">${formatNumber(saldoEm(m, d.id))}</td>`).join('')}
           <td style="text-align:right"><strong>${formatNumber(total)}</strong></td>
           <td style="text-align:right">${formatNumber(m.estoque_minimo)}</td>
           <td style="text-align:right"><strong>${formatNumber(sugestao)}</strong></td>
@@ -36,8 +36,7 @@ export function exportReposicaoToWord(materials: Material[]) {
         <thead>
           <tr style="background:#ff8a24;color:#fff;">
             <th align="left">Material</th>
-            <th align="right">Central</th>
-            <th align="right">Obra</th>
+            ${estoques.map((d) => `<th align="right">${d.nome}</th>`).join('')}
             <th align="right">Total</th>
             <th align="right">Mínimo</th>
             <th align="right">Sugestão de compra</th>
@@ -56,7 +55,7 @@ export function exportReposicaoToWord(materials: Material[]) {
         <p style="color:#666;font-size:12px;">
           Gerado em ${generatedAt}<br/>
           ${materials.length} material(is) abaixo do estoque mínimo da empresa (Central + Obra).<br/>
-          Itens disponíveis em outro almoxarifado não constam nesta lista &mdash; resolvem-se com remessa interna.
+          Itens disponíveis em outro estoque não constam nesta lista &mdash; resolvem-se com transferência.
         </p>
         ${sections}
       </body>

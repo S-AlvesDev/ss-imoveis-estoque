@@ -2,22 +2,35 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { useUnidade } from '@/store/unidade';
 import { useMarca } from '@/store/marca';
-import type { Acesso, Deposito, Material, MaterialMovement, NivelAcesso, Organizacao, StaffUser, Unidade } from '@/shared/types';
+import type { Acesso, Categoria, Deposito, Emprestimo, Material, MaterialMovement, NivelAcesso, Organizacao, StaffUser, Unidade } from '@/shared/types';
 import { toast } from 'sonner';
 
 /** O que o servidor devolve. Os materiais vêm com `saldos` por depósito. */
 interface EstoqueResposta {
-  materials: Omit<Material, 'saldo_central' | 'saldo_obra' | 'na_unidade'>[];
+  materials: Omit<Material, 'saldo_unidade' | 'saldos_unidade' | 'na_unidade'>[];
   materialMovements: MaterialMovement[];
   staff: StaffUser[];
   unidades: Unidade[];
   depositos: Deposito[];
+  categorias: Categoria[];
+  /** Retiradas ainda não devolvidas, em todos os estoques de empréstimo da organização. */
+  emprestimos: Emprestimo[];
   /** O que ESTA pessoa pode, por depósito. `null` = administrador. */
   acessos: Acesso[] | null;
   organizacao: Organizacao | null;
 }
 
-const VAZIO: EstoqueResposta = { materials: [], materialMovements: [], staff: [], unidades: [], depositos: [], acessos: null, organizacao: null };
+const VAZIO: EstoqueResposta = {
+  materials: [],
+  materialMovements: [],
+  staff: [],
+  unidades: [],
+  depositos: [],
+  categorias: [],
+  emprestimos: [],
+  acessos: null,
+  organizacao: null,
+};
 
 /**
  * Carrega o estoque e o entrega já visto de uma unidade.
@@ -84,34 +97,44 @@ export function useEstoqueData() {
   // dela — é o admin quem o coloca lá. Zero é saldo; ausência de linha é
   // "não trabalha com isso aqui".
   const catalogo = useMemo<Material[]>(() => {
-    const central = depositosDaUnidade.find((d) => d.tipo === 'CENTRAL');
-    const obra = depositosDaUnidade.find((d) => d.tipo === 'OBRA');
-    const idsDaUnidade = new Set(depositosDaUnidade.map((d) => d.id));
+    const idsDaUnidade = depositosDaUnidade.map((d) => d.id);
     return data.materials.map((m) => {
       const saldos = m.saldos ?? {};
-      return {
-        ...m,
-        saldos,
-        na_unidade: Object.keys(saldos).some((depositoId) => idsDaUnidade.has(depositoId)),
-        saldo_central: central ? Number(saldos[central.id] ?? 0) : 0,
-        saldo_obra: obra ? Number(saldos[obra.id] ?? 0) : 0,
-      };
+      const saldos_unidade: Record<string, number> = {};
+      let saldo_unidade = 0;
+      let na_unidade = false;
+      for (const id of idsDaUnidade) {
+        if (id in saldos) {
+          na_unidade = true;
+          saldos_unidade[id] = Number(saldos[id] ?? 0);
+          saldo_unidade += saldos_unidade[id];
+        }
+      }
+      return { ...m, saldos, na_unidade, saldo_unidade: Math.round(saldo_unidade * 100) / 100, saldos_unidade };
     });
   }, [data.materials, depositosDaUnidade]);
 
   // O que as telas de operação mostram: só o que existe nesta unidade.
   const materials = useMemo(() => catalogo.filter((m) => m.na_unidade), [catalogo]);
 
-  // O nível da pessoa num depósito da unidade em uso. Administrador opera
-  // tudo; quem não tem o depósito não o vê — e a tela dele nem aparece.
+  // O nível da pessoa num estoque. Administrador opera tudo; quem não tem o
+  // estoque não o vê — e a tela dele nem aparece no menu.
   const nivelEm = useCallback(
-    (tipo: 'CENTRAL' | 'OBRA'): NivelAcesso | null => {
-      const deposito = depositosDaUnidade.find((d) => d.tipo === tipo);
-      if (!deposito) return null;
+    (depositoId: string): NivelAcesso | null => {
       if (data.acessos === null) return 'OPERA';
-      return data.acessos.find((a) => a.warehouse_id === deposito.id)?.nivel ?? null;
+      return data.acessos.find((a) => a.warehouse_id === depositoId)?.nivel ?? null;
     },
-    [depositosDaUnidade, data.acessos],
+    [data.acessos],
+  );
+
+  // Os estoques da unidade que esta pessoa pode ver, com o nível dela em cada um.
+  const estoquesVisiveis = useMemo(
+    () =>
+      depositosDaUnidade
+        .filter((d) => d.ativo)
+        .map((d) => ({ deposito: d, nivel: nivelEm(d.id) }))
+        .filter((x): x is { deposito: Deposito; nivel: NivelAcesso } => x.nivel !== null),
+    [depositosDaUnidade, nivelEm],
   );
 
   return {
@@ -129,8 +152,12 @@ export function useEstoqueData() {
     unidade,
     /** Só os depósitos da unidade em uso. */
     depositosDaUnidade,
-    /** Nível da pessoa no Central/Obra da unidade em uso: 'OPERA', 'CONSULTA' ou null (não vê). */
+    /** Nível da pessoa num estoque: 'OPERA', 'CONSULTA' ou null (não vê). */
     nivelEm,
+    /** Estoques ativos da unidade em uso que esta pessoa enxerga, com o nível dela. É o que vira menu. */
+    estoquesVisiveis,
+    categorias: data.categorias,
+    emprestimos: data.emprestimos,
     organizacao: data.organizacao,
     loading,
     /** Quando os dados chegaram pela última vez — o "última atualização" do painel. */

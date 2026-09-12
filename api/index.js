@@ -21,23 +21,28 @@ var supabaseServer = createClient(supabaseUrl || "", serviceRoleKey || "", {
 
 // src/shared/constants.ts
 var ADMIN_ROLES = ["ADMINISTRADOR", "ADMINISTRATIVO"];
+var OPERADOR = "OPERADOR";
+var LEGACY_OPERATOR_ROLES = ["ALMOXARIFE_GERAL", "ALMOXARIFADO", "ALMOXARIFE_OBRA"];
+var ASSIGNABLE_ROLES = ["ADMINISTRADOR", "ADMINISTRATIVO", OPERADOR];
 var CENTRAL_ROLES = ["ALMOXARIFE_GERAL", "ALMOXARIFADO", ...ADMIN_ROLES];
 var OBRA_ROLES = ["ALMOXARIFE_OBRA", ...ADMIN_ROLES];
-var ALL_INVENTORY_ROLES = Array.from(/* @__PURE__ */ new Set([...CENTRAL_ROLES, ...OBRA_ROLES]));
+var ALL_INVENTORY_ROLES = Array.from(/* @__PURE__ */ new Set([...ADMIN_ROLES, OPERADOR, ...LEGACY_OPERATOR_ROLES]));
 
 // src/features/estoque/utils.ts
 var ATTENTION_FACTOR = 1.5;
 function stockTotal(m) {
-  return Number(m.saldo_central) + Number(m.saldo_obra);
+  return Number(m.saldo_unidade);
+}
+function saldoEm(m, depositoId) {
+  return Number(m.saldos_unidade?.[depositoId] ?? 0);
 }
 function stockStatus(m, scope = "empresa") {
   const total = stockTotal(m);
   const minimo = Number(m.estoque_minimo);
   if (total <= 0) return "RUPTURA";
   if (scope !== "empresa") {
-    const aqui = scope === "central" ? Number(m.saldo_central) : Number(m.saldo_obra);
-    const outro = scope === "central" ? Number(m.saldo_obra) : Number(m.saldo_central);
-    if (aqui <= 0 && outro > 0) return "TRANSFERIR";
+    const aqui = saldoEm(m, scope);
+    if (aqui <= 0 && total - aqui > 0) return "TRANSFERIR";
   }
   if (minimo > 0) {
     if (total < minimo) return "ABAIXO";
@@ -69,7 +74,10 @@ var TABELAS_DA_ORGANIZACAO = /* @__PURE__ */ new Set([
   "units",
   "warehouses",
   "stock_balances",
-  "estoque_user_warehouses"
+  "estoque_user_warehouses",
+  // Estoques configuráveis (migração 018): categorias e empréstimos.
+  "categories",
+  "loans"
 ]);
 var clientesPorOrg = /* @__PURE__ */ new Map();
 function clientePara(organizationId) {
@@ -78,7 +86,7 @@ function clientePara(organizationId) {
   let client;
   if (RLS_ATIVO) {
     const token = jwt.sign(
-      { role: "authenticated", organization_id: organizationId },
+      { role: "authenticated", organization_id: organizationId, iat: Math.floor(Date.now() / 1e3) - 120 },
       SUPABASE_JWT_SECRET,
       { expiresIn: "1h" }
     );
@@ -229,6 +237,45 @@ function emailDoPedido(p2) {
   };
 }
 
+// src/server/emprestimos.ts
+var MAX_PRAZO_HORAS = 8760;
+var PRAZO_PADRAO_HORAS = 2;
+function texto2(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+function validarRetirada(body, prazoPadraoHoras) {
+  const b = body && typeof body === "object" ? body : {};
+  const material_id = Number(b.material_id);
+  if (!Number.isInteger(material_id) || material_id <= 0) return { ok: false, erro: "Escolha o material." };
+  const quantidade = Number(b.quantidade);
+  if (!Number.isFinite(quantidade) || quantidade <= 0) return { ok: false, erro: "A quantidade precisa ser maior que zero." };
+  const tomador_nome = texto2(b.tomador_nome);
+  if (tomador_nome.length < 2 || tomador_nome.length > 80) return { ok: false, erro: "Informe quem est\xE1 retirando (2 a 80 caracteres)." };
+  const referencia = texto2(b.tomador_referencia);
+  if (referencia.length > 40) return { ok: false, erro: "Refer\xEAncia longa demais (at\xE9 40 caracteres)." };
+  const observacao = texto2(b.observacao);
+  if (observacao.length > 300) return { ok: false, erro: "Observa\xE7\xE3o longa demais (at\xE9 300 caracteres)." };
+  const prazoInformado = b.prazo_horas === void 0 || b.prazo_horas === null || b.prazo_horas === "" ? null : Number(b.prazo_horas);
+  const prazo_horas = prazoInformado ?? prazoPadraoHoras ?? PRAZO_PADRAO_HORAS;
+  if (!Number.isFinite(prazo_horas) || prazo_horas <= 0 || prazo_horas > MAX_PRAZO_HORAS) {
+    return { ok: false, erro: `O prazo deve ser de 1 a ${MAX_PRAZO_HORAS} horas.` };
+  }
+  return {
+    ok: true,
+    retirada: {
+      material_id,
+      quantidade: Math.round(quantidade * 100) / 100,
+      tomador_nome,
+      tomador_referencia: referencia || null,
+      observacao: observacao || null,
+      prazo_horas
+    }
+  };
+}
+function prazoEm(prazoHoras, agora = /* @__PURE__ */ new Date()) {
+  return new Date(agora.getTime() + prazoHoras * 60 * 60 * 1e3);
+}
+
 // src/server/mail.ts
 function configuracaoSmtp(env = process.env) {
   const brevo = Boolean(env.BREVO_SMTP_LOGIN && env.BREVO_SMTP_KEY);
@@ -321,15 +368,30 @@ function emailDeNovaEmpresa(dados) {
 }
 
 // src/server/estoque.ts
-var FLUXO_DA_OPERACAO = {
-  ENTRADA_CENTRAL: { destino: "CENTRAL", rotulo: "esta entrada", quemOpera: "destino" },
-  SAIDA: { origem: "CENTRAL", rotulo: "esta sa\xEDda", quemOpera: "origem" },
-  REMESSA_OBRA: { origem: "CENTRAL", destino: "OBRA", rotulo: "esta remessa", quemOpera: "origem" },
-  DEVOLUCAO_CENTRAL: { origem: "OBRA", destino: "CENTRAL", rotulo: "esta devolu\xE7\xE3o", quemOpera: "qualquer" },
-  CONSUMO_OBRA: { origem: "OBRA", rotulo: "este consumo", quemOpera: "origem" },
-  AJUSTE_CENTRAL: { destino: "CENTRAL", ajuste: true, rotulo: "este ajuste", quemOpera: "destino" },
-  AJUSTE_OBRA: { destino: "OBRA", ajuste: true, rotulo: "este ajuste", quemOpera: "destino" }
+var MODOS = ["almoxarifado", "emprestimo"];
+var OPERACOES = {
+  ENTRADA: { lado: "destino", rotulo: "esta entrada" },
+  SAIDA: { lado: "origem", rotulo: "esta sa\xEDda" },
+  CONSUMO: { lado: "origem", rotulo: "este consumo" },
+  AJUSTE: { lado: "destino", ajuste: true, rotulo: "este ajuste" },
+  TRANSFERENCIA: { lado: "origem", precisaDestino: true, rotulo: "esta transfer\xEAncia" }
 };
+function ehOperacaoGenerica(s) {
+  return typeof s === "string" && s in OPERACOES;
+}
+function validarEstoque(body) {
+  const b = body && typeof body === "object" ? body : {};
+  const nome = typeof b.nome === "string" ? b.nome.trim() : "";
+  if (nome.length < 2 || nome.length > 60) return { ok: false, erro: "Informe o nome do estoque (2 a 60 caracteres)." };
+  const modo = typeof b.modo === "string" ? b.modo : "almoxarifado";
+  if (!MODOS.includes(modo)) return { ok: false, erro: "Modo de estoque inv\xE1lido." };
+  let prazo = null;
+  if (modo === "emprestimo") {
+    prazo = Number(b.prazo_padrao_horas ?? 2);
+    if (!Number.isInteger(prazo) || prazo < 1 || prazo > 8760) return { ok: false, erro: "O prazo padr\xE3o deve ser de 1 a 8760 horas." };
+  }
+  return { ok: true, nome, modo, prazo_padrao_horas: prazo };
+}
 function arredondar(n) {
   return Math.round(n * 100) / 100;
 }
@@ -391,14 +453,8 @@ function depositosDaUnidade(depositos, unitId) {
   }
   return depositos;
 }
-function depositosDoFluxo(fluxo, depositos) {
-  return {
-    origem_id: fluxo.origem ? acharDeposito(depositos, fluxo.origem).id : void 0,
-    destino_id: fluxo.destino ? acharDeposito(depositos, fluxo.destino).id : void 0
-  };
-}
 async function depositosDaOrg(db, opcoes = {}) {
-  let q = db.from("warehouses").select("id, nome, tipo, unit_id, ativo, units!inner(ativo)").eq("ativo", true);
+  let q = db.from("warehouses").select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, units!inner(ativo)").eq("ativo", true);
   if (!opcoes.incluirUnidadesInativas) q = q.eq("units.ativo", true);
   const { data, error } = await q.order("nome", { ascending: true });
   if (error) throw error;
@@ -463,14 +519,6 @@ function podeVer(acessos, warehouseId) {
 }
 function podeOperar(acessos, warehouseId) {
   return acessos === null || acessos.get(warehouseId) === "OPERA";
-}
-function podeExecutar(acessos, lados, quem) {
-  if (acessos === null) return true;
-  const origem = lados.origem_id ? podeOperar(acessos, lados.origem_id) : false;
-  const destino = lados.destino_id ? podeOperar(acessos, lados.destino_id) : false;
-  if (quem === "origem") return origem;
-  if (quem === "destino") return destino;
-  return origem || destino;
 }
 
 // src/server/app.ts
@@ -625,7 +673,7 @@ function createApp() {
         return res.status(401).json({ error: "Credenciais amb\xEDguas. Entre com o seu e-mail." });
       }
       const userRow = validas[0];
-      const role = userRow.role || (String(userRow.matricula || "").startsWith("E") ? "ALMOXARIFE_GERAL" : null);
+      const role = userRow.role || (String(userRow.matricula || "").startsWith("E") ? "OPERADOR" : null);
       if (!role || !ALL_INVENTORY_ROLES.includes(role)) {
         return res.status(403).json({ error: "Este usu\xE1rio n\xE3o tem acesso ao sistema de estoque." });
       }
@@ -855,7 +903,7 @@ function createApp() {
   app.get("/api/data", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       const db = scopedDb(req.user.organization_id);
-      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes] = await Promise.all([
+      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes, categoriasRes, emprestimosRes] = await Promise.all([
         db.from("materials").select("*").order("nome", { ascending: true }),
         fetchAllRows(
           () => db.from("material_movements").select("*, materials(nome)").order("created_at", { ascending: false }).order("id", { ascending: false })
@@ -865,25 +913,33 @@ function createApp() {
         unidadesDaOrg(db),
         depositosDaOrg(db, { incluirUnidadesInativas: true }),
         saldosDaOrg(db),
-        db.from("organizations").select("id, nome, slug, cor_primaria, logo_url").eq("id", req.user.organization_id).single()
+        db.from("organizations").select("id, nome, slug, cor_primaria, logo_url").eq("id", req.user.organization_id).single(),
+        db.from("categories").select("id, nome, ordem").order("ordem", { ascending: true }).order("nome", { ascending: true }),
+        // Só o que está na rua: a lista de pendentes/atrasados de cada estoque de empréstimo.
+        db.from("loans").select("*, materials(nome, unidade_medida)").is("devolvido_em", null).order("prazo_em", { ascending: true })
       ]);
       if (materialsRes.error) throw materialsRes.error;
+      if (categoriasRes.error) throw categoriasRes.error;
+      if (emprestimosRes.error) throw emprestimosRes.error;
       const acessos = req.acessos ?? null;
       const depositosVisiveis = depositos.filter((d) => podeVer(acessos, d.id));
       const unidadesComAcesso = new Set(depositosVisiveis.map((d) => d.unit_id));
-      const unidadesVisiveis = unidades.filter((u) => unidadesComAcesso.has(u.id));
+      const unidadesVisiveis = acessos === null ? unidades : unidades.filter((u) => unidadesComAcesso.has(u.id));
       const visivel = new Set(depositosVisiveis.map((d) => d.id));
       const materials = (materialsRes.data || []).map((m) => {
         const todos = saldos.get(m.id) || {};
         const porDeposito = acessos === null ? todos : Object.fromEntries(Object.entries(todos).filter(([id]) => visivel.has(id)));
         return { ...m, saldos: porDeposito };
       });
+      const emprestimos = (emprestimosRes.data || []).filter((e) => visivel.has(e.warehouse_id)).map(({ materials: mat, ...e }) => ({ ...e, material_nome: mat?.nome ?? "Material removido", unidade_medida: mat?.unidade_medida ?? "" }));
       res.json({
         materials,
         materialMovements: movements,
         staff: staffRes.data || [],
         unidades: unidadesVisiveis,
         depositos: depositosVisiveis,
+        categorias: categoriasRes.data || [],
+        emprestimos,
         // O que ESTA pessoa pode fazer, para o front montar o menu. Admin: null.
         acessos: acessos === null ? null : [...acessos.entries()].map(([warehouse_id, nivel]) => ({ warehouse_id, nivel })),
         // Nome, cor e logo — a identidade que as telas vestem por dentro.
@@ -1001,12 +1057,15 @@ function createApp() {
         }
         throw unidadeErr;
       }
-      const { data: depositos, error: depErr } = await req.db.from("warehouses").insert([
-        { unit_id: unidade.id, nome: "Almoxarifado Central", tipo: "CENTRAL" },
-        { unit_id: unidade.id, nome: "Almoxarifado de Obra", tipo: "OBRA" }
-      ]).select("id, nome, tipo, unit_id, ativo");
-      if (depErr) throw depErr;
-      console.info(`[POST /api/units] "${nome}" criada por ${req.user.matricula} com ${depositos?.length} dep\xF3sitos.`);
+      let depositos = [];
+      if (req.body?.estoque) {
+        const v = validarEstoque(req.body.estoque);
+        if (!v.ok) return res.status(400).json({ error: v.erro });
+        const { data: dep, error: depErr } = await req.db.from("warehouses").insert({ unit_id: unidade.id, nome: v.nome, tipo: "OUTRO", modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas }).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas").single();
+        if (depErr) throw depErr;
+        depositos = [dep];
+      }
+      console.info(`[POST /api/units] "${nome}" criada por ${req.user.matricula} com ${depositos.length} estoque(s).`);
       res.status(201).json({ unidade, depositos });
     } catch (err) {
       console.error("[POST /api/units] erro:", err.message);
@@ -1037,18 +1096,133 @@ function createApp() {
   });
   app.patch("/api/warehouses/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const nome = String(req.body?.nome || "").trim();
-      if (nome.length < 2 || nome.length > 60) return res.status(400).json({ error: "Nome deve ter de 2 a 60 caracteres." });
-      const { data, error } = await req.db.from("warehouses").update({ nome }).eq("id", req.params.id).select("id, nome, tipo, unit_id, ativo").single();
+      const { data: atual, error: erroAtual } = await req.db.from("warehouses").select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas").eq("id", req.params.id).maybeSingle();
+      if (erroAtual) throw erroAtual;
+      if (!atual) return res.status(404).json({ error: "Estoque n\xE3o encontrado." });
+      const v = validarEstoque({
+        nome: req.body?.nome ?? atual.nome,
+        modo: req.body?.modo ?? atual.modo,
+        prazo_padrao_horas: req.body?.prazo_padrao_horas ?? atual.prazo_padrao_horas ?? void 0
+      });
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const patch = { nome: v.nome, modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas };
+      if (req.body?.ativo !== void 0) patch.ativo = Boolean(req.body.ativo);
+      if (v.modo !== atual.modo || patch.ativo === false) {
+        const { count } = await req.db.from("loans").select("*", { count: "exact", head: true }).eq("warehouse_id", atual.id).is("devolvido_em", null);
+        if ((count ?? 0) > 0) {
+          return res.status(409).json({ error: `H\xE1 ${count} retirada(s) pendente(s) neste estoque. Registre as devolu\xE7\xF5es antes de mudar o modo ou desativar.` });
+        }
+      }
+      const { data, error } = await req.db.from("warehouses").update(patch).eq("id", atual.id).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas").single();
       if (error) {
-        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe um dep\xF3sito com esse nome nesta unidade." });
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe um estoque com esse nome nesta unidade." });
         throw error;
       }
-      if (!data) return res.status(404).json({ error: "Dep\xF3sito n\xE3o encontrado." });
       res.json({ deposito: data });
     } catch (err) {
       console.error("[PATCH /api/warehouses/:id] erro:", err.message);
-      res.status(500).json({ error: "Erro ao renomear dep\xF3sito." });
+      res.status(500).json({ error: "Erro ao atualizar estoque." });
+    }
+  });
+  app.post("/api/units/:id/estoques", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const v = validarEstoque(req.body);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { data: unidade } = await req.db.from("units").select("id, ativo").eq("id", req.params.id).maybeSingle();
+      if (!unidade) return res.status(404).json({ error: "Unidade n\xE3o encontrada." });
+      const { data: dep, error } = await req.db.from("warehouses").insert({ unit_id: unidade.id, nome: v.nome, tipo: "OUTRO", modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas }).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas").single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe um estoque com esse nome nesta unidade." });
+        throw error;
+      }
+      const { data: outros } = await req.db.from("warehouses").select("id").eq("unit_id", unidade.id).neq("id", dep.id);
+      const idsOutros = (outros || []).map((d) => d.id);
+      let adicionados = 0;
+      if (idsOutros.length > 0) {
+        const { data: linhas } = await req.db.from("stock_balances").select("material_id").in("warehouse_id", idsOutros);
+        const materiais = [...new Set((linhas || []).map((l) => l.material_id))];
+        if (materiais.length > 0) {
+          const { error: erroSaldos } = await req.db.from("stock_balances").upsert(materiais.map((material_id) => ({ material_id, warehouse_id: dep.id, saldo: 0 })), { onConflict: "warehouse_id,material_id", ignoreDuplicates: true });
+          if (erroSaldos) throw erroSaldos;
+          adicionados = materiais.length;
+        }
+      }
+      console.info(`[POST /api/units/:id/estoques] "${v.nome}" (${v.modo}) criado por ${req.user.matricula}; ${adicionados} materiais herdados.`);
+      res.status(201).json({ deposito: dep, materiais: adicionados });
+    } catch (err) {
+      console.error("[POST /api/units/:id/estoques] erro:", err.message);
+      res.status(500).json({ error: "Erro ao criar estoque." });
+    }
+  });
+  app.post("/api/categorias", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const nome = String(req.body?.nome ?? "").trim();
+      if (nome.length < 1 || nome.length > 60) return res.status(400).json({ error: "Informe o nome da categoria (at\xE9 60 caracteres)." });
+      const { data: ultima } = await req.db.from("categories").select("ordem").order("ordem", { ascending: false }).limit(1).maybeSingle();
+      const { data, error } = await req.db.from("categories").insert({ nome, ordem: (ultima?.ordem ?? 0) + 1 }).select("id, nome, ordem").single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe uma categoria com esse nome." });
+        throw error;
+      }
+      res.status(201).json({ categoria: data });
+    } catch (err) {
+      console.error("[POST /api/categorias] erro:", err.message);
+      res.status(500).json({ error: "Erro ao criar categoria." });
+    }
+  });
+  app.patch("/api/categorias/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: atual } = await req.db.from("categories").select("id, nome, ordem").eq("id", req.params.id).maybeSingle();
+      if (!atual) return res.status(404).json({ error: "Categoria n\xE3o encontrada." });
+      const patch = {};
+      if (req.body?.nome !== void 0) {
+        const nome = String(req.body.nome).trim();
+        if (nome.length < 1 || nome.length > 60) return res.status(400).json({ error: "Informe o nome da categoria (at\xE9 60 caracteres)." });
+        patch.nome = nome;
+      }
+      if (req.body?.ordem !== void 0) {
+        const ordem = Number(req.body.ordem);
+        if (!Number.isInteger(ordem)) return res.status(400).json({ error: "Ordem inv\xE1lida." });
+        patch.ordem = ordem;
+      }
+      if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nada para alterar." });
+      const { data, error } = await req.db.from("categories").update(patch).eq("id", atual.id).select("id, nome, ordem").single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe uma categoria com esse nome." });
+        throw error;
+      }
+      if (patch.nome && patch.nome !== atual.nome) {
+        const { error: erroMat } = await req.db.from("materials").update({ categoria: patch.nome }).eq("categoria", atual.nome);
+        if (erroMat) throw erroMat;
+      }
+      res.json({ categoria: data });
+    } catch (err) {
+      console.error("[PATCH /api/categorias/:id] erro:", err.message);
+      res.status(500).json({ error: "Erro ao atualizar categoria." });
+    }
+  });
+  app.delete("/api/categorias/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: atual } = await req.db.from("categories").select("id, nome").eq("id", req.params.id).maybeSingle();
+      if (!atual) return res.status(404).json({ error: "Categoria n\xE3o encontrada." });
+      const { count: total } = await req.db.from("categories").select("*", { count: "exact", head: true });
+      if ((total ?? 0) <= 1) return res.status(409).json({ error: "A organiza\xE7\xE3o precisa ter pelo menos uma categoria." });
+      const { count: emUso } = await req.db.from("materials").select("*", { count: "exact", head: true }).eq("categoria", atual.nome);
+      if ((emUso ?? 0) > 0) {
+        const destinoId = String(req.body?.mover_para ?? "");
+        const { data: destino } = destinoId ? await req.db.from("categories").select("id, nome").eq("id", destinoId).maybeSingle() : { data: null };
+        if (!destino || destino.id === atual.id) {
+          return res.status(409).json({ error: `${emUso} material(is) usam esta categoria. Escolha para qual categoria mov\xEA-los.`, em_uso: emUso });
+        }
+        const { error: erroMat } = await req.db.from("materials").update({ categoria: destino.nome }).eq("categoria", atual.nome);
+        if (erroMat) throw erroMat;
+      }
+      const { error } = await req.db.from("categories").delete().eq("id", atual.id);
+      if (error) throw error;
+      res.json({ ok: true, movidos: emUso ?? 0 });
+    } catch (err) {
+      console.error("[DELETE /api/categorias/:id] erro:", err.message);
+      res.status(500).json({ error: "Erro ao remover categoria." });
     }
   });
   app.post("/api/units/:id/materials", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
@@ -1130,14 +1304,14 @@ function createApp() {
       }
       const saldoInicial = arredondar(Number(qtd_volumes) * Number(fator_multiplicador));
       const depositos = await depositosDaOrg(req.db);
-      let central, obra;
+      let daUnidade;
       try {
-        const daUnidade = depositosDaUnidade(depositos, unit_id);
-        central = acharDeposito(daUnidade, "CENTRAL");
-        obra = acharDeposito(daUnidade, "OBRA");
+        daUnidade = depositosDaUnidade(depositos, unit_id);
       } catch (e) {
         return res.status(409).json({ error: e.message });
       }
+      const destino = daUnidade.find((d) => d.id === req.body?.warehouse_id) ?? daUnidade.find((d) => d.tipo === "CENTRAL") ?? daUnidade.find((d) => d.modo === "almoxarifado") ?? daUnidade[0];
+      if (!destino) return res.status(409).json({ error: "A unidade n\xE3o tem estoque cadastrado." });
       const { data: material, error } = await req.db.from("materials").insert({
         nome,
         unidade_medida,
@@ -1147,16 +1321,18 @@ function createApp() {
         categoria: categoria || "Outros"
       }).select().single();
       if (error) throw error;
-      const saldos = { [central.id]: saldoInicial, [obra.id]: 0 };
+      const saldos = Object.fromEntries(daUnidade.map((d) => [d.id, d.id === destino.id ? saldoInicial : 0]));
       await gravarSaldos(req.db, material.id, saldos);
-      await req.db.from("material_movements").insert({
-        material_id: material.id,
-        tipo_operacao: "ENTRADA_CENTRAL",
-        quantidade: saldoInicial,
-        warehouse_destino_id: central.id,
-        funcionario_matricula: req.user.matricula,
-        justificativa: "Cadastro inicial de material"
-      });
+      if (saldoInicial > 0) {
+        await req.db.from("material_movements").insert({
+          material_id: material.id,
+          tipo_operacao: destino.tipo === "CENTRAL" ? "ENTRADA_CENTRAL" : "ENTRADA",
+          quantidade: saldoInicial,
+          warehouse_destino_id: destino.id,
+          funcionario_matricula: req.user.matricula,
+          justificativa: "Cadastro inicial de material"
+        });
+      }
       res.status(201).json({ ...material, saldos });
     } catch (err) {
       console.error("[POST /api/materials] erro:", err.message);
@@ -1291,78 +1467,161 @@ function createApp() {
       res.status(500).json({ error: "Erro ao unificar materiais." });
     }
   });
-  app.post("/api/materials/:id/movement", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+  async function avisarMinimo(material, saldosNovos, saldosAntes, depositosDaUnidadeDela, resumo) {
+    const saldos_unidade = {};
+    for (const d of depositosDaUnidadeDela) saldos_unidade[d.id] = Number(saldosNovos[d.id] ?? saldosAntes[d.id] ?? 0);
+    const saldo_unidade = Object.values(saldos_unidade).reduce((s, v) => s + v, 0);
+    const campos = { saldo_unidade, saldos_unidade, estoque_minimo: material.estoque_minimo };
+    if (!needsPurchase(campos)) return;
+    const semEstoque = stockStatus(campos, "empresa") === "RUPTURA";
     try {
-      const { id } = req.params;
-      const { tipo_operacao, quantidade, justificativa, unit_id } = req.body || {};
-      if (!tipo_operacao || quantidade == null || !justificativa) {
-        return res.status(400).json({ error: "Preencha opera\xE7\xE3o, quantidade e justificativa." });
+      const t = await getTransporter();
+      if (!t) return;
+      const linhas = depositosDaUnidadeDela.map((d) => `${d.nome}: ${saldos_unidade[d.id]} ${material.unidade_medida}`).join("<br/>");
+      await t.sendMail({
+        from: remetente(),
+        to: destinatarioAdmin(),
+        subject: `${semEstoque ? "Sem estoque" : "Estoque abaixo do m\xEDnimo"}: ${material.nome}`,
+        html: `<p>O material <strong>${material.nome}</strong> ${semEstoque ? "est\xE1 <strong>sem estoque</strong> em todos os estoques da unidade." : "est\xE1 com o saldo da unidade <strong>abaixo do estoque m\xEDnimo</strong>."}</p><p>${linhas}<br/><strong>Total: ${stockTotal(campos)} ${material.unidade_medida}</strong><br/>Estoque m\xEDnimo: ${material.estoque_minimo} ${material.unidade_medida}</p><p>${resumo}</p>`
+      });
+    } catch (mailErr) {
+      console.error("[Alerta de Estoque] falha ao enviar e-mail:", mailErr.message);
+    }
+  }
+  app.post("/api/estoques/:id/movimentacoes", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { operacao, material_id, quantidade, justificativa, destino_id } = req.body || {};
+      if (!ehOperacaoGenerica(operacao)) return res.status(400).json({ error: "Opera\xE7\xE3o inv\xE1lida." });
+      if (!material_id || quantidade == null || !String(justificativa ?? "").trim()) {
+        return res.status(400).json({ error: "Preencha material, quantidade e justificativa." });
       }
-      const { data: material, error: fetchError } = await req.db.from("materials").select("*").eq("id", id).single();
-      if (fetchError || !material) return res.status(404).json({ error: "Material n\xE3o encontrado." });
-      const fluxo = FLUXO_DA_OPERACAO[tipo_operacao];
-      if (!fluxo) return res.status(400).json({ error: "Opera\xE7\xE3o inv\xE1lida." });
-      const q = Number(quantidade);
       const depositos = await depositosDaOrg(req.db);
-      const nomeDo = (depositoId) => depositos.find((d) => d.id === depositoId)?.nome ?? depositoId;
-      let lados;
-      try {
-        lados = depositosDoFluxo(fluxo, depositosDaUnidade(depositos, unit_id));
-      } catch (e) {
-        return res.status(409).json({ error: e.message });
+      const estoque = depositos.find((d) => d.id === req.params.id);
+      if (!estoque) return res.status(404).json({ error: "Estoque n\xE3o encontrado." });
+      if (estoque.modo !== "almoxarifado") return res.status(409).json({ error: "Este estoque \xE9 de empr\xE9stimo: registre retiradas e devolu\xE7\xF5es." });
+      if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      const def = OPERACOES[operacao];
+      const lados = def.lado === "origem" ? { origem_id: estoque.id } : { destino_id: estoque.id };
+      if (def.precisaDestino) {
+        const destino = depositos.find((d) => d.id === destino_id);
+        if (!destino) return res.status(400).json({ error: "Escolha o estoque de destino." });
+        if (destino.id === estoque.id) return res.status(400).json({ error: "Origem e destino s\xE3o o mesmo estoque." });
+        if (destino.unit_id !== estoque.unit_id) return res.status(409).json({ error: "Transfer\xEAncia s\xF3 entre estoques da mesma unidade." });
+        lados.destino_id = destino.id;
       }
-      if (!podeExecutar(req.acessos ?? null, lados, fluxo.quemOpera)) {
-        return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para esta opera\xE7\xE3o neste dep\xF3sito." });
-      }
-      const atuais = await saldosDoMaterial(req.db, Number(id));
-      const calculo = calcularMovimento(atuais, { ...lados, quantidade: q, ajuste: fluxo.ajuste, rotulo: fluxo.rotulo, nomeDe: nomeDo });
+      const { data: material, error: fetchError } = await req.db.from("materials").select("*").eq("id", material_id).single();
+      if (fetchError || !material) return res.status(404).json({ error: "Material n\xE3o encontrado." });
+      const nomeDo = (id) => depositos.find((d) => d.id === id)?.nome ?? id;
+      const q = Number(quantidade);
+      const atuais = await saldosDoMaterial(req.db, Number(material_id));
+      const calculo = calcularMovimento(atuais, { ...lados, quantidade: q, ajuste: def.ajuste, rotulo: def.rotulo, nomeDe: nomeDo });
       if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
-      await gravarSaldos(req.db, Number(id), calculo.novos);
+      await gravarSaldos(req.db, Number(material_id), calculo.novos);
       await req.db.from("material_movements").insert({
-        material_id: id,
-        tipo_operacao,
+        material_id,
+        tipo_operacao: operacao,
         quantidade: q,
         warehouse_origem_id: lados.origem_id ?? null,
         warehouse_destino_id: lados.destino_id ?? null,
         funcionario_matricula: req.user.matricula,
-        justificativa
+        justificativa: String(justificativa).trim()
       });
-      const daUnidade = depositosDaUnidade(depositos, unit_id);
-      const central = daUnidade.find((d) => d.tipo === "CENTRAL");
-      const obra = daUnidade.find((d) => d.tipo === "OBRA");
-      const novoSaldoCentral = central ? calculo.novos[central.id] ?? atuais[central.id] ?? 0 : 0;
-      const novoSaldoObra = obra ? calculo.novos[obra.id] ?? atuais[obra.id] ?? 0 : 0;
-      const saldoAtualizado = {
-        saldo_central: novoSaldoCentral,
-        saldo_obra: novoSaldoObra,
-        estoque_minimo: material.estoque_minimo
-      };
-      const saldoTotal = stockTotal(saldoAtualizado);
-      const semEstoque = stockStatus(saldoAtualizado, "empresa") === "RUPTURA";
-      if (needsPurchase(saldoAtualizado)) {
-        try {
-          const t = await getTransporter();
-          if (t) {
-            await t.sendMail({
-              from: remetente(),
-              to: destinatarioAdmin(),
-              subject: `${semEstoque ? "Sem estoque" : "Estoque abaixo do m\xEDnimo"}: ${material.nome}`,
-              html: `<p>O material <strong>${material.nome}</strong> ${semEstoque ? "est\xE1 <strong>sem estoque</strong> nos dois almoxarifados." : "est\xE1 com o saldo total <strong>abaixo do estoque m\xEDnimo</strong>."}</p>
-                     <p>Saldo Central: ${novoSaldoCentral} ${material.unidade_medida}<br/>
-                     Saldo Obra: ${novoSaldoObra} ${material.unidade_medida}<br/>
-                     <strong>Total: ${saldoTotal} ${material.unidade_medida}</strong><br/>
-                     Estoque M\xEDnimo: ${material.estoque_minimo} ${material.unidade_medida}</p>
-                     <p>Opera\xE7\xE3o: ${tipo_operacao} | Quantidade: ${q} | Respons\xE1vel: ${req.user.nome}</p>`
-            });
-          }
-        } catch (mailErr) {
-          console.error("[Alerta de Estoque] falha ao enviar e-mail:", mailErr.message);
-        }
-      }
-      res.json({ success: true, material_id: id, novoSaldo: novoSaldoCentral, saldoObra: novoSaldoObra, saldos: calculo.novos });
+      await avisarMinimo(material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Opera\xE7\xE3o: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Respons\xE1vel: ${req.user.nome}`);
+      res.json({ success: true, material_id, saldos: calculo.novos });
     } catch (err) {
-      console.error("[POST /api/materials/:id/movement] erro:", err.message);
+      console.error("[POST /api/estoques/:id/movimentacoes] erro:", err.message);
       res.status(500).json({ error: "Erro ao registrar movimenta\xE7\xE3o." });
+    }
+  });
+  app.get("/api/estoques/:id/emprestimos", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      if (!podeVer(req.acessos ?? null, req.params.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este estoque." });
+      const { data, error } = await req.db.from("loans").select("*, materials(nome, unidade_medida)").eq("warehouse_id", req.params.id).order("retirado_em", { ascending: false }).limit(300);
+      if (error) throw error;
+      res.json({
+        emprestimos: (data || []).map(({ materials: mat, ...e }) => ({ ...e, material_nome: mat?.nome ?? "Material removido", unidade_medida: mat?.unidade_medida ?? "" }))
+      });
+    } catch (err) {
+      console.error("[GET /api/estoques/:id/emprestimos] erro:", err.message);
+      res.status(500).json({ error: "Erro ao carregar retiradas." });
+    }
+  });
+  app.post("/api/estoques/:id/emprestimos", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const depositos = await depositosDaOrg(req.db);
+      const estoque = depositos.find((d) => d.id === req.params.id);
+      if (!estoque) return res.status(404).json({ error: "Estoque n\xE3o encontrado." });
+      if (estoque.modo !== "emprestimo") return res.status(409).json({ error: "Este estoque n\xE3o \xE9 de empr\xE9stimo." });
+      if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      const v = validarRetirada(req.body, estoque.prazo_padrao_horas);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const r = v.retirada;
+      const { data: material } = await req.db.from("materials").select("*").eq("id", r.material_id).maybeSingle();
+      if (!material) return res.status(404).json({ error: "Material n\xE3o encontrado." });
+      const atuais = await saldosDoMaterial(req.db, r.material_id);
+      const calculo = calcularMovimento(atuais, { origem_id: estoque.id, quantidade: r.quantidade, rotulo: "esta retirada", nomeDe: () => estoque.nome });
+      if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
+      const agora = /* @__PURE__ */ new Date();
+      const { data: emprestimo, error } = await req.db.from("loans").insert({
+        warehouse_id: estoque.id,
+        material_id: r.material_id,
+        quantidade: r.quantidade,
+        tomador_nome: r.tomador_nome,
+        tomador_referencia: r.tomador_referencia,
+        observacao: r.observacao,
+        retirado_em: agora.toISOString(),
+        prazo_em: prazoEm(r.prazo_horas, agora).toISOString(),
+        retirada_matricula: req.user.matricula
+      }).select("*").single();
+      if (error) throw error;
+      await gravarSaldos(req.db, r.material_id, calculo.novos);
+      await req.db.from("material_movements").insert({
+        material_id: r.material_id,
+        tipo_operacao: "EMPRESTIMO",
+        quantidade: r.quantidade,
+        warehouse_origem_id: estoque.id,
+        warehouse_destino_id: null,
+        funcionario_matricula: req.user.matricula,
+        justificativa: `Retirada por ${r.tomador_nome}${r.tomador_referencia ? ` (${r.tomador_referencia})` : ""} \u2014 prazo ${r.prazo_horas} h`
+      });
+      await avisarMinimo(material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user.nome}`);
+      res.status(201).json({ emprestimo: { ...emprestimo, material_nome: material.nome, unidade_medida: material.unidade_medida }, saldos: calculo.novos });
+    } catch (err) {
+      console.error("[POST /api/estoques/:id/emprestimos] erro:", err.message);
+      res.status(500).json({ error: "Erro ao registrar retirada." });
+    }
+  });
+  app.post("/api/emprestimos/:id/devolver", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: emp } = await req.db.from("loans").select("*, materials(nome, unidade_medida)").eq("id", req.params.id).maybeSingle();
+      if (!emp) return res.status(404).json({ error: "Retirada n\xE3o encontrada." });
+      if (emp.devolvido_em) return res.status(409).json({ error: "Esta retirada j\xE1 foi devolvida." });
+      if (!podeOperar(req.acessos ?? null, emp.warehouse_id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      const falta = Math.round((Number(emp.quantidade) - Number(emp.quantidade_devolvida)) * 100) / 100;
+      const q = req.body?.quantidade == null || req.body.quantidade === "" ? falta : Math.round(Number(req.body.quantidade) * 100) / 100;
+      if (!Number.isFinite(q) || q <= 0 || q > falta) return res.status(400).json({ error: `Informe uma quantidade entre 0 e ${falta}.` });
+      const atuais = await saldosDoMaterial(req.db, emp.material_id);
+      const calculo = calcularMovimento(atuais, { destino_id: emp.warehouse_id, quantidade: q, rotulo: "esta devolu\xE7\xE3o", nomeDe: (id) => id });
+      if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
+      const agora = (/* @__PURE__ */ new Date()).toISOString();
+      const devolvidaTotal = Math.round((Number(emp.quantidade_devolvida) + q) * 100) / 100;
+      const completa = devolvidaTotal >= Number(emp.quantidade);
+      const { data: atualizado, error } = await req.db.from("loans").update({ quantidade_devolvida: devolvidaTotal, devolvido_em: completa ? agora : null, devolucao_matricula: req.user.matricula }).eq("id", emp.id).select("*").single();
+      if (error) throw error;
+      await gravarSaldos(req.db, emp.material_id, calculo.novos);
+      await req.db.from("material_movements").insert({
+        material_id: emp.material_id,
+        tipo_operacao: "DEVOLUCAO_EMPRESTIMO",
+        quantidade: q,
+        warehouse_origem_id: null,
+        warehouse_destino_id: emp.warehouse_id,
+        funcionario_matricula: req.user.matricula,
+        justificativa: `Devolu\xE7\xE3o de ${emp.tomador_nome}${completa ? "" : " (parcial)"}`
+      });
+      res.json({ emprestimo: { ...atualizado, material_nome: emp.materials?.nome ?? "", unidade_medida: emp.materials?.unidade_medida ?? "" }, saldos: calculo.novos });
+    } catch (err) {
+      console.error("[POST /api/emprestimos/:id/devolver] erro:", err.message);
+      res.status(500).json({ error: "Erro ao registrar devolu\xE7\xE3o." });
     }
   });
   app.post("/api/materials/bulk-recount", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
@@ -1383,8 +1642,8 @@ function createApp() {
           return res.status(409).json({ error: e.message });
         }
       }
-      const tipo_operacao = deposito.tipo === "CENTRAL" ? "AJUSTE_CENTRAL" : deposito.tipo === "OBRA" ? "AJUSTE_OBRA" : null;
-      if (!tipo_operacao || !podeOperar(req.acessos ?? null, deposito.id)) {
+      const tipo_operacao = deposito.tipo === "CENTRAL" ? "AJUSTE_CENTRAL" : deposito.tipo === "OBRA" ? "AJUSTE_OBRA" : "AJUSTE";
+      if (!podeOperar(req.acessos ?? null, deposito.id)) {
         return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para ajustar este dep\xF3sito." });
       }
       if (!Array.isArray(counts) || counts.length === 0) {
@@ -1616,7 +1875,7 @@ function createApp() {
     try {
       const { nome, matricula, email, role, senha } = req.body || {};
       if (!nome || !matricula || !senha) return res.status(400).json({ error: "Informe nome, matr\xEDcula e senha." });
-      if (!assertManageable(role)) return res.status(400).json({ error: "Perfil inv\xE1lido para o sistema de estoque." });
+      if (!ASSIGNABLE_ROLES.includes(String(role))) return res.status(400).json({ error: "Perfil inv\xE1lido: use Administrador, Administrativo ou Operador." });
       if (String(senha).length < MIN_PASSWORD_LENGTH) {
         return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
       }
@@ -1649,7 +1908,7 @@ function createApp() {
       if (nome !== void 0) patch.nome = String(nome).trim();
       if (email !== void 0) patch.email = email ? String(email).trim().toLowerCase() : null;
       if (role !== void 0) {
-        if (!assertManageable(role)) return res.status(400).json({ error: "Perfil inv\xE1lido para o sistema de estoque." });
+        if (!ASSIGNABLE_ROLES.includes(String(role))) return res.status(400).json({ error: "Perfil inv\xE1lido: use Administrador, Administrativo ou Operador." });
         if (target.id === req.user.id && !ADMIN_ROLES.includes(role)) {
           return res.status(400).json({ error: "Voc\xEA n\xE3o pode remover o seu pr\xF3prio acesso de administrador." });
         }

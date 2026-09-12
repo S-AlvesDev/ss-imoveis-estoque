@@ -1,12 +1,18 @@
-import type { Material } from '@/shared/types';
-import { CATEGORIES } from '@/shared/constants';
+import type { Deposito, Material } from '@/shared/types';
 import { nomeDaOrganizacao } from '@/store/marca';
-import { formatNumber, needsPurchase } from '@/features/estoque/utils';
+import { formatNumber, needsPurchase, saldoEm } from '@/features/estoque/utils';
 
-export function exportMaterialsToWord(materials: Material[]) {
+/** As categorias na ordem da organização, mais qualquer outra que os materiais ainda usem. */
+export function categoriasPresentes(materials: Material[], categorias: string[]): string[] {
+  const extras = [...new Set(materials.map((m) => m.categoria))].filter((c) => !categorias.includes(c)).sort();
+  return [...categorias, ...extras];
+}
+
+export function exportMaterialsToWord(materials: Material[], categorias: string[], depositos: Deposito[]) {
   const generatedAt = new Date().toLocaleString('pt-BR');
+  const estoques = depositos.filter((d) => d.ativo);
 
-  const sections = CATEGORIES.map((cat) => {
+  const sections = categoriasPresentes(materials, categorias).map((cat) => {
     const items = materials.filter((m) => m.categoria === cat);
     if (items.length === 0) return '';
     const rows = items
@@ -14,8 +20,7 @@ export function exportMaterialsToWord(materials: Material[]) {
         const critical = needsPurchase(m);
         return `<tr style="${critical ? 'background:#fee2e2;' : ''}">
           <td>${m.nome}${critical ? ' &#9888;' : ''}</td>
-          <td style="text-align:right">${formatNumber(m.saldo_central)}</td>
-          <td style="text-align:right">${formatNumber(m.saldo_obra)}</td>
+          ${estoques.map((d) => `<td style="text-align:right">${formatNumber(saldoEm(m, d.id))}</td>`).join('')}
           <td style="text-align:right">${formatNumber(m.estoque_minimo)}</td>
           <td>${m.unidade_medida}</td>
         </tr>`;
@@ -26,8 +31,7 @@ export function exportMaterialsToWord(materials: Material[]) {
         <thead>
           <tr style="background:#2563eb;color:#fff;">
             <th align="left">Material</th>
-            <th align="right">Saldo Central</th>
-            <th align="right">Saldo Obra</th>
+            ${estoques.map((d) => `<th align="right">${d.nome}</th>`).join('')}
             <th align="right">Estoque Mínimo</th>
             <th align="left">Unidade</th>
           </tr>

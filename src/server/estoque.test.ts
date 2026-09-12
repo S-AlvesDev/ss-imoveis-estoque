@@ -16,8 +16,8 @@ const OBRA = 'd0000000-0000-4000-8000-00000000000b';
 const NATAL = 'd0000000-0000-4000-8000-00000000000e';
 
 const depositos: Deposito[] = [
-  { id: CENTRAL, nome: 'Almoxarifado Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true },
-  { id: OBRA, nome: 'Almoxarifado de Obra', tipo: 'OBRA', unit_id: 'u1', ativo: true },
+  { id: CENTRAL, nome: 'Almoxarifado Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null },
+  { id: OBRA, nome: 'Almoxarifado de Obra', tipo: 'OBRA', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null },
 ];
 
 const nomeDe = (id: string) => depositos.find((d) => d.id === id)?.nome ?? id;
@@ -153,8 +153,8 @@ describe('calcularMovimento — arredondamento', () => {
 
 describe('depositosDaUnidade — com uma unidade tudo serve; com duas, precisa dizer qual', () => {
   const natal: Deposito[] = [
-    { id: 'nc', nome: 'Central de Natal', tipo: 'CENTRAL', unit_id: 'u2', ativo: true },
-    { id: 'no', nome: 'Obra de Natal', tipo: 'OBRA', unit_id: 'u2', ativo: true },
+    { id: 'nc', nome: 'Central de Natal', tipo: 'CENTRAL', unit_id: 'u2', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null },
+    { id: 'no', nome: 'Obra de Natal', tipo: 'OBRA', unit_id: 'u2', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null },
   ];
 
   it('uma unidade só: devolve tudo mesmo sem informar', () => {
@@ -192,7 +192,7 @@ describe('acharDeposito — falha fecha', () => {
     // É o cenário de duas unidades. Nesse ponto a operação precisa dizer o
     // depósito pelo id; adivinhar seria mexer no saldo de Natal achando que é
     // Nova Cruz.
-    const duas = [...depositos, { id: NATAL, nome: 'Central de Natal', tipo: 'CENTRAL' as const, unit_id: 'u2', ativo: true }];
+    const duas = [...depositos, { id: NATAL, nome: 'Central de Natal', tipo: 'CENTRAL' as const, unit_id: 'u2', ativo: true, modo: 'almoxarifado' as const, prazo_padrao_horas: null }];
     expect(() => acharDeposito(duas, 'CENTRAL')).toThrow(/2 depósitos CENTRAL/);
   });
 });

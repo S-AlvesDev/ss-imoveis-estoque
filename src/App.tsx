@@ -7,8 +7,9 @@ import { Login } from '@/pages/Login/Login';
 import { Home } from '@/pages/Home/Home';
 import { ROTAS, useRouter } from '@/app/router';
 import { Dashboard } from '@/pages/Dashboard/Dashboard';
-import { Central } from '@/pages/Central/Central';
-import { Obra } from '@/pages/Obra/Obra';
+import { Estoque } from '@/pages/Estoque/Estoque';
+import { Emprestimo } from '@/pages/Estoque/Emprestimo';
+import { PrimeiroEstoque } from '@/pages/Estoque/PrimeiroEstoque';
 import { Admin } from '@/pages/Admin/Admin';
 import { Alertas } from '@/pages/Alertas/Alertas';
 import { Suporte } from '@/pages/Suporte/Suporte';
@@ -17,7 +18,7 @@ import { Ajuda } from '@/pages/Ajuda/Ajuda';
 import { Configuracoes } from '@/pages/Configuracoes/Configuracoes';
 import { UpdateBanner } from '@/features/changelog/UpdateGuide';
 import { useUnidade } from '@/store/unidade';
-import { Sidebar, navItemsFor, type AppView } from '@/app/Sidebar';
+import { Sidebar, navItemsFor, estoqueDaView, type AppView } from '@/app/Sidebar';
 import { TopBar } from '@/app/TopBar';
 import { Stripes } from '@/shared/ui/Stripes';
 import { Logo } from '@/shared/ui/Logo';
@@ -57,12 +58,10 @@ function ViewTransition({ viewKey, children }: { viewKey: string; children: Reac
   );
 }
 
-const VIEW_TITLES: Record<AppView, string> = {
+const VIEW_TITLES: Record<string, string> = {
   dashboard: 'Painel',
   materiais: 'Materiais',
   alertas: 'Alertas de Estoque',
-  central: 'Almoxarifado Central',
-  obra: 'Almoxarifado de Obra',
   suporte: 'Suporte',
   ajuda: 'Ajuda',
   usuarios: 'Usuários',
@@ -72,12 +71,12 @@ const VIEW_TITLES: Record<AppView, string> = {
 function InventoryApp({ role }: { role: string }) {
   const [view, setView] = useState<AppView | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, loading, atualizadoEm, refetch } = useEstoqueData();
+  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, estoquesVisiveis, categorias, emprestimos, loading, atualizadoEm, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
 
   const isAdmin = ADMIN_ROLES.includes(role);
-  const acesso = { central: nivelEm('CENTRAL'), obra: nivelEm('OBRA') };
-  const itens = navItemsFor(role, acesso);
+  const itens = navItemsFor(role, estoquesVisiveis);
+  const nomesDeCategorias = categorias.map((c) => c.nome);
 
   // A tela inicial é a primeira que a pessoa pode ver: admin no dashboard,
   // operador no depósito dele. Se a tela atual sumiu (trocou de unidade e
@@ -85,16 +84,30 @@ function InventoryApp({ role }: { role: string }) {
   const landingView: AppView = itens[0]?.view ?? 'suporte';
   const viewAtual: AppView = view && itens.some((i) => i.view === view) ? view : landingView;
 
-  // Onde um material "abre" pela busca: Materiais para quem administra, o depósito da pessoa para quem opera.
-  const telaDeMaterial: AppView | null = isAdmin ? 'materiais' : (itens.find((i) => i.view === 'central' || i.view === 'obra')?.view ?? null);
+  // Onde um material "abre" pela busca: Materiais para quem administra, o primeiro estoque da pessoa para quem opera.
+  const telaDeMaterial: AppView | null = isAdmin ? 'materiais' : (itens.find((i) => estoqueDaView(i.view))?.view ?? null);
+  const estoqueAtual = estoqueDaView(viewAtual) ? depositosDaUnidade.find((d) => d.id === estoqueDaView(viewAtual)) ?? null : null;
   const alertas = materials.filter(needsPurchase).length;
 
   // O título da tela saiu da barra do topo e foi para a aba do navegador.
   useEffect(() => {
-    document.title = loading ? PRODUTO.nome : `${VIEW_TITLES[viewAtual]} · ${PRODUTO.nome}`;
-  }, [loading, viewAtual]);
+    document.title = loading ? PRODUTO.nome : `${estoqueAtual?.nome ?? VIEW_TITLES[viewAtual] ?? PRODUTO.nome} · ${PRODUTO.nome}`;
+  }, [loading, viewAtual, estoqueAtual]);
 
   if (loading) return <LoadingScreen />;
+
+  // Organização sem estoque nenhum: o primeiro acesso pergunta qual é.
+  if (depositos.length === 0) {
+    if (isAdmin && unidade) return <PrimeiroEstoque unidade={unidade} onCriado={refetch} />;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-6 text-center">
+        <div>
+          <p className="text-lg font-bold text-[var(--text)]">A empresa ainda não tem estoque cadastrado.</p>
+          <p className="mt-1 text-sm text-[var(--text-muted)]">Peça ao administrador para criar o primeiro estoque.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-[var(--bg)]">
@@ -107,7 +120,7 @@ function InventoryApp({ role }: { role: string }) {
         unidade={unidade}
         onChangeUnidade={setUnidade}
         onNovaUnidade={isAdmin ? () => setView('configuracoes') : undefined}
-        acesso={acesso}
+        estoques={estoquesVisiveis}
         alertas={alertas}
         totalMateriais={materials.length}
       />
@@ -133,24 +146,34 @@ function InventoryApp({ role }: { role: string }) {
                 depositos={depositosDaUnidade}
                 unidadeUnica={unidadesAtivas.length <= 1}
                 atualizadoEm={atualizadoEm}
+                categorias={nomesDeCategorias}
                 onNavigate={setView}
               />
             )}
-            {viewAtual === 'alertas' && <Alertas materials={materials} />}
+            {viewAtual === 'alertas' && <Alertas materials={materials} depositos={depositosDaUnidade} emprestimos={emprestimos} categorias={nomesDeCategorias} />}
             {viewAtual === 'materiais' && (
-              <Admin materials={catalogo} materialMovements={materialMovements} staff={staff} refetch={refetch} />
+              <Admin materials={catalogo} materialMovements={materialMovements} staff={staff} categorias={nomesDeCategorias} depositos={depositosDaUnidade} refetch={refetch} />
             )}
-            {viewAtual === 'central' && (
-              <Central materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} podeOperar={acesso.central === 'OPERA'} />
+            {estoqueAtual && estoqueAtual.modo === 'almoxarifado' && (
+              <Estoque
+                deposito={estoqueAtual}
+                depositosDaUnidade={depositosDaUnidade}
+                materials={materials}
+                materialMovements={materialMovements}
+                staff={staff}
+                categorias={nomesDeCategorias}
+                refetch={refetch}
+                podeOperar={nivelEm(estoqueAtual.id) === 'OPERA'}
+              />
             )}
-            {viewAtual === 'obra' && (
-              <Obra materials={materials} materialMovements={materialMovements} staff={staff} refetch={refetch} podeOperar={acesso.obra === 'OPERA'} />
+            {estoqueAtual && estoqueAtual.modo === 'emprestimo' && (
+              <Emprestimo deposito={estoqueAtual} materials={materials} emprestimos={emprestimos} staff={staff} refetch={refetch} podeOperar={nivelEm(estoqueAtual.id) === 'OPERA'} />
             )}
             {viewAtual === 'suporte' && <Suporte materials={catalogo} />}
             {viewAtual === 'ajuda' && <Ajuda />}
             {viewAtual === 'usuarios' && isAdmin && <Usuarios />}
             {viewAtual === 'configuracoes' && isAdmin && (
-              <Configuracoes unidades={unidades} depositos={depositos} catalogo={catalogo} refetch={refetch} onSelecionarUnidade={setUnidade} />
+              <Configuracoes unidades={unidades} depositos={depositos} catalogo={catalogo} categorias={categorias} refetch={refetch} onSelecionarUnidade={setUnidade} />
             )}
           </ViewTransition>
         </main>

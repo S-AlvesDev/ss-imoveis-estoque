@@ -18,13 +18,15 @@ interface StockStatusBadgeProps {
   scope?: StockScope;
   /** OK normalmente não merece um selo; passe `showOk` para exibi-lo mesmo assim. */
   showOk?: boolean;
+  /** Para TRANSFERIR: em que estoque(s) o material existe ("Tem em Almoxarifado Central"). */
+  ondeTem?: string;
 }
 
-export function StockStatusBadge({ status, scope = 'empresa', showOk }: StockStatusBadgeProps) {
+export function StockStatusBadge({ status, scope = 'empresa', showOk, ondeTem }: StockStatusBadgeProps) {
   if (status === 'OK' && !showOk) return null;
   return (
     <Badge variant={VARIANTS[status]} dot={status === 'RUPTURA'}>
-      {statusLabel(status, scope)}
+      {statusLabel(status, scope, ondeTem)}
     </Badge>
   );
 }

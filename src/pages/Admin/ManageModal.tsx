@@ -4,34 +4,29 @@ import { motion } from 'motion/react';
 import { Modal } from '@/shared/ui/Modal';
 import { Button } from '@/shared/ui/Button';
 import { Input, Select } from '@/shared/ui/Field';
-import { MovementForm } from '@/features/estoque/MovementForm';
+import { MovementForm, type MovimentoPayload } from '@/features/estoque/MovementForm';
 import { api } from '@/lib/api';
-import { naUnidade } from '@/store/unidade';
-import type { Material } from '@/shared/types';
-import { CATEGORIES } from '@/shared/constants';
-import { formatNumber } from '@/features/estoque/utils';
-
-const ADMIN_OPERATIONS = [
-  { value: 'ENTRADA_CENTRAL', label: 'Entrada Central', color: 'bg-emerald-600 text-white' },
-  { value: 'SAIDA', label: 'Saída Central', color: 'bg-amber-600 text-white' },
-  { value: 'REMESSA_OBRA', label: 'Remessa p/ Obra', color: 'bg-[var(--brand)] text-white' },
-  { value: 'DEVOLUCAO_CENTRAL', label: 'Devolução p/ Central', color: 'bg-indigo-600 text-white' },
-  { value: 'AJUSTE_CENTRAL', label: 'Ajuste Central', color: 'bg-slate-800 text-white' },
-  { value: 'AJUSTE_OBRA', label: 'Ajuste Obra', color: 'bg-slate-800 text-white' },
-];
+import type { Deposito, Material } from '@/shared/types';
+import { formatNumber, saldoEm } from '@/features/estoque/utils';
 
 interface ManageModalProps {
   material: Material | null;
+  categorias: string[];
+  /** Estoques ativos da unidade em uso — a aba Movimentar escolhe um deles. */
+  depositos: Deposito[];
   onClose: () => void;
   onUpdated: () => Promise<void>;
 }
 
-export function ManageModal({ material, onClose, onUpdated }: ManageModalProps) {
+export function ManageModal({ material, categorias, depositos, onClose, onUpdated }: ManageModalProps) {
   const [tab, setTab] = useState<'EDITAR' | 'MOVIMENTAR'>('EDITAR');
   const [saving, setSaving] = useState(false);
+  const estoquesOperaveis = depositos.filter((d) => d.ativo && d.modo === 'almoxarifado');
+  const [depositoId, setDepositoId] = useState(estoquesOperaveis[0]?.id ?? '');
+  const deposito = estoquesOperaveis.find((d) => d.id === depositoId) ?? estoquesOperaveis[0] ?? null;
   const [form, setForm] = useState(() => ({
     nome: material?.nome || '',
-    categoria: material?.categoria || CATEGORIES[0],
+    categoria: material?.categoria || categorias[0] || '',
     unidade_medida: material?.unidade_medida || '',
     fator_multiplicador: material?.fator_multiplicador ?? 1,
     estoque_minimo: material?.estoque_minimo ?? 0,
@@ -53,8 +48,9 @@ export function ManageModal({ material, onClose, onUpdated }: ManageModalProps) 
     }
   }
 
-  async function handleMovement(payload: { material_id: number; tipo_operacao: string; quantidade: number; justificativa: string }) {
-    await api.post(`/api/materials/${payload.material_id}/movement`, naUnidade(payload));
+  async function handleMovement(payload: MovimentoPayload) {
+    if (!deposito) throw new Error('Escolha o estoque.');
+    await api.post(`/api/estoques/${deposito.id}/movimentacoes`, payload);
     await onUpdated();
   }
 
@@ -83,7 +79,7 @@ export function ManageModal({ material, onClose, onUpdated }: ManageModalProps) 
         <form onSubmit={handleSaveEdit} className="space-y-4">
           <Input label="Nome" required value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} />
           <Select label="Categoria" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}>
-            {CATEGORIES.map((c) => (
+            {categorias.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
@@ -113,8 +109,12 @@ export function ManageModal({ material, onClose, onUpdated }: ManageModalProps) 
           </div>
           {material && (
             <p className="text-xs text-[var(--text-muted)]">
-              Saldo Central: <strong>{formatNumber(material.saldo_central)}</strong> · Saldo Obra:{' '}
-              <strong>{formatNumber(material.saldo_obra)}</strong> (altere pela aba Movimentar)
+              {depositos.filter((d) => d.ativo).map((d) => (
+                <span key={d.id} className="mr-3">
+                  {d.nome}: <strong>{formatNumber(saldoEm(material, d.id))}</strong>
+                </span>
+              ))}
+              (altere pela aba Movimentar)
             </p>
           )}
           <Button type="submit" fullWidth loading={saving}>
@@ -124,12 +124,22 @@ export function ManageModal({ material, onClose, onUpdated }: ManageModalProps) 
       )}
 
       {tab === 'MOVIMENTAR' && material && (
-        <MovementForm
-          materials={[material]}
-          operations={ADMIN_OPERATIONS}
-          onSubmit={handleMovement}
-          allowNegative={(op) => op === 'AJUSTE_CENTRAL' || op === 'AJUSTE_OBRA'}
-        />
+        deposito ? (
+          <div className="space-y-4">
+            {estoquesOperaveis.length > 1 && (
+              <Select label="Em qual estoque" value={deposito.id} onChange={(e) => setDepositoId(e.target.value)}>
+                {estoquesOperaveis.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.nome}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <MovementForm key={deposito.id} materials={[material]} deposito={deposito} outrosEstoques={depositos.filter((d) => d.ativo && d.id !== deposito.id)} onSubmit={handleMovement} />
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--text-muted)]">Esta unidade não tem estoque no modo almoxarifado. Retiradas e devoluções são feitas na tela do estoque de empréstimo.</p>
+        )
       )}
     </Modal>
   );

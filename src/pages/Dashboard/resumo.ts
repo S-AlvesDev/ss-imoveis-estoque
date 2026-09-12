@@ -3,13 +3,12 @@
  * que a tela mostra. Assim dá para testar o "vs. mês anterior" sem montar
  * componente nenhum.
  *
- * Vocabulário das operações (ver server/estoque.ts, FLUXO_DA_OPERACAO):
- *   ENTRADA_CENTRAL    compra chega no Central          → entrada na empresa
- *   SAIDA              sai do Central para fora          → saída da empresa
- *   CONSUMO_OBRA       a obra usa                        → saída da empresa
- *   REMESSA_OBRA       Central → Obra                    → interna
- *   DEVOLUCAO_CENTRAL  Obra → Central                    → interna
- *   AJUSTE_*           delta com sinal num depósito      → nem uma coisa nem outra
+ * Vocabulário das operações (ver server/estoque.ts):
+ *   ENTRADA / ENTRADA_CENTRAL      chega de fora                → entrada na empresa
+ *   SAIDA / CONSUMO / CONSUMO_OBRA sai para fora ou é usado      → saída da empresa
+ *   TRANSFERENCIA / REMESSA_OBRA / DEVOLUCAO_CENTRAL  entre estoques → interna
+ *   EMPRESTIMO / DEVOLUCAO_EMPRESTIMO  vai e volta               → interna (saldo em circulação)
+ *   AJUSTE / AJUSTE_*              delta com sinal num estoque   → nem uma coisa nem outra
  */
 import type { Deposito, Material, MaterialMovement } from '@/shared/types';
 
@@ -18,32 +17,62 @@ export type Periodo = 7 | 30 | 90;
 const DIA_MS = 24 * 60 * 60 * 1000;
 
 const ENTRADAS = new Set(['ENTRADA_CENTRAL', 'ENTRADA']);
-const SAIDAS = new Set(['SAIDA', 'CONSUMO_OBRA']);
+const SAIDAS = new Set(['SAIDA', 'CONSUMO_OBRA', 'CONSUMO']);
 
-/** Quanto a operação muda no Central e na Obra (sinal já aplicado). */
-function efeito(m: MaterialMovement): { central: number; obra: number } {
+type MovComDepositos = MaterialMovement & { warehouse_origem_id?: string | null; warehouse_destino_id?: string | null };
+
+/**
+ * Quanto a operação muda no saldo de um estoque (sinal já aplicado).
+ *
+ * Movimentação com depósito gravado: sai da origem, entra no destino; ajuste
+ * é um delta com sinal no destino. As de antes das unidades (sem depósito)
+ * ainda dizem "Central"/"Obra" no nome — para elas, o chamador informa quais
+ * estoques eram o Central e a Obra.
+ */
+export function efeitoEm(m: MovComDepositos, depositoId: string, legado: { central?: string; obra?: string } = {}): number {
   const q = Number(m.quantidade) || 0;
   const abs = Math.abs(q);
+  const origem = m.warehouse_origem_id ?? null;
+  const destino = m.warehouse_destino_id ?? null;
+
+  if (origem || destino) {
+    const ajuste = m.tipo_operacao.startsWith('AJUSTE');
+    let delta = 0;
+    if (destino === depositoId) delta += ajuste ? q : abs;
+    if (origem === depositoId) delta -= abs;
+    return delta;
+  }
+
+  // Legado: sem depósito gravado, o nome da operação diz o lado.
+  const ehCentral = legado.central === depositoId;
+  const ehObra = legado.obra === depositoId;
   switch (m.tipo_operacao) {
     case 'ENTRADA_CENTRAL':
     case 'ENTRADA':
-      return { central: abs, obra: 0 };
+      return ehCentral ? abs : 0;
     case 'SAIDA':
-      return { central: -abs, obra: 0 };
+      return ehCentral ? -abs : 0;
     case 'REMESSA_OBRA':
-      return { central: -abs, obra: abs };
+      return ehCentral ? -abs : ehObra ? abs : 0;
     case 'DEVOLUCAO_CENTRAL':
     case 'DEVOLUCAO':
-      return { central: abs, obra: -abs };
+      return ehCentral ? abs : ehObra ? -abs : 0;
     case 'CONSUMO_OBRA':
-      return { central: 0, obra: -abs };
+      return ehObra ? -abs : 0;
     case 'AJUSTE_CENTRAL':
-      return { central: q, obra: 0 };
+      return ehCentral ? q : 0;
     case 'AJUSTE_OBRA':
-      return { central: 0, obra: q };
+      return ehObra ? q : 0;
     default:
-      return { central: 0, obra: 0 };
+      return 0;
   }
+}
+
+/** Entrada na empresa, saída da empresa, ou movimento interno/neutro. */
+export function direcao(m: MovComDepositos): 'entrada' | 'saida' | 'outro' {
+  if (ENTRADAS.has(m.tipo_operacao)) return 'entrada';
+  if (SAIDAS.has(m.tipo_operacao)) return 'saida';
+  return 'outro';
 }
 
 /**
@@ -134,7 +163,13 @@ export interface SaldoComHistorico {
  * no banco; a gente anda para trás: o saldo de ontem é o de hoje menos o
  * que hoje mudou. Sem movimentação nenhuma, a linha é reta e a tendência é nula.
  */
-export function saldoComHistorico(atual: number, movs: MaterialMovement[], lado: 'central' | 'obra', agora: Date = new Date()): SaldoComHistorico {
+export function saldoComHistorico(
+  atual: number,
+  movs: MaterialMovement[],
+  depositoId: string,
+  agora: Date = new Date(),
+  legado: { central?: string; obra?: string } = {},
+): SaldoComHistorico {
   const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
   const mudancaPorDia = new Map<string, number>();
   let mudancaEm30Dias = 0;
@@ -142,7 +177,7 @@ export function saldoComHistorico(atual: number, movs: MaterialMovement[], lado:
   for (const m of movs) {
     const d = new Date(m.created_at);
     if (Number.isNaN(d.getTime())) continue;
-    const delta = efeito(m)[lado];
+    const delta = efeitoEm(m, depositoId, legado);
     if (delta === 0) continue;
     const chave = chaveDoDia(d);
     mudancaPorDia.set(chave, (mudancaPorDia.get(chave) ?? 0) + delta);

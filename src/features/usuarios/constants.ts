@@ -1,22 +1,17 @@
-import { ALL_INVENTORY_ROLES } from '@/shared/constants';
+import { ASSIGNABLE_ROLES as CARGOS, ROLE_LABELS as LABELS } from '@/shared/constants';
 
-export const ROLE_LABELS: Record<string, string> = {
-  ADMINISTRADOR: 'Administrador',
-  ADMINISTRATIVO: 'Administrativo',
-  ALMOXARIFE_GERAL: 'Almoxarife Central',
-  ALMOXARIFADO: 'Almoxarifado Central',
-  ALMOXARIFE_OBRA: 'Almoxarife de Obra',
-};
+export const ROLE_LABELS: Record<string, string> = LABELS;
 
 export const ROLE_HINTS: Record<string, string> = {
-  ADMINISTRADOR: 'Acesso total: materiais, usuários, auditoria e suporte.',
+  ADMINISTRADOR: 'Acesso total: materiais, usuários, configurações, auditoria e suporte.',
   ADMINISTRATIVO: 'Acesso total ao estoque, incluindo cadastro e auditoria.',
-  ALMOXARIFE_GERAL: 'Movimenta o almoxarifado central e envia remessas para a obra.',
-  ALMOXARIFADO: 'Movimenta o almoxarifado central e envia remessas para a obra.',
-  ALMOXARIFE_OBRA: 'Registra consumo na obra e devolve materiais para a central.',
+  OPERADOR: 'Opera os estoques que receber em Configurações → Acessos. Não vê o resto.',
+  ALMOXARIFE_GERAL: 'Cargo antigo — hoje é Operador.',
+  ALMOXARIFADO: 'Cargo antigo — hoje é Operador.',
+  ALMOXARIFE_OBRA: 'Cargo antigo — hoje é Operador.',
 };
 
-/** Perfis que este gerenciador pode atribuir — nunca papéis do CRM. */
-export const ASSIGNABLE_ROLES = ALL_INVENTORY_ROLES;
+/** Perfis que este gerenciador pode atribuir: Administrador, Administrativo ou Operador. */
+export const ASSIGNABLE_ROLES = CARGOS;
 
 export const MIN_PASSWORD_LENGTH = 8;

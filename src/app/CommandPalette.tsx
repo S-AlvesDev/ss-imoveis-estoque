@@ -153,7 +153,7 @@ export function CommandPalette({ open, onClose, materials, destinos, telaDeMater
                           <span className="min-w-0 flex-1">
                             <span className="block truncate font-medium">{r.material.nome}</span>
                             <span className="block text-[11px] text-[var(--text-muted)]">
-                              {r.material.categoria} · Central {r.material.saldo_central} · Obra {r.material.saldo_obra} {r.material.unidade_medida}
+                              {r.material.categoria} · {r.material.saldo_unidade} {r.material.unidade_medida} na unidade
                             </span>
                           </span>
                           <StockStatusBadge status={stockStatus(r.material, 'empresa')} />

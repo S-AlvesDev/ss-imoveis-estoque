@@ -4,25 +4,25 @@ import { AlertTriangle, Merge } from 'lucide-react';
 import { Modal } from '@/shared/ui/Modal';
 import { Button } from '@/shared/ui/Button';
 import { api } from '@/lib/api';
-import type { Material } from '@/shared/types';
-import { formatNumber } from '@/features/estoque/utils';
+import type { Material, Deposito } from '@/shared/types';
+import { formatNumber, saldoEm } from '@/features/estoque/utils';
 
 interface MergeModalProps {
   open: boolean;
   materials: Material[];
+  /** Estoques ativos da unidade em uso, para mostrar o saldo em cada um. */
+  depositos: Deposito[];
   onClose: () => void;
   onDone: () => Promise<void>;
 }
 
-export function MergeModal({ open, materials, onClose, onDone }: MergeModalProps) {
+export function MergeModal({ open, materials, depositos, onClose, onDone }: MergeModalProps) {
   const [targetId, setTargetId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open && materials.length > 0) {
-      const biggest = [...materials].sort(
-        (a, b) => b.saldo_central + b.saldo_obra - (a.saldo_central + a.saldo_obra)
-      )[0];
+      const biggest = [...materials].sort((a, b) => b.saldo_unidade - a.saldo_unidade)[0];
       setTargetId(biggest.id);
     }
   }, [open, materials]);
@@ -35,8 +35,10 @@ export function MergeModal({ open, materials, onClose, onDone }: MergeModalProps
     [target, donors]
   );
 
-  const previewCentral = (target?.saldo_central || 0) + donors.reduce((s, d) => s + d.saldo_central, 0);
-  const previewObra = (target?.saldo_obra || 0) + donors.reduce((s, d) => s + d.saldo_obra, 0);
+  // O saldo unificado, estoque por estoque: o do alvo mais o de cada doador.
+  const previewPorEstoque = depositos
+    .filter((d) => d.ativo)
+    .map((d) => ({ deposito: d, saldo: saldoEm(target ?? { saldos_unidade: {}, saldo_unidade: 0, estoque_minimo: 0 }, d.id) + donors.reduce((s, m) => s + saldoEm(m, d.id), 0) }));
 
   async function handleMerge() {
     if (!target) return;
@@ -80,7 +82,7 @@ export function MergeModal({ open, materials, onClose, onDone }: MergeModalProps
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-[var(--text)]">{m.nome}</p>
               <p className="font-mono text-[11px] text-[var(--text-muted)]">
-                Central: {formatNumber(m.saldo_central)} · Obra: {formatNumber(m.saldo_obra)} {m.unidade_medida}
+                {depositos.filter((d) => d.ativo).map((d) => `${d.nome}: ${formatNumber(saldoEm(m, d.id))}`).join(' · ')} {m.unidade_medida}
               </p>
             </div>
             {targetId === m.id && (
@@ -103,9 +105,14 @@ export function MergeModal({ open, materials, onClose, onDone }: MergeModalProps
         <div className="mt-4 rounded-lg bg-[var(--bg-2)] p-3 text-xs text-[var(--text-muted)]">
           <p className="mb-1 font-bold uppercase tracking-wide text-[var(--text-muted)]">Resultado</p>
           <p>
-            <strong className="text-[var(--text)]">{target.nome}</strong> passa a ter Central:{' '}
-            <strong className="text-[var(--text)]">{formatNumber(previewCentral)}</strong>, Obra:{' '}
-            <strong className="text-[var(--text)]">{formatNumber(previewObra)}</strong> {target.unidade_medida}.
+            <strong className="text-[var(--text)]">{target.nome}</strong> passa a ter{' '}
+            {previewPorEstoque.map((p, i) => (
+              <span key={p.deposito.id}>
+                {i > 0 ? ', ' : ''}
+                {p.deposito.nome}: <strong className="text-[var(--text)]">{formatNumber(p.saldo)}</strong>
+              </span>
+            ))}{' '}
+            {target.unidade_medida}.
           </p>
           <p className="mt-1 text-[var(--text-muted)]">
             {donors.map((d) => d.nome).join(', ')} — {donors.length > 1 ? 'serão removidos' : 'será removido'}, com o histórico

@@ -10,7 +10,7 @@ function mov(p: Partial<MaterialMovement> & { tipo_operacao: string; quantidade:
 }
 function mat(p: Partial<Material> & { id: number }): Material {
   return {
-    nome: `Material ${p.id}`, unidade_medida: 'un', qtd_volumes: 1, fator_multiplicador: 1, saldos: {}, saldo_central: 0, saldo_obra: 0, na_unidade: true,
+    nome: `Material ${p.id}`, unidade_medida: 'un', qtd_volumes: 1, fator_multiplicador: 1, saldos: {}, saldo_unidade: 0, saldos_unidade: {}, na_unidade: true,
     estoque_minimo: 0, categoria: 'Geral', created_at: dia(100), ...p,
   } as Material;
 }
@@ -50,10 +50,22 @@ describe('serieDiaria', () => {
   });
 });
 
+const LEGADO = { central: 'c1', obra: 'o1' };
+
 describe('saldoComHistorico', () => {
+  it('com depósito gravado, o id decide: transferência sai de um e entra no outro; ajuste leva o sinal', () => {
+    const movs = [
+      { ...mov({ tipo_operacao: 'TRANSFERENCIA', quantidade: 20, created_at: dia(0) }), warehouse_origem_id: 'a', warehouse_destino_id: 'b' } as MaterialMovement,
+      { ...mov({ tipo_operacao: 'AJUSTE', quantidade: -5, created_at: dia(0) }), warehouse_destino_id: 'b' } as MaterialMovement,
+      { ...mov({ tipo_operacao: 'EMPRESTIMO', quantidade: 3, created_at: dia(0) }), warehouse_origem_id: 'b' } as MaterialMovement,
+    ];
+    expect(saldoComHistorico(50, movs, 'a', AGORA).serie[12]).toBe(70);
+    expect(saldoComHistorico(50, movs, 'b', AGORA).serie[12]).toBe(38); // 50 - 20 + 5 + 3
+  });
+
   it('anda para trás a partir do saldo atual', () => {
     // Hoje: 100 no Central. Ontem entraram 30 e anteontem saíram 10.
-    const r = saldoComHistorico(100, [mov({ tipo_operacao: 'ENTRADA_CENTRAL', quantidade: 30, created_at: dia(1) }), mov({ tipo_operacao: 'SAIDA', quantidade: 10, created_at: dia(2) })], 'central', AGORA);
+    const r = saldoComHistorico(100, [mov({ tipo_operacao: 'ENTRADA_CENTRAL', quantidade: 30, created_at: dia(1) }), mov({ tipo_operacao: 'SAIDA', quantidade: 10, created_at: dia(2) })], 'c1', AGORA, LEGADO);
     expect(r.serie).toHaveLength(14);
     expect(r.serie[13]).toBe(100); // hoje
     expect(r.serie[12]).toBe(100); // ontem ao fim do dia (a entrada de ontem já contava)
@@ -65,12 +77,12 @@ describe('saldoComHistorico', () => {
 
   it('remessa tira do Central e põe na Obra; ajuste leva o sinal', () => {
     const movs = [mov({ tipo_operacao: 'REMESSA_OBRA', quantidade: 20, created_at: dia(0) }), mov({ tipo_operacao: 'AJUSTE_OBRA', quantidade: -5, created_at: dia(0) })];
-    expect(saldoComHistorico(50, movs, 'central', AGORA).serie[12]).toBe(70);
-    expect(saldoComHistorico(50, movs, 'obra', AGORA).serie[12]).toBe(35);
+    expect(saldoComHistorico(50, movs, 'c1', AGORA, LEGADO).serie[12]).toBe(70);
+    expect(saldoComHistorico(50, movs, 'o1', AGORA, LEGADO).serie[12]).toBe(35);
   });
 
   it('sem movimentação: linha reta e tendência nula', () => {
-    const r = saldoComHistorico(42, [], 'obra', AGORA);
+    const r = saldoComHistorico(42, [], 'o1', AGORA);
     expect(new Set(r.serie).size).toBe(1);
     expect(r.tendencia).toBeNull();
   });
@@ -111,7 +123,7 @@ describe('porCategoria', () => {
 });
 
 describe('filtrarPorUnidade', () => {
-  const depositos: Deposito[] = [{ id: 'c1', nome: 'Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true }];
+  const depositos: Deposito[] = [{ id: 'c1', nome: 'Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null }];
   const comDeposito = { ...mov({ tipo_operacao: 'SAIDA', quantidade: 1, created_at: dia(0) }), warehouse_origem_id: 'c1' } as MaterialMovement;
   const deOutra = { ...mov({ tipo_operacao: 'SAIDA', quantidade: 1, created_at: dia(0) }), warehouse_origem_id: 'c9' } as MaterialMovement;
   const antiga = mov({ tipo_operacao: 'SAIDA', quantidade: 1, created_at: dia(0) });

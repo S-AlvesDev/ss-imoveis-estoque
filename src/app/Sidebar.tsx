@@ -1,21 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, BookOpen, Building2, Check, ChevronRight, ChevronsUpDown, HardHat, LayoutDashboard, LifeBuoy, LogOut, Package, Plus, Settings, Users, Warehouse,
+  AlertTriangle, BookOpen, Building2, Check, ChevronRight, ChevronsUpDown, LayoutDashboard, LifeBuoy, LogOut, Package, PackageOpen, Plus, Settings, Users, Warehouse,
 } from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { useMarca } from '@/store/marca';
 import { PRODUTO } from '@/shared/produto';
 import { Logo, LogoProduto } from '@/shared/ui/Logo';
 import { ADMIN_ROLES } from '@/shared/constants';
-import type { NivelAcesso, Unidade } from '@/shared/types';
+import type { Deposito, ModoEstoque, NivelAcesso, Unidade } from '@/shared/types';
 
-export type AppView = 'dashboard' | 'central' | 'obra' | 'materiais' | 'alertas' | 'suporte' | 'ajuda' | 'usuarios' | 'configuracoes';
+/**
+ * As telas do sistema. As de estoque são dinâmicas: uma por estoque que a
+ * pessoa enxerga na unidade em uso, identificada por `estoque:<id>`.
+ */
+export type AppView = 'dashboard' | 'materiais' | 'alertas' | 'suporte' | 'ajuda' | 'usuarios' | 'configuracoes' | `estoque:${string}`;
 
 /** Compatibilidade com o nome antigo, ainda usado em algumas assinaturas. */
 export type AdminView = AppView;
 
-interface NavItem {
+export function viewDoEstoque(depositoId: string): AppView {
+  return `estoque:${depositoId}`;
+}
+
+/** O id do estoque de uma view `estoque:<id>`, ou null para as outras. */
+export function estoqueDaView(view: AppView | null | undefined): string | null {
+  return view && view.startsWith('estoque:') ? view.slice('estoque:'.length) : null;
+}
+
+export interface NavItem {
   view: AppView;
   label: string;
   icon: React.ReactNode;
@@ -28,61 +41,57 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const NAV_GROUPS: NavGroup[] = [
-  {
-    label: 'Visão geral',
-    items: [
-      { view: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} />, roles: ADMIN_ROLES },
-      { view: 'alertas', label: 'Alertas', icon: <AlertTriangle size={18} />, roles: ADMIN_ROLES },
-    ],
-  },
-  {
-    label: 'Estoque',
-    items: [
-      { view: 'materiais', label: 'Materiais', icon: <Package size={18} />, roles: ADMIN_ROLES },
-      { view: 'central', label: 'Almoxarifado Central', icon: <Warehouse size={18} /> },
-      { view: 'obra', label: 'Almoxarifado Obra', icon: <HardHat size={18} /> },
-    ],
-  },
-  {
-    label: 'Sistema',
-    items: [
-      { view: 'suporte', label: 'Suporte', icon: <LifeBuoy size={18} /> },
-      { view: 'ajuda', label: 'Ajuda', icon: <BookOpen size={18} /> },
-      { view: 'usuarios', label: 'Usuários', icon: <Users size={18} />, roles: ADMIN_ROLES },
-      { view: 'configuracoes', label: 'Configurações', icon: <Settings size={18} />, roles: ADMIN_ROLES },
-    ],
-  },
-];
+const ICONE_DO_MODO: Record<ModoEstoque, React.ReactNode> = {
+  almoxarifado: <Warehouse size={18} />,
+  emprestimo: <PackageOpen size={18} />,
+};
 
-/** O que a pessoa pode no Central e na Obra da unidade em uso. */
-export interface AcessoNaUnidade {
-  central: NivelAcesso | null;
-  obra: NivelAcesso | null;
+/** Um estoque que a pessoa enxerga, com o nível dela nele. */
+export interface EstoqueVisivel {
+  deposito: Deposito;
+  nivel: NivelAcesso;
 }
 
 /**
- * Grupos visíveis, já sem os vazios. As telas de Central e Obra aparecem
- * para quem tem o depósito (qualquer nível) na unidade em uso — não é mais
- * o cargo que decide. Administrador vê tudo.
+ * Grupos visíveis, já sem os vazios. Os estoques aparecem para quem os tem
+ * (qualquer nível) na unidade em uso — não é o cargo que decide. As demais
+ * telas dependem do cargo. Administrador vê tudo.
  */
-export function navGroupsFor(role: string, acesso: AcessoNaUnidade): NavGroup[] {
+export function navGroupsFor(role: string, estoques: EstoqueVisivel[]): NavGroup[] {
   const isAdmin = ADMIN_ROLES.includes(role);
+  const so = (items: NavItem[]) => items.filter((item) => !item.roles || isAdmin);
 
-  return NAV_GROUPS.map((group) => ({
-    label: group.label,
-    items: group.items.filter((item) => {
-      if (item.roles) return isAdmin;
-      if (item.view === 'central') return isAdmin || acesso.central !== null;
-      if (item.view === 'obra') return isAdmin || acesso.obra !== null;
-      return true;
-    }),
-  })).filter((group) => group.items.length > 0);
+  const grupos: NavGroup[] = [
+    {
+      label: 'Visão geral',
+      items: so([
+        { view: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} />, roles: ADMIN_ROLES },
+        { view: 'alertas', label: 'Alertas', icon: <AlertTriangle size={18} />, roles: ADMIN_ROLES },
+      ]),
+    },
+    {
+      label: 'Estoque',
+      items: [
+        ...so([{ view: 'materiais', label: 'Materiais', icon: <Package size={18} />, roles: ADMIN_ROLES }]),
+        ...estoques.map(({ deposito }) => ({ view: viewDoEstoque(deposito.id), label: deposito.nome, icon: ICONE_DO_MODO[deposito.modo] ?? <Warehouse size={18} /> })),
+      ],
+    },
+    {
+      label: 'Sistema',
+      items: so([
+        { view: 'suporte', label: 'Suporte', icon: <LifeBuoy size={18} /> },
+        { view: 'ajuda', label: 'Ajuda', icon: <BookOpen size={18} /> },
+        { view: 'usuarios', label: 'Usuários', icon: <Users size={18} />, roles: ADMIN_ROLES },
+        { view: 'configuracoes', label: 'Configurações', icon: <Settings size={18} />, roles: ADMIN_ROLES },
+      ]),
+    },
+  ];
+  return grupos.filter((group) => group.items.length > 0);
 }
 
 /** Lista achatada — usada para decidir a tela inicial de cada perfil. */
-export function navItemsFor(role: string, acesso: AcessoNaUnidade): NavItem[] {
-  return navGroupsFor(role, acesso).flatMap((g) => g.items);
+export function navItemsFor(role: string, estoques: EstoqueVisivel[]): NavItem[] {
+  return navGroupsFor(role, estoques).flatMap((g) => g.items);
 }
 
 interface UnitSwitcherProps {
@@ -191,7 +200,7 @@ interface SidebarProps {
   unidade: Unidade | null;
   onChangeUnidade: (id: string) => void;
   onNovaUnidade?: () => void;
-  acesso: AcessoNaUnidade;
+  estoques: EstoqueVisivel[];
   /** Materiais que precisam de compra — o número vermelho ao lado de Alertas. */
   alertas: number;
   /** Quantos materiais existem na unidade, para o cartão de saúde do estoque. */
@@ -235,10 +244,10 @@ function CartaoSaude({ alertas, total, onClick }: { alertas: number; total: numb
   );
 }
 
-export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades, unidade, onChangeUnidade, onNovaUnidade, acesso, alertas, totalMateriais }: SidebarProps) {
+export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades, unidade, onChangeUnidade, onNovaUnidade, estoques, alertas, totalMateriais }: SidebarProps) {
   const { user, logout } = useAuth();
   const organizacao = useMarca((s) => s.organizacao);
-  const groups = navGroupsFor(user?.role || '', acesso);
+  const groups = navGroupsFor(user?.role || '', estoques);
   const podeVerAlertas = groups.some((g) => g.items.some((i) => i.view === 'alertas'));
 
   function handleSelect(view: AppView) {

@@ -43,6 +43,9 @@ const TABELAS_DA_ORGANIZACAO = new Set([
   'warehouses',
   'stock_balances',
   'estoque_user_warehouses',
+  // Estoques configuráveis (migração 018): categorias e empréstimos.
+  'categories',
+  'loans',
 ]);
 
 const clientesPorOrg = new Map<string, SupabaseClient>();
@@ -56,8 +59,13 @@ function clientePara(organizationId: string): SupabaseClient {
   if (RLS_ATIVO) {
     // Token que o PostgREST valida e transforma em request.jwt.claims.
     // Curto de propósito: é usado só para esta janela de requisições.
+    //
+    // `iat` dois minutos no passado: o PostgREST recusa token "emitido no
+    // futuro", e um relógio local meio minuto adiantado já bastava para
+    // derrubar toda leitura ("JWT issued at future"). O prazo de validade
+    // é contado a partir do iat, então continua sendo ~1 hora.
     const token = jwt.sign(
-      { role: 'authenticated', organization_id: organizationId },
+      { role: 'authenticated', organization_id: organizationId, iat: Math.floor(Date.now() / 1000) - 120 },
       SUPABASE_JWT_SECRET,
       { expiresIn: '1h' },
     );

@@ -3,16 +3,21 @@ import {
   movementDirection,
   needsPurchase,
   needsTransfer,
+  ondeTem,
   percentOfMinimum,
+  saldoEm,
   signedQuantity,
   statusLabel,
   stockStatus,
   stockTotal,
 } from './utils';
 
-/** Só os campos que as regras de saldo enxergam. */
-function material(saldo_central: number, saldo_obra: number, estoque_minimo: number) {
-  return { saldo_central, saldo_obra, estoque_minimo };
+/**
+ * Só os campos que as regras de saldo enxergam. Dois estoques na unidade,
+ * com os ids 'central' e 'obra' — os nomes de antes, agora só nos testes.
+ */
+function material(central: number, obra: number, estoque_minimo: number) {
+  return { saldo_unidade: central + obra, saldos_unidade: { central, obra }, estoque_minimo };
 }
 
 describe('stockTotal', () => {
@@ -22,19 +27,20 @@ describe('stockTotal', () => {
 
   it('aceita valores vindos do banco como texto', () => {
     // O Supabase devolve numeric como string; sem Number() a soma vira concatenação.
-    const doBanco = { saldo_central: '30', saldo_obra: '12', estoque_minimo: '5' } as never;
+    const doBanco = { saldo_unidade: '42', saldos_unidade: { central: '30', obra: '12' }, estoque_minimo: '5' } as never;
     expect(stockTotal(doBanco)).toBe(42);
+    expect(saldoEm(doBanco, 'obra')).toBe(12);
   });
 
   it('com mais de uma unidade, conta SÓ a unidade que está sendo olhada', () => {
-    // saldo_central/saldo_obra são a visão de Nova Cruz (30 + 12). Natal ter
-    // mais 100 não muda nada aqui: é outro estoque. O mínimo se compara com
-    // 42, e o que faltar em Nova Cruz se compra em Nova Cruz.
-    const m = {
-      ...material(30, 12, 0),
-      saldos: { 'nova-cruz-central': 30, 'nova-cruz-obra': 12, 'natal-central': 100, 'natal-obra': 0 },
-    };
-    expect(stockTotal(m)).toBe(42);
+    // saldo_unidade/saldos_unidade já são a visão de Nova Cruz (30 + 12); o
+    // saldo de Natal nem chega aqui — o hook filtra pelos estoques da unidade.
+    // O mínimo se compara com 42, e o que faltar em Nova Cruz se compra em Nova Cruz.
+    expect(stockTotal(material(30, 12, 0))).toBe(42);
+  });
+
+  it('estoque sem linha de saldo conta como zero', () => {
+    expect(saldoEm(material(30, 12, 0), 'inexistente')).toBe(0);
   });
 });
 
@@ -42,7 +48,7 @@ describe('stockStatus — com mais de uma unidade', () => {
   it('zerado nesta unidade é RUPTURA mesmo que outra unidade tenha', () => {
     // Nova Cruz está em 0/0; Natal tem 50. Para Nova Cruz isso é falta de
     // verdade — a decisão certa é comprar, não pedir a Natal.
-    const m = { ...material(0, 0, 10), saldos: { ncC: 0, ncO: 0, natalC: 50, natalO: 0 } };
+    const m = material(0, 0, 10);
     expect(stockStatus(m, 'obra')).toBe('RUPTURA');
     expect(stockStatus(m, 'central')).toBe('RUPTURA');
     expect(stockStatus(m, 'empresa')).toBe('RUPTURA');
@@ -165,10 +171,22 @@ describe('percentOfMinimum', () => {
 });
 
 describe('statusLabel', () => {
-  it('nomeia a remessa a partir de quem olha', () => {
-    expect(statusLabel('TRANSFERIR', 'obra')).toBe('Tem na Central');
-    expect(statusLabel('TRANSFERIR', 'central')).toBe('Tem na Obra');
-    expect(statusLabel('TRANSFERIR', 'empresa')).toBe('Requer remessa');
+  it('diz onde tem quando quem chama sabe; genérico quando não', () => {
+    expect(statusLabel('TRANSFERIR', 'obra', 'Almoxarifado Central')).toBe('Tem em Almoxarifado Central');
+    expect(statusLabel('TRANSFERIR', 'obra')).toBe('Tem em outro estoque');
+    expect(statusLabel('TRANSFERIR', 'empresa')).toBe('Tem em outro estoque');
+  });
+
+  it('ondeTem lista os estoques com saldo, fora o de quem olha', () => {
+    const depositos = [
+      { id: 'central', nome: 'Almoxarifado Central' },
+      { id: 'obra', nome: 'Obra' },
+      { id: 'esportes', nome: 'Coordenação de Esportes' },
+    ];
+    const m = { saldo_unidade: 25, saldos_unidade: { central: 20, obra: 0, esportes: 5 }, estoque_minimo: 0 };
+    expect(ondeTem(m, depositos, 'obra')).toBe('Almoxarifado Central e Coordenação de Esportes');
+    expect(ondeTem(m, depositos, 'central')).toBe('Coordenação de Esportes');
+    expect(ondeTem(material(0, 0, 0), depositos, 'obra')).toBe('');
   });
 
   it('mantém o rótulo dos demais status', () => {

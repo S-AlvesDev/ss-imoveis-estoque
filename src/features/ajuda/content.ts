@@ -1,4 +1,4 @@
-import { ADMIN_ROLES, OBRA_ROLES, CENTRAL_ROLES } from '@/shared/constants';
+import { ADMIN_ROLES } from '@/shared/constants';
 
 /** Quem precisa ler o tópico. 'todos' aparece para qualquer perfil. */
 export type Audience = 'todos' | 'admin' | 'central' | 'obra';
@@ -24,13 +24,14 @@ export interface Section {
   topicos: Topic[];
 }
 
-/** Traduz o papel do usuário para as audiências que ele deve enxergar. */
+/**
+ * Traduz o papel do usuário para as audiências que ele deve enxergar.
+ * "central" e "obra" são nomes antigos: hoje querem dizer "quem opera um
+ * estoque", e todo operador vê os dois.
+ */
 export function audiencesForRole(role: string): Audience[] {
-  const out: Audience[] = ['todos'];
-  if (ADMIN_ROLES.includes(role)) return [...out, 'admin', 'central', 'obra'];
-  if (OBRA_ROLES.includes(role)) out.push('obra');
-  if (CENTRAL_ROLES.includes(role)) out.push('central');
-  return out;
+  if (ADMIN_ROLES.includes(role)) return ['todos', 'admin', 'central', 'obra'];
+  return ['todos', 'central', 'obra'];
 }
 
 export const GUIA: Section[] = [
@@ -91,15 +92,19 @@ export const GUIA: Section[] = [
     topicos: [
       {
         id: 'dois-almoxarifados',
-        titulo: 'Central e Obra são dois lugares, um estoque só',
+        titulo: 'Vários estoques, um total só',
         audiencia: ['todos'],
         resumo:
-          'O mesmo material pode estar na Central, na Obra, ou nos dois. O que a empresa tem é a soma dos dois.',
+          'Cada unidade tem os próprios estoques — um almoxarifado, um armário de empréstimo, o que a empresa precisar. O mesmo material pode estar em um, em vários ou em nenhum. O que a unidade tem é a soma de todos.',
         dicas: [
           {
             tipo: 'dica',
             texto:
-              'Na tabela de Materiais, a coluna Total mostra Central + Obra. É esse número que diz se a empresa tem ou não o material.',
+              'Na tabela de Materiais há uma coluna por estoque e a coluna Total. É o Total que diz se a unidade tem ou não o material.',
+          },
+          {
+            tipo: 'dica',
+            texto: 'Estoques têm um modo: Almoxarifado (entrada, saída, consumo, transferência) ou Empréstimo (retirada com prazo e devolução). O administrador cria e configura em Configurações.',
           },
         ],
       },
@@ -142,17 +147,17 @@ export const GUIA: Section[] = [
 
   {
     id: 'central',
-    titulo: 'Almoxarifado Central',
-    descricao: 'Recebimento de compras, envio para a obra e devoluções.',
+    titulo: 'Estoque no modo almoxarifado',
+    descricao: 'Entrada, saída, consumo, transferência entre estoques e recontagem.',
     topicos: [
       {
         id: 'movimentacao-central',
         titulo: 'Registrar uma movimentação',
         audiencia: ['central'],
-        resumo: 'Toda entrada e saída da Central é registrada aqui e fica gravada com o seu nome.',
+        resumo: 'Toda entrada e saída de um estoque é registrada na tela dele e fica gravada com o seu nome.',
         passos: [
-          'Abra Almoxarifado Central.',
-          'Em Registrar Movimentação, escolha a operação: Receber Compra, Enviar p/ Obra, Aceitar Devolução ou Saída / Consumo Adm.',
+          'No menu Estoque, abra o estoque (ex.: Almoxarifado Central).',
+          'Em Registrar movimentação, escolha a operação: Entrada, Saída, Consumo, Transferir (para outro estoque da unidade) ou Ajuste.',
           'Busque o material pelo nome no campo Material.',
           'Informe a quantidade.',
           'Preencha a Justificativa / NFE / Guia — é obrigatório e serve de comprovante na auditoria.',
@@ -206,19 +211,44 @@ export const GUIA: Section[] = [
 
   {
     id: 'obra',
-    titulo: 'Almoxarifado de Obra',
-    descricao: 'Consumo de materiais e devolução para a central.',
+    titulo: 'Estoque no modo empréstimo',
+    descricao: 'Retiradas com prazo, devoluções e atrasos — uma coordenação de esportes, um laboratório, uma ferramentaria.',
     topicos: [
       {
-        id: 'movimentacao-obra',
-        titulo: 'Registrar consumo ou devolução',
+        id: 'retirada',
+        titulo: 'Registrar uma retirada',
         audiencia: ['obra'],
-        resumo: 'Na obra você registra o que foi consumido e o que está voltando para a Central.',
+        resumo: 'Alguém pega um material por um tempo. Você anota quem, o quê, quanto e até quando; o saldo sai do estoque e a retirada fica pendente.',
         passos: [
-          'Abra Almoxarifado Obra.',
-          'Escolha Consumo (material usado na obra) ou Devolver p/ Central (sobrou e está voltando).',
+          'No menu Estoque, abra o estoque de empréstimo (ex.: Coordenação de Esportes).',
+          'Em Nova retirada, digite quem está retirando — nomes já usados aparecem como sugestão — e, se quiser, uma referência (matrícula, turma, setor).',
+          'Escolha o material, a quantidade e confira o prazo em horas (vem preenchido com o padrão do estoque; dá para mudar).',
+          'Clique em Registrar retirada. Ela aparece em Pendentes de devolução.',
+        ],
+        dicas: [{ tipo: 'dica', texto: 'O prazo padrão de cada estoque de empréstimo é definido pelo administrador em Configurações, no cartão da unidade.' }],
+      },
+      {
+        id: 'devolucao',
+        titulo: 'Devolver e acompanhar atrasos',
+        audiencia: ['obra'],
+        resumo: 'A lista de pendentes mostra o que está na rua, ordenado pelo prazo. Passou da hora, fica vermelho e vira alerta.',
+        passos: [
+          'Na lista Pendentes de devolução, ache a pessoa (dá para buscar por nome, referência ou material).',
+          'Clique em Devolver. O saldo volta para o estoque e a retirada sai da lista.',
+          'Para ver tudo que já foi retirado e devolvido, clique em Histórico.',
+        ],
+        dicas: [{ tipo: 'atencao', texto: 'Retiradas atrasadas aparecem também na tela de Alertas, para o administrador. Devolver no sistema é o que encerra o atraso.' }],
+      },
+      {
+        id: 'movimentacao-obra',
+        titulo: 'Registrar consumo ou devolução (almoxarifado)',
+        audiencia: ['obra'],
+        resumo: 'Num estoque de almoxarifado, o que foi usado é Consumo; o que volta de outro estoque é Transferir a partir dele.',
+        passos: [
+          'Abra o estoque no menu.',
+          'Escolha Consumo (material usado) ou, no estoque de origem, Transferir para mandar de volta.',
           'Busque o material, informe a quantidade e a justificativa.',
-          'Clique em Registrar Movimentação.',
+          'Clique em Registrar.',
         ],
         dicas: [
           {
@@ -229,15 +259,14 @@ export const GUIA: Section[] = [
       },
       {
         id: 'tem-na-central',
-        titulo: 'Ver o que falta na Obra mas existe na Central',
+        titulo: 'Ver o que falta aqui mas existe em outro estoque',
         audiencia: ['obra'],
         resumo:
-          'Esse é o atalho que evita pedir compra à toa. Ele lista só os materiais zerados na Obra que a Central tem em estoque.',
+          'Esse é o atalho que evita pedir compra à toa: um material zerado neste estoque mas com saldo em outro da mesma unidade ganha o selo "Tem em …".',
         passos: [
-          'Abra Almoxarifado Obra.',
-          'Na lista Estoque Atual, clique no botão azul "Não tem na Obra, tem na Central".',
-          'A lista passa a mostrar só esses materiais, com o selo TEM NA CENTRAL.',
-          'Peça a remessa desses itens à Central — não é caso de compra.',
+          'Abra o estoque no menu.',
+          'Na lista Estoque atual, os materiais zerados aqui que existem em outro estoque aparecem com o selo azul dizendo onde tem.',
+          'Peça a transferência desses itens a quem opera o outro estoque — não é caso de compra.',
         ],
         dicas: [
           {
@@ -410,6 +439,38 @@ export const GUIA: Section[] = [
             tipo: 'dica',
             texto: 'Quem abriu o chamado só enxerga os próprios. A gestão enxerga todos.',
           },
+        ],
+      },
+    ],
+  },
+
+  {
+    id: 'configuracoes',
+    titulo: 'Configurações',
+    descricao: 'Estoques, categorias e acessos — a empresa do jeito dela.',
+    topicos: [
+      {
+        id: 'estoques',
+        titulo: 'Criar e configurar estoques',
+        audiencia: ['admin'],
+        resumo: 'Cada unidade tem quantos estoques precisar, cada um com nome livre e um modo de operação.',
+        passos: [
+          'Em Sistema → Configurações, ache o cartão da unidade.',
+          'Clique em Novo estoque, escolha o modo (Almoxarifado ou Empréstimo), dê o nome e, no empréstimo, o prazo padrão em horas.',
+          'O lápis edita nome, modo e prazo; o botão de energia desativa (o saldo e o histórico ficam).',
+          'Depois, em Acessos, diga quem opera e quem só consulta cada estoque.',
+        ],
+        dicas: [{ tipo: 'atencao', texto: 'Um estoque de empréstimo com retiradas pendentes não muda de modo nem desativa: registre as devoluções primeiro.' }],
+      },
+      {
+        id: 'categorias',
+        titulo: 'Categorias de material',
+        audiencia: ['admin'],
+        resumo: 'As categorias são suas: crie, renomeie e remova em Configurações. Renomear renomeia em todos os materiais.',
+        passos: [
+          'Em Configurações, role até Categorias de material.',
+          'Digite o nome e clique em Adicionar.',
+          'Para remover uma categoria em uso, o sistema pede para qual mover os materiais.',
         ],
       },
     ],

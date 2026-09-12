@@ -24,6 +24,47 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '3.1',
+    data: '2026-09-12',
+    titulo: 'Estoques do seu jeito: nome livre, modo de operação e categorias próprias',
+    resumo:
+      'Central e Obra deixam de ser fixos. Cada unidade tem os estoques que precisar — um almoxarifado, um armário de empréstimo com prazo de devolução — e as categorias de material são cadastro da empresa. Os cargos viram Administrador e Operador.',
+    mudancas: [
+      {
+        tipo: 'novo',
+        titulo: 'Estoques com nome e modo',
+        descricao:
+          'Em Configurações, o cartão da unidade cria e edita estoques. Modo Almoxarifado: entrada, saída, consumo, ajuste e transferência entre estoques da unidade. Modo Empréstimo: retirada com prazo e devolução.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Empréstimos com prazo',
+        descricao:
+          'Quem retira, o quê, quanto e por quantas horas. A lista de pendentes mostra o que está na rua; passou do prazo, fica vermelho e vira alerta. Devolver fecha a retirada e o saldo volta.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Categorias da empresa',
+        descricao: 'Crie, renomeie e remova categorias em Configurações. Renomear renomeia em todos os materiais; remover uma em uso pede para onde mover.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Menu por estoque',
+        descricao: 'Cada estoque que você acessa é um item do menu, com o nome dele. A tabela de Materiais tem uma coluna por estoque; o selo azul diz em qual estoque o material existe.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Cargos: Administrador e Operador',
+        descricao: 'Os cargos de almoxarife viraram Operador, mantendo exatamente os acessos que já tinham. O que cada pessoa pode é decidido por estoque, em Configurações → Acessos.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Empresa nova escolhe o primeiro estoque',
+        descricao: 'Ao criar a conta, o primeiro acesso pergunta o nome e o modo do primeiro estoque, em vez de criar Central e Obra por padrão.',
+      },
+    ],
+  },
+  {
     versao: '3.0',
     data: '2026-09-12',
     titulo: 'Stok Aí: nome novo, cara nova, e a senha você recupera sozinho',

@@ -97,7 +97,7 @@ export function MaterialMultiPicker({
                 <span className="block truncate text-[11px] text-[var(--text-muted)]">{m.categoria}</span>
               </span>
               <span className="shrink-0 font-mono text-[11px] text-[var(--text-muted)]">
-                C:{formatNumber(m.saldo_central)} O:{formatNumber(m.saldo_obra)}
+                Unidade: {formatNumber(m.saldo_unidade)}
               </span>
             </button>
           ))}

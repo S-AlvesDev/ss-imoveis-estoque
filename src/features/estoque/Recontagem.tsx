@@ -7,14 +7,16 @@ import { Stripes } from '@/shared/ui/Stripes';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { api } from '@/lib/api';
 import { naUnidade } from '@/store/unidade';
-import type { Material } from '@/shared/types';
-import { formatNumber } from './utils';
-import { CATEGORIES } from '@/shared/constants';
+import type { Deposito, Material } from '@/shared/types';
+import { formatNumber, saldoEm } from './utils';
 
 interface RecontagemProps {
   open: boolean;
   onClose: () => void;
-  location: 'CENTRAL' | 'OBRA';
+  /** O estoque que está sendo recontado. */
+  deposito: Deposito;
+  /** As categorias da organização, para os filtros. */
+  categorias: string[];
   materials: Material[];
   refetch: () => Promise<void>;
 }
@@ -38,7 +40,8 @@ function loadStored(location: string): StoredState {
   return { counts: {}, matched: [] };
 }
 
-export function Recontagem({ open, onClose, location, materials, refetch }: RecontagemProps) {
+export function Recontagem({ open, onClose, deposito, categorias, materials, refetch }: RecontagemProps) {
+  const location = deposito.id;
   const [category, setCategory] = useState('TODAS');
   const [search, setSearch] = useState('');
   const [counts, setCounts] = useState<Record<number, string>>({});
@@ -61,7 +64,7 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
   }
 
   function saldoDe(m: Material) {
-    return location === 'CENTRAL' ? Number(m.saldo_central) : Number(m.saldo_obra);
+    return saldoEm(m, deposito.id);
   }
 
   function setCount(materialId: number, value: string) {
@@ -117,7 +120,7 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
     setSubmitting(true);
     try {
       await api.post('/api/materials/bulk-recount', naUnidade({
-        location,
+        warehouse_id: deposito.id,
         counts: diffs.map((d) => ({ material_id: d.material.id, contagem: d.contagem })),
       }));
       toast.success(`${diffs.length} ajuste(s) de recontagem aplicado(s).`);
@@ -188,7 +191,7 @@ export function Recontagem({ open, onClose, location, materials, refetch }: Reco
               >
                 Todas
               </button>
-              {CATEGORIES.map((c) => (
+              {categorias.map((c) => (
                 <button
                   key={c}
                   onClick={() => setCategory(c)}

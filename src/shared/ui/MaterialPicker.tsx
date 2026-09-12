@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, ChevronDown, X } from 'lucide-react';
 import type { Material } from '@/shared/types';
-import { formatNumber, needsPurchase } from '@/features/estoque/utils';
+import { formatNumber, needsPurchase, saldoEm } from '@/features/estoque/utils';
 
 interface MaterialPickerProps {
   materials: Material[];
@@ -9,11 +9,13 @@ interface MaterialPickerProps {
   onChange: (id: string) => void;
   label?: string;
   required?: boolean;
+  /** Quando a lista é de um estoque, mostra o saldo dele; senão, o da unidade. */
+  depositoId?: string;
 }
 
 const RESULTS_LIMIT = 60;
 
-export function MaterialPicker({ materials, value, onChange, label = 'Material', required }: MaterialPickerProps) {
+export function MaterialPicker({ materials, value, onChange, label = 'Material', required, depositoId }: MaterialPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
@@ -111,7 +113,7 @@ export function MaterialPicker({ materials, value, onChange, label = 'Material',
               >
                 <span className="truncate">{m.nome}</span>
                 <span className={`shrink-0 font-mono text-[11px] ${critical ? 'text-rose-500' : 'text-[var(--text-muted)]'}`}>
-                  C:{formatNumber(m.saldo_central)} O:{formatNumber(m.saldo_obra)}
+                  {depositoId ? `Aqui: ${formatNumber(saldoEm(m, depositoId))} · ` : ''}Unidade: {formatNumber(m.saldo_unidade)}
                 </span>
               </button>
             );

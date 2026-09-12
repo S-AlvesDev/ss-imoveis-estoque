@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, HardHat, Package, Pencil, Power, Warehouse, X } from 'lucide-react';
+import { Check, Package, PackageOpen, Pencil, Plus, Power, Warehouse, X } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
 import { api } from '@/lib/api';
 import type { Deposito, Material, Unidade } from '@/shared/types';
 import { MateriaisDaUnidadeModal } from './MateriaisDaUnidadeModal';
+import { EstoqueModal } from '@/features/estoques/EstoqueModal';
+import { MODO_LABELS } from '@/shared/constants';
 
 interface UnidadeCardProps {
   unidade: Unidade;
@@ -105,14 +107,15 @@ export function UnidadeCard({ unidade, depositos, catalogo, podeDesativar, refet
     }
   }
 
-  async function renomearDeposito(deposito: Deposito, nome: string) {
+  const [estoqueModal, setEstoqueModal] = useState<{ open: boolean; deposito: Deposito | null }>({ open: false, deposito: null });
+
+  async function alternarEstoque(deposito: Deposito) {
     try {
-      await api.patch(`/api/warehouses/${deposito.id}`, { nome });
-      toast.success('Depósito renomeado.');
+      await api.patch(`/api/warehouses/${deposito.id}`, { ativo: !deposito.ativo });
+      toast.success(deposito.ativo ? `${deposito.nome} desativado. Some do menu; saldo e histórico ficam.` : `${deposito.nome} reativado.`);
       await refetch();
     } catch (err: any) {
-      toast.error(err.message || 'Erro ao renomear depósito.');
-      throw err;
+      toast.error(err.message || 'Erro ao alterar estoque.');
     }
   }
 
@@ -130,7 +133,7 @@ export function UnidadeCard({ unidade, depositos, catalogo, podeDesativar, refet
   }
 
   const ordem = { CENTRAL: 0, OBRA: 1, OUTRO: 2 };
-  const depositosOrdenados = [...depositos].sort((a, b) => ordem[a.tipo] - ordem[b.tipo]);
+  const depositosOrdenados = [...depositos].sort((a, b) => Number(b.ativo) - Number(a.ativo) || ordem[a.tipo] - ordem[b.tipo] || a.nome.localeCompare(b.nome));
 
   return (
     <Card className={`p-5 ${unidade.ativo ? '' : 'opacity-60'}`}>
@@ -144,18 +147,39 @@ export function UnidadeCard({ unidade, depositos, catalogo, podeDesativar, refet
 
       <div className="mt-4 space-y-2">
         {depositosOrdenados.map((d) => (
-          <div key={d.id} className="flex items-center gap-3 rounded-xl bg-[var(--bg-2)] px-3 py-2.5">
+          <div key={d.id} className={`flex items-center gap-3 rounded-xl bg-[var(--bg-2)] px-3 py-2.5 ${d.ativo ? '' : 'opacity-60'}`}>
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--surface)] text-[var(--brand)]">
-              {d.tipo === 'OBRA' ? <HardHat size={15} /> : <Warehouse size={15} />}
+              {d.modo === 'emprestimo' ? <PackageOpen size={15} /> : <Warehouse size={15} />}
             </span>
             <div className="min-w-0 flex-1">
-              <NomeEditavel valor={d.nome} onSalvar={(nome) => renomearDeposito(d, nome)} className="text-sm font-semibold text-[var(--text)]" />
+              <p className="truncate text-sm font-semibold text-[var(--text)]">{d.nome}</p>
               <p className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                {d.tipo === 'CENTRAL' ? 'Recebe compras e envia para a obra' : d.tipo === 'OBRA' ? 'Consome e devolve' : 'Outro'}
+                {MODO_LABELS[d.modo]?.nome ?? d.modo}
+                {d.modo === 'emprestimo' && d.prazo_padrao_horas ? ` · prazo ${d.prazo_padrao_horas} h` : ''}
+                {d.ativo ? '' : ' · desativado'}
               </p>
             </div>
+            <button type="button" onClick={() => setEstoqueModal({ open: true, deposito: d })} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--surface)] hover:text-[var(--brand)]" title="Editar estoque">
+              <Pencil size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => alternarEstoque(d)}
+              disabled={d.ativo && depositos.filter((x) => x.ativo).length <= 1}
+              className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--surface)] hover:text-[var(--brand)] disabled:opacity-40"
+              title={d.ativo ? (depositos.filter((x) => x.ativo).length <= 1 ? 'A unidade precisa de pelo menos um estoque ativo' : 'Desativar') : 'Reativar'}
+            >
+              <Power size={14} />
+            </button>
           </div>
         ))}
+        <button
+          type="button"
+          onClick={() => setEstoqueModal({ open: true, deposito: null })}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border)] px-3 py-2.5 text-sm font-semibold text-[var(--text-muted)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand)]"
+        >
+          <Plus size={15} /> Novo estoque
+        </button>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] pt-4">
@@ -188,6 +212,7 @@ export function UnidadeCard({ unidade, depositos, catalogo, podeDesativar, refet
         </div>
       </div>
 
+      <EstoqueModal open={estoqueModal.open} deposito={estoqueModal.deposito} unidade={unidade} onClose={() => setEstoqueModal((m) => ({ ...m, open: false }))} onSaved={refetch} />
       <MateriaisDaUnidadeModal
         open={materiaisOpen}
         onClose={() => setMateriaisOpen(false)}
