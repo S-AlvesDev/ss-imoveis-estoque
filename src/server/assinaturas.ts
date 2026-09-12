@@ -285,7 +285,8 @@ export async function aplicarPreapproval(pre: PreapprovalMp, opcoes: { organizat
     mp_preapproval_id: pre.id,
     mp_plan_id: pre.preapproval_plan_id ?? null,
     status,
-    payer_email: pre.payer_email ?? dona.intencao?.payer_email ?? null,
+    // O MP às vezes manda e-mail vazio; aí vale o de quem clicou em assinar.
+    payer_email: pre.payer_email || dona.intencao?.payer_email || null,
     proxima_cobranca: pre.next_payment_date ?? null,
     autorizada_em: status === 'autorizada' ? (dona.intencao?.autorizada_em ?? agora) : (dona.intencao?.autorizada_em ?? null),
     cancelada_em: status === 'cancelada' ? (dona.intencao?.cancelada_em ?? agora) : null,
