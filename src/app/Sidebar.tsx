@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, BookOpen, Building2, Check, ChevronsUpDown, HardHat, LayoutDashboard, LifeBuoy, LogOut, Package, Plus, Settings, Users, Warehouse,
+  AlertTriangle, BookOpen, Building2, Check, ChevronRight, ChevronsUpDown, HardHat, LayoutDashboard, LifeBuoy, LogOut, Package, Plus, Settings, Users, Warehouse,
 } from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { useMarca } from '@/store/marca';
 import { PRODUTO } from '@/shared/produto';
-import { Stripes } from '@/shared/ui/Stripes';
-import { Logo } from '@/shared/ui/Logo';
+import { Logo, LogoProduto } from '@/shared/ui/Logo';
 import { ADMIN_ROLES } from '@/shared/constants';
 import type { NivelAcesso, Unidade } from '@/shared/types';
 
@@ -33,25 +32,25 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Visão geral',
     items: [
-      { view: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={17} />, roles: ADMIN_ROLES },
-      { view: 'alertas', label: 'Alertas', icon: <AlertTriangle size={17} />, roles: ADMIN_ROLES },
+      { view: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} />, roles: ADMIN_ROLES },
+      { view: 'alertas', label: 'Alertas', icon: <AlertTriangle size={18} />, roles: ADMIN_ROLES },
     ],
   },
   {
     label: 'Estoque',
     items: [
-      { view: 'materiais', label: 'Materiais', icon: <Package size={17} />, roles: ADMIN_ROLES },
-      { view: 'central', label: 'Almoxarifado Central', icon: <Warehouse size={17} /> },
-      { view: 'obra', label: 'Almoxarifado Obra', icon: <HardHat size={17} /> },
+      { view: 'materiais', label: 'Materiais', icon: <Package size={18} />, roles: ADMIN_ROLES },
+      { view: 'central', label: 'Almoxarifado Central', icon: <Warehouse size={18} /> },
+      { view: 'obra', label: 'Almoxarifado Obra', icon: <HardHat size={18} /> },
     ],
   },
   {
     label: 'Sistema',
     items: [
-      { view: 'suporte', label: 'Suporte', icon: <LifeBuoy size={17} /> },
-      { view: 'ajuda', label: 'Ajuda', icon: <BookOpen size={17} /> },
-      { view: 'usuarios', label: 'Usuários', icon: <Users size={17} />, roles: ADMIN_ROLES },
-      { view: 'configuracoes', label: 'Configurações', icon: <Settings size={17} />, roles: ADMIN_ROLES },
+      { view: 'suporte', label: 'Suporte', icon: <LifeBuoy size={18} /> },
+      { view: 'ajuda', label: 'Ajuda', icon: <BookOpen size={18} /> },
+      { view: 'usuarios', label: 'Usuários', icon: <Users size={18} />, roles: ADMIN_ROLES },
+      { view: 'configuracoes', label: 'Configurações', icon: <Settings size={18} />, roles: ADMIN_ROLES },
     ],
   },
 ];
@@ -193,12 +192,54 @@ interface SidebarProps {
   onChangeUnidade: (id: string) => void;
   onNovaUnidade?: () => void;
   acesso: AcessoNaUnidade;
+  /** Materiais que precisam de compra — o número vermelho ao lado de Alertas. */
+  alertas: number;
+  /** Quantos materiais existem na unidade, para o cartão de saúde do estoque. */
+  totalMateriais: number;
 }
 
-export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades, unidade, onChangeUnidade, onNovaUnidade, acesso }: SidebarProps) {
+/**
+ * O cartão do rodapé. Hoje mostra a saúde do estoque da unidade: a fatia
+ * dos materiais que está acima do mínimo. Quando existirem planos, este
+ * mesmo lugar vira "uso do plano" (materiais, unidades, usuários).
+ */
+function CartaoSaude({ alertas, total, onClick }: { alertas: number; total: number; onClick?: () => void }) {
+  if (total === 0) return null;
+  const pct = Math.max(0, Math.round(((total - alertas) / total) * 100));
+  const cor = pct >= 80 ? 'var(--verde)' : pct >= 50 ? 'var(--brand)' : 'var(--vermelho)';
+  const conteudo = (
+    <>
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--brand)]/15 text-[var(--brand)]">
+          <Package size={15} />
+        </span>
+        <span className="text-sm font-bold text-white">Saúde do estoque</span>
+      </div>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${pct}%`, background: cor }} />
+      </div>
+      <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--sidebar-muted)]">
+        <span>
+          <span className="font-semibold text-white">{pct}%</span> acima do mínimo
+        </span>
+        {onClick && <ChevronRight size={14} />}
+      </div>
+    </>
+  );
+  const cls = 'w-full rounded-2xl border border-[var(--sidebar-border)] bg-white/[0.04] p-4 text-left';
+  if (!onClick) return <div className={cls}>{conteudo}</div>;
+  return (
+    <button type="button" onClick={onClick} className={`${cls} transition-colors hover:bg-white/[0.07]`}>
+      {conteudo}
+    </button>
+  );
+}
+
+export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades, unidade, onChangeUnidade, onNovaUnidade, acesso, alertas, totalMateriais }: SidebarProps) {
   const { user, logout } = useAuth();
   const organizacao = useMarca((s) => s.organizacao);
   const groups = navGroupsFor(user?.role || '', acesso);
+  const podeVerAlertas = groups.some((g) => g.items.some((i) => i.view === 'alertas'));
 
   function handleSelect(view: AppView) {
     onChange(view);
@@ -232,16 +273,22 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
         }`}
       >
         <div className="grain pointer-events-none absolute inset-0 opacity-[0.25]" />
-        {/* um brilho da cor da marca no canto, como no painel */}
-        <div className="pointer-events-none absolute -left-24 -top-24 h-64 w-64 rounded-full bg-[var(--brand)]/15 blur-3xl" />
-        <Stripes className="absolute inset-x-0 top-0 h-1" color="rgba(255,138,36,0.9)" dense />
+        {/* o brilho laranja que sobe do canto, como no mockup */}
+        <div className="pointer-events-none absolute -bottom-32 -left-24 h-80 w-80 rounded-full bg-[var(--brand)]/25 blur-3xl" />
 
-        <div className="relative flex h-16 shrink-0 items-center gap-2.5 px-6">
-          <Logo size={30} className="rounded-xl" />
-          <div className="min-w-0 leading-tight">
-            <p className="truncate text-sm font-bold text-white">{organizacao?.nome ?? PRODUTO.nome}</p>
-            <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--sidebar-muted)]">{organizacao ? PRODUTO.nome : 'Estoque'}</p>
-          </div>
+        {/* A marca: a da organização, se ela subiu um logo; senão, a do produto com o slogan. */}
+        <div className="relative flex h-[4.5rem] shrink-0 items-center px-5">
+          {organizacao?.logo_url ? (
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Logo size={36} className="rounded-xl" />
+              <div className="min-w-0 leading-tight">
+                <p className="truncate text-sm font-bold text-white">{organizacao.nome}</p>
+                <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--sidebar-muted)]">{PRODUTO.nome}</p>
+              </div>
+            </div>
+          ) : (
+            <LogoProduto height={40} fundo="escuro" slogan />
+          )}
         </div>
 
         <div className="relative">
@@ -249,12 +296,10 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
         </div>
 
         {/* Rola por dentro se um dia a navegação passar da altura da tela. */}
-        <nav className="relative mt-2 flex-1 space-y-5 overflow-y-auto px-3 pb-2">
+        <nav className="relative mt-3 flex-1 space-y-6 overflow-y-auto px-3 pb-2">
           {groups.map((group) => (
             <div key={group.label}>
-              <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--sidebar-muted)]">
-                {group.label}
-              </p>
+              <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--sidebar-muted)]">{group.label}</p>
               <div className="space-y-1">
                 {group.items.map((item) => {
                   const isActive = active === item.view;
@@ -262,21 +307,24 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
                     <button
                       key={item.view}
                       onClick={() => handleSelect(item.view)}
-                      className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${
-                        isActive
-                          ? 'text-white'
-                          : 'text-[var(--sidebar-text)] hover:bg-white/[0.06] hover:text-white'
+                      className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium transition-colors ${
+                        isActive ? 'text-white' : 'text-[var(--sidebar-text)] hover:bg-white/[0.06] hover:text-white'
                       }`}
                     >
                       {isActive && (
                         <motion.div
                           layoutId="sidebar-active-pill"
-                          className="absolute inset-0 rounded-xl bg-[var(--brand)] shadow-lg shadow-[var(--brand)]/30"
+                          className="absolute inset-0 rounded-xl bg-gradient-to-r from-[var(--brand)] to-[var(--brand)]/40 shadow-[0_8px_24px_-8px_var(--brand)]"
                           transition={{ type: 'spring', stiffness: 400, damping: 32 }}
                         />
                       )}
-                      <span className="relative">{item.icon}</span>
-                      <span className="relative">{item.label}</span>
+                      <span className={`relative ${isActive ? 'text-white' : 'text-[var(--sidebar-muted)]'}`}>{item.icon}</span>
+                      <span className="relative flex-1 text-left">{item.label}</span>
+                      {item.view === 'alertas' && alertas > 0 && (
+                        <span className="relative flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--vermelho)] px-1.5 text-[11px] font-bold text-white shadow-[0_0_12px_rgba(239,68,68,0.5)]">
+                          {alertas > 99 ? '99+' : alertas}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -285,16 +333,13 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
           ))}
         </nav>
 
-        <div className="relative shrink-0 border-t border-[var(--sidebar-border)] p-4">
-          <div className="mb-3 px-1">
-            <p className="truncate text-sm font-semibold text-white">{user?.nome}</p>
-            <p className="font-mono text-[10px] tracking-wide text-[var(--sidebar-muted)]">{user?.role}</p>
-          </div>
+        <div className="relative shrink-0 space-y-3 p-4">
+          <CartaoSaude alertas={alertas} total={totalMateriais} onClick={podeVerAlertas ? () => handleSelect('alertas') : undefined} />
           <button
             onClick={logout}
-            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-[var(--brand)] transition-colors hover:bg-[var(--brand)]/10"
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-[var(--sidebar-text)] transition-colors hover:bg-white/[0.06] hover:text-white"
           >
-            <LogOut size={16} />
+            <LogOut size={18} className="text-[var(--sidebar-muted)]" />
             Sair
           </button>
         </div>

@@ -108,6 +108,8 @@ function InventoryApp({ role }: { role: string }) {
         onChangeUnidade={setUnidade}
         onNovaUnidade={isAdmin ? () => setView('configuracoes') : undefined}
         acesso={acesso}
+        alertas={alertas}
+        totalMateriais={materials.length}
       />
       <div className="min-w-0 flex-1">
         <TopBar
