@@ -19,7 +19,7 @@ import { validarItem, validarEvento, transicionar } from './patrimonio';
 import { contaDaOrg, negarRecurso, negarLimite } from './planos';
 import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
 import { mpConfigurado, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId } from './mercadopago';
-import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, cancelarAssinatura, aplicarPreapproval, tratarEvento, registrarEvento, ErroDeAssinatura } from './assinaturas';
+import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura } from './assinaturas';
 import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
 import {
   gerarToken,
@@ -2289,10 +2289,17 @@ export function createApp() {
    */
   app.post('/api/assinatura/sincronizar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
+      if (!mpConfigurado()) return res.status(503).json({ error: 'Pagamento ainda não configurado no servidor (MP_ACCESS_TOKEN).' });
       const id = String(req.body?.preapproval_id ?? '').trim();
-      if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return res.status(400).json({ error: 'Assinatura inválida.' });
-      const pre = await buscarAssinatura(id);
-      const r = await aplicarPreapproval(pre, { organizationId: req.user!.organization_id });
+      let r;
+      if (id) {
+        if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return res.status(400).json({ error: 'Assinatura inválida.' });
+        r = await aplicarPreapproval(await buscarAssinatura(id), { organizationId: req.user!.organization_id });
+      } else {
+        // Sem id: procura no MP uma assinatura desta conta (pagou pelo link, webhook não chegou...).
+        const { data: admins } = await req.db!.from(ESTOQUE_USERS).select('email').in('role', ADMIN_ROLES);
+        r = await procurarEAplicar(req.user!.organization_id, (admins || []).map((a: any) => String(a.email || '')));
+      }
       if (!r.casou) return res.status(409).json({ error: r.motivo ?? 'A assinatura não corresponde a esta conta.' });
       res.json(await resumoDaAssinatura(req.user!.organization_id));
     } catch (err: any) {
@@ -2323,16 +2330,21 @@ export function createApp() {
     }
     if (valida === null) console.warn('[webhook MP] MP_WEBHOOK_SECRET não configurado — evento aceito sem conferir a assinatura.');
 
-    // O MP quer o 200 logo; o trabalho segue depois.
-    res.status(200).json({ ok: true });
+    // Todo o trabalho ANTES de responder: na Vercel, a função pode ser
+    // congelada assim que a resposta sai, e o que ficou pendente some.
+    // Duas chamadas à API e umas gravações cabem folgado no prazo do MP.
     try {
       const r = await tratarEvento(tipo, id);
       const casou = 'casou' in r ? r.casou : true;
       await registrarEvento({ tipo, mpId: id, organizationId: 'organizationId' in r ? r.organizationId : null, tratado: casou, erro: 'motivo' in r ? (r.motivo ?? null) : null, payload: req.body });
       if (!('ignorado' in r)) console.info(`[webhook MP] ${tipo} ${id}: ${casou ? 'aplicado' : `não casou (${r.motivo})`}`);
+      // Não casou = fica no diário para resolver à mão; repetir não ajudaria.
+      res.status(200).json({ ok: true, aplicado: casou });
     } catch (err: any) {
+      // Falha de rede, credencial ou banco: 500 para o MP reenviar mais tarde.
       console.error('[webhook MP] erro:', err.message);
       await registrarEvento({ tipo, mpId: id, organizationId: null, tratado: false, erro: err.message, payload: req.body });
+      res.status(500).json({ error: 'Falha ao processar; o Mercado Pago pode reenviar.' });
     }
   });
 

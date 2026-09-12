@@ -18,12 +18,13 @@ import {
   criarAssinaturaSemPlano,
   mpPlanId,
   modoTeste,
+  procurarAssinaturasRecentes,
   urlDoCheckoutDoPlano,
   type PreapprovalMp,
   type PagamentoAutorizadoMp,
   type StatusMp,
 } from './mercadopago';
-import { ehPlano, planoDoMpPlanId, precoDo, situacaoDaConta, type Ciclo, type Conta, type Plano } from '../shared/planos';
+import { ehPlano, planoDoMpPlanId, precoDo, situacaoDaConta, MP_PLANO_DE_TESTE, type Ciclo, type Conta, type Plano } from '../shared/planos';
 
 export type StatusAssinatura = 'pendente' | 'autorizada' | 'pausada' | 'cancelada';
 export type StatusPagamento = 'agendado' | 'aprovado' | 'recusado' | 'cancelado' | 'reembolsado' | 'pendente';
@@ -315,6 +316,30 @@ export async function aplicarPreapproval(pre: PreapprovalMp, opcoes: { organizat
 
   esquecerPlano(dona.organizationId);
   return { casou: true, organizationId: dona.organizationId, assinatura };
+}
+
+/**
+ * Quando o webhook não trouxe (ou a pessoa pagou pelo link direto, sem
+ * passar pelo botão): procura nas assinaturas recentes da conta do MP uma
+ * que seja desta organização — pela referência, pelo e-mail de quem
+ * administra ou, em modo teste, pelo plano de teste — e aplica.
+ */
+export async function procurarEAplicar(organizationId: string, emails: string[]): Promise<ResultadoDeAplicacao> {
+  const recentes = await procurarAssinaturasRecentes();
+  const meus = new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean));
+  const { data: conhecidas } = await supabaseServer.from('assinaturas').select('mp_preapproval_id, organization_id').not('mp_preapproval_id', 'is', null);
+  const deOutra = new Set((conhecidas || []).filter((a: any) => a.organization_id !== organizationId).map((a: any) => a.mp_preapproval_id as string));
+
+  const candidata = recentes.find((pre) => {
+    if (deOutra.has(pre.id)) return false;
+    if (pre.status !== 'authorized' && pre.status !== 'paused') return false;
+    if (pre.external_reference === organizationId) return true;
+    if (pre.payer_email && meus.has(pre.payer_email.toLowerCase())) return true;
+    return modoTeste() && pre.preapproval_plan_id === MP_PLANO_DE_TESTE;
+  });
+  if (!candidata) return { casou: false, organizationId, assinatura: null, motivo: 'nenhuma assinatura recente no Mercado Pago corresponde a esta conta' };
+  const pre = await buscarAssinatura(candidata.id);
+  return aplicarPreapproval(pre, { organizationId });
 }
 
 /** Grava uma cobrança e, se aprovada, estende o plano até a próxima. */

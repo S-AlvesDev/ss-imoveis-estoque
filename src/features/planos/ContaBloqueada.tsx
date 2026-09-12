@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Lock, LogOut, MessageCircle } from 'lucide-react';
+import { toast } from 'sonner';
+import { Lock, LogOut, MessageCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { MarcaProduto } from '@/shared/ui/Logo';
 import { api } from '@/lib/api';
@@ -27,6 +28,20 @@ export function ContaBloqueada({ conta }: { conta: Conta }) {
   const logout = useAuth((s) => s.logout);
   const admin = ADMIN_ROLES.includes(user?.role ?? '');
   const [resumo, setResumo] = useState<ResumoDaAssinatura | null>(null);
+  const [confirmando, setConfirmando] = useState(false);
+
+  async function jaPaguei() {
+    setConfirmando(true);
+    try {
+      const r = await api.post<{ assinatura: { status: string } | null }>('/api/assinatura/sincronizar', {});
+      if (r.assinatura?.status === 'autorizada') window.location.reload();
+      else toast.error('Achamos a assinatura, mas o Mercado Pago ainda não a autorizou. Tente de novo em instantes.');
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível confirmar.');
+    } finally {
+      setConfirmando(false);
+    }
+  }
 
   useEffect(() => {
     if (!admin) return;
@@ -66,6 +81,11 @@ export function ContaBloqueada({ conta }: { conta: Conta }) {
           {admin && (
             <div className="mt-6">
               <EscolherPlano disponivel={resumo?.disponivel ?? { mensal: true, anual: true }} modoTeste={resumo?.modo_teste ?? false} />
+              <div className="mt-4 text-center">
+                <Button variant="ghost" size="sm" loading={confirmando} onClick={jaPaguei} icon={confirmando ? undefined : <RefreshCw size={14} />}>
+                  Já paguei — confirmar
+                </Button>
+              </div>
             </div>
           )}
 

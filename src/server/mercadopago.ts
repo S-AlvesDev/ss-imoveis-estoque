@@ -159,6 +159,13 @@ export function buscarPagamentoAutorizado(id: string): Promise<PagamentoAutoriza
   return mp<PagamentoAutorizadoMp>(`/authorized_payments/${encodeURIComponent(id)}`);
 }
 
+/** As assinaturas mais recentes da conta do MP (todas as organizações). Para achar uma que o webhook não trouxe. */
+export async function procurarAssinaturasRecentes(limite = 50): Promise<PreapprovalMp[]> {
+  const q = new URLSearchParams({ sort: 'date_created:desc', limit: String(limite), offset: '0' });
+  const r = await mp<{ results?: PreapprovalMp[] }>(`/preapproval/search?${q.toString()}`);
+  return r.results ?? [];
+}
+
 // ---------------------------------------------------------------------------
 //  Webhook
 // ---------------------------------------------------------------------------

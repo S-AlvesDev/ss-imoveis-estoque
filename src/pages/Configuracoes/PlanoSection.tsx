@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, CreditCard, Lock, MessageCircle, Receipt, XCircle } from 'lucide-react';
+import { Check, CreditCard, Lock, MessageCircle, Receipt, RefreshCw, XCircle } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
@@ -127,6 +127,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   const [escolhendo, setEscolhendo] = useState(false);
   const [cancelando, setCancelando] = useState(false);
   const [confirmarCancelar, setConfirmarCancelar] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -155,6 +156,21 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
       toast.error(err.message || 'Não foi possível cancelar.');
     } finally {
       setCancelando(false);
+    }
+  }
+
+  /** Pagou e a conta não liberou (webhook atrasado, pagou pelo link direto): procura no MP e aplica. */
+  async function confirmarPagamento() {
+    setConfirmando(true);
+    try {
+      const r = await api.post<Resumo>('/api/assinatura/sincronizar', {});
+      setResumo(r);
+      toast.success(r.assinatura?.status === 'autorizada' ? 'Assinatura confirmada.' : 'Assinatura encontrada, mas ainda não autorizada pelo Mercado Pago.');
+      await refetch();
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível confirmar.');
+    } finally {
+      setConfirmando(false);
     }
   }
 
@@ -199,6 +215,11 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
               {emVigor && (
                 <Button size="sm" variant="ghost" onClick={() => setConfirmarCancelar(true)} icon={<XCircle size={14} />}>
                   Cancelar assinatura
+                </Button>
+              )}
+              {!emVigor && !cortesia && (
+                <Button size="sm" variant="ghost" loading={confirmando} onClick={confirmarPagamento} icon={confirmando ? undefined : <RefreshCw size={14} />} title="Pagou e a conta não liberou? Procura a assinatura no Mercado Pago.">
+                  Já paguei
                 </Button>
               )}
             </div>
