@@ -155,3 +155,40 @@ body {
   background-clip: text;
   color: transparent;
 }
+
+/* ---- Home pública (Stok Aí) ----
+   Sempre navy + laranja, independente do tema claro/escuro do sistema por
+   dentro: a Home é do produto, não da organização. */
+.home {
+  --navy: #050b18;
+  --navy-2: #0b1426;
+  --laranja: #ff8a24;
+  --cinza: #607089;
+  --verde: #22c55e;
+  --linha: rgba(255, 255, 255, 0.08);
+  color-scheme: dark;
+  background-color: var(--navy);
+  color: #fff;
+}
+.home :focus-visible {
+  outline: 2px solid var(--laranja);
+  outline-offset: 3px;
+}
+/* A grade técnica do fundo. */
+.home .grade {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+/* Âncoras param abaixo do header fixo. */
+.home [id] {
+  scroll-margin-top: 88px;
+}
+html {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

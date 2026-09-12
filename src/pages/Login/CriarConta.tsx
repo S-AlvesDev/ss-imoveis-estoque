@@ -4,19 +4,16 @@ import { ArrowRight, Building2, Lock, Mail, User } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Field';
 import { useAuth } from '@/store/auth';
+import { Link, ROTAS } from '@/app/router';
 import { MIN_PASSWORD_LENGTH } from '@/features/usuarios/constants';
 import type { AuthUser } from '@/shared/types';
-
-interface CriarContaProps {
-  onVoltar: () => void;
-}
 
 /**
  * Uma empresa nova entra sozinha. O servidor cria a organização, a primeira
  * unidade com Central e Obra, e quem preencheu vira administrador — e já
  * entra logado, no painel, com o catálogo vazio.
  */
-export function CriarConta({ onVoltar }: CriarContaProps) {
+export function CriarConta() {
   const [empresa, setEmpresa] = useState('');
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
@@ -88,9 +85,9 @@ export function CriarConta({ onVoltar }: CriarContaProps) {
 
       <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
         Já tem conta?{' '}
-        <button type="button" onClick={onVoltar} className="font-semibold text-[var(--brand)] hover:underline">
+        <Link href={ROTAS.entrar} className="font-semibold text-[var(--brand)] hover:underline">
           Entrar
-        </button>
+        </Link>
       </p>
     </>
   );

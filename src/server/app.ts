@@ -11,6 +11,20 @@ import { ADMIN_ROLES, ALL_INVENTORY_ROLES } from '../shared/constants';
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
 import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
 import { scopedDb, type ScopedDb } from './tenant';
+import { validarPedidoDemo, ehRobo, emailDoPedido } from './demo';
+import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
+import {
+  gerarToken,
+  hashDoToken,
+  tokenPlausivel,
+  tokenValido,
+  validarNovaSenha,
+  linkDeRedefinicao,
+  emailDeRecuperacao,
+  emailDeBoasVindas,
+  emailDeNovaEmpresa,
+  VALIDADE_DO_TOKEN_MS,
+} from './senha';
 import {
   FLUXO_DA_OPERACAO,
   calcularMovimento,
@@ -44,14 +58,10 @@ if (!JWT_SECRET) {
 
 let transporter: nodemailer.Transporter | null = null;
 async function getTransporter() {
-  if (!process.env.BREVO_SMTP_LOGIN || !process.env.BREVO_SMTP_KEY) return null;
   if (transporter) return transporter;
-  transporter = nodemailer.createTransport({
-    host: 'smtp-relay.brevo.com',
-    port: 2525,
-    secure: false,
-    auth: { user: process.env.BREVO_SMTP_LOGIN, pass: process.env.BREVO_SMTP_KEY },
-  });
+  const config = configuracaoSmtp();
+  if (!config) return null; // sem SMTP configurado: o sistema segue sem e-mail
+  transporter = nodemailer.createTransport(config);
   return transporter;
 }
 
@@ -452,10 +462,211 @@ export function createApp() {
       const token = jwt.sign(authedUser, JWT_SECRET as string, { expiresIn: '12h' });
 
       console.info('[Signup] organização criada', { slug: criado.slug, ip: req.ip });
+
+      // Boas-vindas para quem criou e um aviso para o comercial. Aguardado
+      // (serverless congela a função ao responder) e à prova de falha: a
+      // conta já existe, e-mail nenhum pode desfazê-la.
+      try {
+        const t = await getTransporter();
+        if (t) {
+          const boasVindas = emailDeBoasVindas(nome, empresa);
+          const aviso = emailDeNovaEmpresa({ empresa, nome, email, slug: criado.slug, ip: req.ip });
+          await Promise.allSettled([
+            t.sendMail({ from: remetente(), to: email, ...boasVindas }),
+            t.sendMail({ from: remetente(), to: destinatarioDemo(), replyTo: email, ...aviso }),
+          ]).then((r) => r.forEach((x) => x.status === 'rejected' && console.error('[Signup] falha ao enviar e-mail:', x.reason?.message)));
+        }
+      } catch (mailErr: any) {
+        console.error('[Signup] falha ao enviar e-mail:', mailErr.message);
+      }
+
       res.status(201).json({ user: authedUser, token, organizacao: { slug: criado.slug, nome: empresa } });
     } catch (err: any) {
       console.error('[POST /api/signup] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível criar a conta agora. Tente novamente em instantes.' });
+    }
+  });
+
+  // --------------------------- ESQUECI MINHA SENHA (público) ---------------------------
+  /**
+   * Quem tem e-mail na conta pede um link, o link vale uma hora e uma vez.
+   * A resposta é a mesma exista a conta ou não — ninguém descobre por aqui
+   * quais e-mails estão cadastrados. Quem entra por matrícula sem e-mail
+   * continua com o administrador (Usuários → trocar senha).
+   *
+   * Dois limites: por IP (varredura) e por e-mail (encher a caixa de alguém).
+   */
+  const esqueciIpLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 10,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Muitos pedidos a partir desta rede. Tente novamente em uma hora.' },
+  });
+  const esqueciEmailLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 3,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => String(req.body?.email ?? '').trim().toLowerCase().slice(0, 120) || 'sem-email',
+    message: { error: 'Já enviamos instruções para este e-mail há pouco. Confira a caixa de entrada e o spam.' },
+  });
+
+  app.post('/api/senha/esqueci', esqueciIpLimiter, esqueciEmailLimiter, async (req, res) => {
+    const resposta = { ok: true, mensagem: 'Se existir uma conta com este e-mail, enviamos as instruções. Confira também o spam.' };
+    try {
+      const email = String(req.body?.email ?? '').trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 120) return res.status(400).json({ error: 'Informe um e-mail válido.' });
+
+      // Sem SMTP não há como entregar o link. Dizer isso é melhor do que
+      // prometer um e-mail que nunca vai chegar.
+      const t = await getTransporter();
+      if (!t) {
+        console.error('[Senha] pedido de recuperação sem SMTP configurado');
+        return res.status(503).json({ error: 'A recuperação por e-mail está indisponível no momento. Fale com o administrador da sua empresa ou pelo WhatsApp.' });
+      }
+
+      // ilike, e não eq: contas antigas podem ter o e-mail com maiúsculas.
+      // % e _ escapados para não virarem curinga.
+      const padrao = email.replace(/[\\%_]/g, '\\$&');
+      const { data: usuario, error } = await supabaseServer
+        .from(ESTOQUE_USERS)
+        .select('id, nome, email')
+        .ilike('email', padrao)
+        .eq('ativo', true)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      if (!usuario?.email) return res.json(resposta);
+
+      const { token, hash } = gerarToken();
+      const { error: erroInsert } = await supabaseServer.from('password_resets').insert({
+        user_id: usuario.id,
+        token_hash: hash,
+        expires_at: new Date(Date.now() + VALIDADE_DO_TOKEN_MS).toISOString(),
+      });
+      if (erroInsert) throw erroInsert;
+
+      const { subject, html } = emailDeRecuperacao(usuario.nome, linkDeRedefinicao(token));
+      await t.sendMail({ from: remetente(), to: usuario.email, subject, html });
+
+      console.info('[Senha] link de recuperação enviado', { user_id: usuario.id, ip: req.ip });
+      res.json(resposta);
+    } catch (err: any) {
+      console.error('[POST /api/senha/esqueci] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível enviar agora. Tente novamente em instantes.' });
+    }
+  });
+
+  const redefinirLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Muitas tentativas. Aguarde alguns minutos.' },
+  });
+
+  app.post('/api/senha/redefinir', redefinirLimiter, async (req, res) => {
+    try {
+      const { token, senha } = req.body || {};
+      const erroSenha = validarNovaSenha(senha);
+      if (erroSenha) return res.status(400).json({ error: erroSenha });
+      if (!tokenPlausivel(token)) return res.status(400).json({ error: 'Este link não é válido. Peça um novo em "Esqueci minha senha".' });
+
+      const { data: pedido, error } = await supabaseServer
+        .from('password_resets')
+        .select('id, user_id, expires_at, used_at')
+        .eq('token_hash', hashDoToken(token))
+        .maybeSingle();
+      if (error) throw error;
+      if (!pedido || !tokenValido(pedido)) {
+        return res.status(400).json({ error: 'Este link expirou ou já foi usado. Peça um novo em "Esqueci minha senha".' });
+      }
+
+      const hash = await bcrypt.hash(senha, 10);
+      const { data: usuario, error: erroUpdate } = await supabaseServer
+        .from(ESTOQUE_USERS)
+        .update({ senha: hash, senha_alterada_em: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', pedido.user_id)
+        .eq('ativo', true)
+        .select('id, nome, matricula, role, organization_id')
+        .maybeSingle();
+      if (erroUpdate) throw erroUpdate;
+      if (!usuario) return res.status(400).json({ error: 'Esta conta não está mais ativa. Procure o administrador.' });
+
+      // Queima este link e qualquer outro pendente da mesma pessoa.
+      await supabaseServer.from('password_resets').update({ used_at: new Date().toISOString() }).eq('user_id', pedido.user_id).is('used_at', null);
+
+      // Já entra: quem acabou de criar a senha não precisa digitá-la de novo.
+      if (!usuario.role || !ALL_INVENTORY_ROLES.includes(usuario.role) || !usuario.organization_id) {
+        return res.json({ ok: true });
+      }
+      const authedUser: AuthedUser = {
+        id: usuario.id,
+        nome: usuario.nome,
+        matricula: usuario.matricula,
+        role: usuario.role,
+        organization_id: usuario.organization_id,
+      };
+      const jwtToken = jwt.sign(authedUser, JWT_SECRET as string, { expiresIn: '12h' });
+
+      console.info('[Senha] senha redefinida', { user_id: usuario.id, ip: req.ip });
+      res.json({ ok: true, user: authedUser, token: jwtToken });
+    } catch (err: any) {
+      console.error('[POST /api/senha/redefinir] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível redefinir agora. Tente novamente em instantes.' });
+    }
+  });
+
+  // --------------------------- DEMONSTRAÇÃO (público) ---------------------------
+  /**
+   * O formulário da Home. Grava em demo_requests (migração 016) e avisa por
+   * e-mail; se o e-mail falhar, o pedido já está no banco e a pessoa não
+   * fica sabendo de nada. Limite apertado por IP: ninguém pede cinco
+   * demonstrações numa hora.
+   */
+  const demoLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 5,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Muitos pedidos a partir desta rede. Tente novamente em uma hora.' },
+  });
+
+  app.post('/api/demo', demoLimiter, async (req, res) => {
+    try {
+      // Robô caiu na armadilha: finge que deu certo e não grava nada.
+      if (ehRobo(req.body)) return res.status(201).json({ ok: true });
+
+      const validado = validarPedidoDemo(req.body);
+      if (!validado.ok) return res.status(400).json({ error: validado.erro });
+      const pedido = validado.pedido;
+
+      const { error } = await supabaseServer.from('demo_requests').insert(pedido);
+      if (error) throw error;
+
+      try {
+        const t = await getTransporter();
+        if (t) {
+          const { subject, html } = emailDoPedido(pedido);
+          await t.sendMail({
+            from: remetente(),
+            to: destinatarioDemo(),
+            replyTo: pedido.email,
+            subject,
+            html,
+          });
+        }
+      } catch (mailErr: any) {
+        // O pedido está salvo; o e-mail é conveniência.
+        console.error('[Demo] falha ao enviar e-mail:', mailErr.message);
+      }
+
+      console.info('[Demo] pedido recebido', { empresa: pedido.empresa, origem: pedido.origem, ip: req.ip });
+      res.status(201).json({ ok: true });
+    } catch (err: any) {
+      console.error('[POST /api/demo] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível enviar o pedido agora. Tente novamente em instantes.' });
     }
   });
 
@@ -1195,8 +1406,8 @@ export function createApp() {
           const t = await getTransporter();
           if (t) {
             await t.sendMail({
-              from: process.env.SMTP_FROM_EMAIL || 'noreply@ssimoveisbrasil.app',
-              to: process.env.ADMIN_EMAIL || 'admin@ssimoveis.com',
+              from: remetente(),
+              to: destinatarioAdmin(),
               subject: `${semEstoque ? 'Sem estoque' : 'Estoque abaixo do mínimo'}: ${material.nome}`,
               html: `<p>O material <strong>${material.nome}</strong> ${
                 semEstoque
@@ -1302,8 +1513,8 @@ export function createApp() {
           const t = await getTransporter();
           if (t) {
             await t.sendMail({
-              from: process.env.SMTP_FROM_EMAIL || 'noreply@ssimoveisbrasil.app',
-              to: process.env.ADMIN_EMAIL || 'admin@ssimoveis.com',
+              from: remetente(),
+              to: destinatarioAdmin(),
               subject: `Recontagem (${deposito.nome}): ${criticalItems.length} item(ns) em estoque crítico`,
               html: `<p>Após a recontagem de ${req.user!.nome}, os itens abaixo ficaram em nível crítico:</p>
                      <ul>${criticalItems.map((i) => `<li>${i.nome}: ${i.novoSaldo} (mínimo ${i.estoque_minimo})</li>`).join('')}</ul>`,
@@ -1570,7 +1781,7 @@ export function createApp() {
         .insert({
           nome: String(nome).trim(),
           matricula: String(matricula).trim(),
-          email: email ? String(email).trim() : null,
+          email: email ? String(email).trim().toLowerCase() : null,
           role,
           senha: await bcrypt.hash(String(senha), 10),
         })
@@ -1598,7 +1809,7 @@ export function createApp() {
 
       const patch: Record<string, any> = {};
       if (nome !== undefined) patch.nome = String(nome).trim();
-      if (email !== undefined) patch.email = email ? String(email).trim() : null;
+      if (email !== undefined) patch.email = email ? String(email).trim().toLowerCase() : null; // minúsculo como no cadastro: a recuperação de senha busca assim
       if (role !== undefined) {
         if (!assertManageable(role)) return res.status(400).json({ error: 'Perfil inválido para o sistema de estoque.' });
         // Sem isso, o último admin pode se rebaixar e trancar todo mundo para fora.

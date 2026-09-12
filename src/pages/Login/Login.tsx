@@ -1,15 +1,18 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
-import { ArrowRight, Lock, User } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Lock, User } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Field';
 import { Stripes } from '@/shared/ui/Stripes';
-import { MarcaProduto } from '@/shared/ui/Logo';
+import { LogoProduto } from '@/shared/ui/Logo';
 import { PRODUTO } from '@/shared/produto';
 import { useAuth } from '@/store/auth';
+import { Link, ROTAS } from '@/app/router';
 import type { AuthUser } from '@/shared/types';
 import { CriarConta } from './CriarConta';
+import { EsqueciSenha } from './EsqueciSenha';
+import { RedefinirSenha } from './RedefinirSenha';
 
 const metrics = [
   { label: 'Unidades por conta', value: '∞' },
@@ -17,11 +20,17 @@ const metrics = [
   { label: 'Isolamento entre empresas', value: 'no banco' },
 ];
 
-export function Login() {
+export type ModoDeAcesso = 'entrar' | 'criar' | 'esqueci' | 'redefinir';
+
+/**
+ * As telas de acesso: entrar, criar conta, esqueci a senha e redefinir — a
+ * rota decide qual. O painel da esquerda é a marca do produto, sempre navy:
+ * ninguém entrou ainda, então não há organização para vestir.
+ */
+export function Login({ modo }: { modo: ModoDeAcesso }) {
   const [matricula, setMatricula] = useState('');
   const [senha, setSenha] = useState('');
   const [loading, setLoading] = useState(false);
-  const [modo, setModo] = useState<'entrar' | 'criar'>('entrar');
   const setSession = useAuth((s) => s.setSession);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -45,39 +54,34 @@ export function Login() {
   }
 
   return (
-    <div className="grid min-h-screen grid-cols-1 bg-slate-950 lg:grid-cols-[1.15fr_1fr]">
-      {/* ---- Left: brand panel ---- */}
+    <div className="grid min-h-screen grid-cols-1 bg-[#050b18] lg:grid-cols-[1.15fr_1fr]">
+      {/* ---- Esquerda: a marca ---- */}
       <div className="relative hidden overflow-hidden lg:flex lg:flex-col lg:justify-between lg:p-14">
-        {/* blueprint grid */}
+        {/* grade técnica */}
         <div
-          className="absolute inset-0 opacity-[0.07]"
+          className="absolute inset-0 opacity-[0.06]"
           style={{
-            backgroundImage:
-              'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+            backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
             backgroundSize: '44px 44px',
           }}
         />
         <div
-          className="absolute inset-0 opacity-50"
+          className="absolute inset-0 opacity-60"
           style={{
             backgroundImage:
-              'radial-gradient(circle at 20% 15%, rgba(255,142,41,0.35), transparent 42%), radial-gradient(circle at 90% 85%, rgba(39,208,149,0.14), transparent 45%)',
+              'radial-gradient(circle at 20% 15%, rgba(255,138,36,0.32), transparent 42%), radial-gradient(circle at 90% 85%, rgba(34,197,94,0.12), transparent 45%)',
           }}
         />
         <div className="pointer-events-none absolute inset-0 grain" />
 
-        {/* signature stripe ribbon */}
-        <Stripes className="absolute -right-10 top-0 h-full w-16 -skew-x-[14deg] opacity-90" color="rgba(255,142,41,0.85)" />
-        <Stripes className="absolute -right-10 top-0 h-full w-16 -skew-x-[14deg] opacity-90 mix-blend-multiply" color="rgba(11,15,25,0.9)" />
+        {/* a faixa diagonal, assinatura do sistema */}
+        <Stripes className="absolute -right-10 top-0 h-full w-16 -skew-x-[14deg] opacity-90" color="rgba(255,138,36,0.85)" />
+        <Stripes className="absolute -right-10 top-0 h-full w-16 -skew-x-[14deg] opacity-90 mix-blend-multiply" color="rgba(5,11,24,0.9)" />
 
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="relative z-10 flex items-center gap-2.5 text-white"
-        >
-          <MarcaProduto size={36} className="rounded-xl shadow-lg" />
-          <span className="font-display text-lg font-bold tracking-tight text-white">{PRODUTO.nome}</span>
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="relative z-10">
+          <Link href={ROTAS.home} className="inline-flex rounded-lg" aria-label="Stok Aí — voltar para o site">
+            <LogoProduto height={40} fundo="escuro" />
+          </Link>
         </motion.div>
 
         <div className="relative z-10 max-w-lg">
@@ -85,19 +89,19 @@ export function Login() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
-            className="font-mono text-xs font-semibold uppercase tracking-[0.3em] text-[var(--brand)]"
+            className="font-mono text-xs font-semibold uppercase tracking-[0.3em] text-[#ff8a24]"
           >
-            {PRODUTO.slogan}
+            Controle de estoque por depósito
           </motion.p>
           <motion.h1
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.18 }}
-            className="font-display mt-3 text-5xl font-bold leading-[1.05] text-white"
+            className="mt-3 text-5xl font-extrabold leading-[1.05] tracking-tight text-white"
           >
-            Cada material,
+            Sua operação,
             <br />
-            no lugar certo.
+            no controle.
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 16 }}
@@ -108,92 +112,74 @@ export function Login() {
             {PRODUTO.descricao}
           </motion.p>
 
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.36 }}
-            className="mt-10 flex gap-8"
-          >
-            {metrics.map((m, i) => (
-              <div key={m.label} className="border-l border-white/10 pl-4" style={{ transitionDelay: `${i * 40}ms` }}>
-                <p className="font-display text-2xl font-bold text-white">{m.value}</p>
+          <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.36 }} className="mt-10 flex gap-8">
+            {metrics.map((m) => (
+              <div key={m.label} className="border-l border-white/10 pl-4">
+                <p className="text-2xl font-extrabold text-white">{m.value}</p>
                 <p className="mt-1 max-w-[9rem] text-[11px] leading-tight text-slate-500">{m.label}</p>
               </div>
             ))}
           </motion.div>
         </div>
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.5 }}
-          className="relative z-10 font-mono text-[11px] tracking-wide text-slate-600"
-        >
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.6, delay: 0.5 }} className="relative z-10 font-mono text-[11px] tracking-wide text-slate-600">
           {PRODUTO.nome} · {PRODUTO.slogan}
         </motion.p>
       </div>
 
-      {/* ---- Right: form ---- */}
+      {/* ---- Direita: o formulário ---- */}
       <div className="relative flex items-center justify-center bg-[var(--surface)] p-6 sm:p-10">
-        <Stripes className="absolute inset-x-0 top-0 h-1.5 lg:hidden" color="rgba(255,142,41,0.9)" />
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.15 }}
-          className="w-full max-w-sm"
+        <Stripes className="absolute inset-x-0 top-0 h-1.5 lg:hidden" color="rgba(255,138,36,0.9)" />
+        <Link
+          href={ROTAS.home}
+          className="absolute left-5 top-5 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text)] sm:left-8 sm:top-8"
         >
-          <div className="mb-8 flex items-center gap-2.5 lg:hidden">
-            <MarcaProduto size={36} className="rounded-xl" />
-            <span className="font-display text-base font-bold text-[var(--text)]">{PRODUTO.nome}</span>
+          <ArrowLeft size={14} /> Voltar para o site
+        </Link>
+        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, delay: 0.15 }} className="w-full max-w-sm">
+          <div className="mb-8 flex lg:hidden">
+            <LogoProduto height={36} fundo="auto" />
           </div>
 
-          {modo === 'criar' ? (
-            <CriarConta onVoltar={() => setModo('entrar')} />
-          ) : (
+          {modo === 'criar' && <CriarConta />}
+          {modo === 'esqueci' && <EsqueciSenha />}
+          {modo === 'redefinir' && <RedefinirSenha />}
+          {modo === 'entrar' && (
             <>
-          <h2 className="font-display text-3xl font-bold text-[var(--text)]">Acessar painel</h2>
-          <p className="mt-1.5 text-sm text-[var(--text-muted)]">Entre com sua matrícula ou e-mail cadastrado.</p>
+              <h2 className="font-display text-3xl font-bold text-[var(--text)]">Acessar painel</h2>
+              <p className="mt-1.5 text-sm text-[var(--text-muted)]">Entre com sua matrícula ou e-mail cadastrado.</p>
 
-          <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-            <div className="relative">
-              <User size={16} className="pointer-events-none absolute left-3 top-[38px] text-[var(--text-muted)]" />
-              <Input
-                label="Matrícula ou e-mail"
-                required
-                value={matricula}
-                onChange={(e) => setMatricula(e.target.value)}
-                className="pl-9"
-                autoFocus
-              />
-            </div>
-            <div className="relative">
-              <Lock size={16} className="pointer-events-none absolute left-3 top-[38px] text-[var(--text-muted)]" />
-              <Input
-                label="Senha"
-                required
-                type="password"
-                value={senha}
-                onChange={(e) => setSenha(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <Button type="submit" fullWidth size="lg" loading={loading} icon={!loading ? <ArrowRight size={16} /> : undefined}>
-              Entrar
-            </Button>
-          </form>
+              <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+                <div className="relative">
+                  <User size={16} className="pointer-events-none absolute left-3 top-[38px] text-[var(--text-muted)]" />
+                  <Input label="Matrícula ou e-mail" required value={matricula} onChange={(e) => setMatricula(e.target.value)} className="pl-9" autoFocus />
+                </div>
+                <div className="relative">
+                  <Lock size={16} className="pointer-events-none absolute left-3 top-[38px] text-[var(--text-muted)]" />
+                  <Input label="Senha" required type="password" value={senha} onChange={(e) => setSenha(e.target.value)} className="pl-9" autoComplete="current-password" />
+                </div>
+                <div className="-mt-1 text-right">
+                  <Link href={ROTAS.esqueciSenha} className="text-xs font-medium text-[var(--text-muted)] hover:text-[var(--brand)] hover:underline">
+                    Esqueci minha senha
+                  </Link>
+                </div>
+                <Button type="submit" fullWidth size="lg" loading={loading} icon={!loading ? <ArrowRight size={16} /> : undefined}>
+                  Entrar
+                </Button>
+              </form>
 
-          <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
-            Sua empresa ainda não usa o sistema?{' '}
-            <button type="button" onClick={() => setModo('criar')} className="font-semibold text-[var(--brand)] hover:underline">
-              Criar conta
-            </button>
-          </p>
+              <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
+                Sua empresa ainda não usa o sistema?{' '}
+                <Link href={ROTAS.criarConta} className="font-semibold text-[var(--brand)] hover:underline">
+                  Criar conta
+                </Link>
+              </p>
 
-          <div className="mt-10 flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
-            <span className="h-px flex-1 bg-[var(--border)]" />
-            <span className="font-mono">acesso restrito</span>
-            <span className="h-px flex-1 bg-[var(--border)]" />
-          </div>
+              <div className="mt-10 flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
+                <span className="h-px flex-1 bg-[var(--border)]" />
+                <span className="font-mono">acesso restrito</span>
+                <span className="h-px flex-1 bg-[var(--border)]" />
+              </div>
             </>
           )}
         </motion.div>

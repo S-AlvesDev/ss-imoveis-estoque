@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 import { AnimatePresence, motion } from 'motion/react';
 import { useAuth } from '@/store/auth';
 import { useEstoqueData } from '@/features/estoque/useEstoqueData';
 import { Login } from '@/pages/Login/Login';
+import { Home } from '@/pages/Home/Home';
+import { ROTAS, useRouter } from '@/app/router';
 import { Dashboard } from '@/pages/Dashboard/Dashboard';
 import { Central } from '@/pages/Central/Central';
 import { Obra } from '@/pages/Obra/Obra';
@@ -126,13 +128,34 @@ function InventoryApp({ role }: { role: string }) {
   );
 }
 
+/**
+ * Antes de entrar, a URL decide a tela: a Home pública, entrar ou criar
+ * conta — qualquer outro caminho cai na Home. Depois de entrar, o sistema
+ * é um só e mora em "/": a barra lateral navega por estado, não por URL.
+ */
 export default function App() {
   const user = useAuth((s) => s.user);
+  const path = useRouter((s) => s.path);
+  const navigate = useRouter((s) => s.navigate);
+
+  // Entrou (ou já estava) em /entrar ou /criar-conta: a URL volta para a raiz,
+  // para um F5 não reabrir a tela de login por cima do painel.
+  useEffect(() => {
+    if (user && path !== ROTAS.home) navigate(ROTAS.home, { replace: true });
+  }, [user, path, navigate]);
+
+  let tela: React.ReactNode;
+  if (user) tela = <InventoryApp role={user.role} />;
+  else if (path === ROTAS.entrar) tela = <Login modo="entrar" />;
+  else if (path === ROTAS.criarConta) tela = <Login modo="criar" />;
+  else if (path === ROTAS.esqueciSenha) tela = <Login modo="esqueci" />;
+  else if (path === ROTAS.redefinirSenha) tela = <Login modo="redefinir" />;
+  else tela = <Home />;
 
   return (
     <>
       <Toaster position="top-right" richColors closeButton />
-      {!user ? <Login /> : <InventoryApp role={user.role} />}
+      {tela}
     </>
   );
 }
