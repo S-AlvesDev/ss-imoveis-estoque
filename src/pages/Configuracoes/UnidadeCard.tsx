@@ -1,20 +1,24 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, Package, PackageOpen, Pencil, Plus, Power, Warehouse, X } from 'lucide-react';
+import { Check, Package, Pencil, Plus, Power, Warehouse, X } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
 import { api } from '@/lib/api';
 import type { Deposito, Material, Unidade } from '@/shared/types';
 import { MateriaisDaUnidadeModal } from './MateriaisDaUnidadeModal';
-import { EstoqueModal } from '@/features/estoques/EstoqueModal';
+import { EstoqueModal, ICONE_DO_MODO } from '@/features/estoques/EstoqueModal';
 import { MODO_LABELS } from '@/shared/constants';
+import { Cadeado } from '@/features/planos/Cadeado';
 
 interface UnidadeCardProps {
   unidade: Unidade;
   depositos: Deposito[];
   catalogo: Material[];
   podeDesativar: boolean;
+  /** O plano ainda deixa criar mais um estoque nesta unidade? */
+  cabeEstoque: boolean;
+  porQueNaoMaisEstoques: string;
   refetch: () => Promise<void>;
   onSelecionar: () => void;
 }
@@ -85,7 +89,7 @@ function NomeEditavel({
   );
 }
 
-export function UnidadeCard({ unidade, depositos, catalogo, podeDesativar, refetch, onSelecionar }: UnidadeCardProps) {
+export function UnidadeCard({ unidade, depositos, catalogo, podeDesativar, cabeEstoque, porQueNaoMaisEstoques, refetch, onSelecionar }: UnidadeCardProps) {
   const [materiaisOpen, setMateriaisOpen] = useState(false);
   const [mudandoAtivo, setMudandoAtivo] = useState(false);
 
@@ -149,13 +153,16 @@ export function UnidadeCard({ unidade, depositos, catalogo, podeDesativar, refet
         {depositosOrdenados.map((d) => (
           <div key={d.id} className={`flex items-center gap-3 rounded-xl bg-[var(--bg-2)] px-3 py-2.5 ${d.ativo ? '' : 'opacity-60'}`}>
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--surface)] text-[var(--brand)]">
-              {d.modo === 'emprestimo' ? <PackageOpen size={15} /> : <Warehouse size={15} />}
+              {ICONE_DO_MODO[d.modo] ?? <Warehouse size={15} />}
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-[var(--text)]">{d.nome}</p>
               <p className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
                 {MODO_LABELS[d.modo]?.nome ?? d.modo}
                 {d.modo === 'emprestimo' && d.prazo_padrao_horas ? ` · prazo ${d.prazo_padrao_horas} h` : ''}
+                {d.modo === 'almoxarifado' && d.operacoes_permitidas ? ` · ${d.operacoes_permitidas.length} de 5 operações` : ''}
+                {d.modo === 'entrega' && d.exige_assinatura ? ' · com assinatura' : ''}
+                {d.modo === 'validade' ? ` · avisa ${d.dias_aviso_validade} dias antes` : ''}
                 {d.ativo ? '' : ' · desativado'}
               </p>
             </div>
@@ -176,10 +183,12 @@ export function UnidadeCard({ unidade, depositos, catalogo, podeDesativar, refet
         <button
           type="button"
           onClick={() => setEstoqueModal({ open: true, deposito: null })}
-          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border)] px-3 py-2.5 text-sm font-semibold text-[var(--text-muted)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand)]"
+          disabled={!cabeEstoque}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--border)] px-3 py-2.5 text-sm font-semibold text-[var(--text-muted)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-[var(--border)] disabled:hover:text-[var(--text-muted)]"
         >
           <Plus size={15} /> Novo estoque
         </button>
+        {!cabeEstoque && <Cadeado texto={porQueNaoMaisEstoques} />}
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)] pt-4">

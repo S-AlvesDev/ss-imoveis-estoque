@@ -5,6 +5,9 @@ import { Input, Select, Textarea } from '@/shared/ui/Field';
 import { MaterialPicker } from '@/shared/ui/MaterialPicker';
 import type { Deposito, Material } from '@/shared/types';
 import { formatNumber, saldoEm } from './utils';
+import { OPERACOES_ALMOXARIFADO } from '@/shared/constants';
+import { usePlano } from '@/features/planos/usePlano';
+import { Cadeado } from '@/features/planos/Cadeado';
 
 /** O que a tela manda para POST /api/estoques/:id/movimentacoes. */
 export interface MovimentoPayload {
@@ -15,20 +18,13 @@ export interface MovimentoPayload {
   destino_id?: string;
 }
 
-interface OperationOption {
-  value: MovimentoPayload['operacao'];
-  label: string;
-  color: string;
-  dica: string;
-}
-
-const OPERACOES: OperationOption[] = [
-  { value: 'ENTRADA', label: 'Entrada', color: 'bg-[var(--verde)] text-white', dica: 'Chegou de fora: compra, doação, devolução de terceiro.' },
-  { value: 'SAIDA', label: 'Saída', color: 'bg-[var(--amarelo)] text-white', dica: 'Saiu da empresa: venda, descarte, uso administrativo.' },
-  { value: 'CONSUMO', label: 'Consumo', color: 'bg-[var(--vermelho)] text-white', dica: 'Foi usado no trabalho: obra, manutenção, aula.' },
-  { value: 'TRANSFERENCIA', label: 'Transferir', color: 'bg-[var(--brand)] text-white', dica: 'Vai para outro estoque desta unidade. O total da unidade não muda.' },
-  { value: 'AJUSTE', label: 'Ajuste', color: 'bg-[var(--roxo)] text-white', dica: 'Acerto de contagem, com sinal: +5 achou, −5 sumiu.' },
-];
+const CORES: Record<MovimentoPayload['operacao'], string> = {
+  ENTRADA: 'bg-[var(--verde)] text-white',
+  SAIDA: 'bg-[var(--amarelo)] text-white',
+  CONSUMO: 'bg-[var(--vermelho)] text-white',
+  TRANSFERENCIA: 'bg-[var(--brand)] text-white',
+  AJUSTE: 'bg-[var(--roxo)] text-white',
+};
 
 interface MovementFormProps {
   materials: Material[];
@@ -45,8 +41,16 @@ interface MovementFormProps {
  * quando a unidade tem outro estoque para onde mandar.
  */
 export function MovementForm({ materials, deposito, outrosEstoques, onSubmit }: MovementFormProps) {
-  const operacoes = useMemo(() => OPERACOES.filter((o) => o.value !== 'TRANSFERENCIA' || outrosEstoques.length > 0), [outrosEstoques.length]);
-  const [operacao, setOperacao] = useState<MovimentoPayload['operacao']>('ENTRADA');
+  const planoAtual = usePlano();
+  const podeTransferir = planoAtual.libera('transferencia');
+  // As operações ligadas neste estoque; "Transferir" só com outro estoque na unidade — e com o plano que a inclui.
+  const operacoes = useMemo(
+    () =>
+      OPERACOES_ALMOXARIFADO.filter((o) => (!deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes(o.value)) && (o.value !== 'TRANSFERENCIA' || (outrosEstoques.length > 0 && podeTransferir))).map((o) => ({ ...o, color: CORES[o.value] })),
+    [deposito.operacoes_permitidas, outrosEstoques.length, podeTransferir],
+  );
+  const transferenciaTravada = !podeTransferir && outrosEstoques.length > 0 && (!deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes('TRANSFERENCIA'));
+  const [operacao, setOperacao] = useState<MovimentoPayload['operacao']>(operacoes[0]?.value ?? 'ENTRADA');
   const [materialId, setMaterialId] = useState(materials.length === 1 ? String(materials[0].id) : '');
   const [destinoId, setDestinoId] = useState(outrosEstoques[0]?.id ?? '');
   const [quantidade, setQuantidade] = useState('');
@@ -107,6 +111,7 @@ export function MovementForm({ materials, deposito, outrosEstoques, onSubmit }: 
           ))}
         </div>
         <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">{atual.dica}</p>
+        {transferenciaTravada && <Cadeado texto={planoAtual.porQueNao('transferencia')} className="mt-1" />}
       </div>
 
       {operacao === 'TRANSFERENCIA' && (

@@ -8,6 +8,9 @@ import { UnidadeCard } from './UnidadeCard';
 import { AcessosSection } from './AcessosSection';
 import { IdentidadeSection } from './IdentidadeSection';
 import { CategoriasSection } from './CategoriasSection';
+import { PlanoSection } from './PlanoSection';
+import { usePlano } from '@/features/planos/usePlano';
+import { Cadeado } from '@/features/planos/Cadeado';
 
 interface ConfiguracoesProps {
   unidades: Unidade[];
@@ -26,6 +29,9 @@ interface ConfiguracoesProps {
  */
 export function Configuracoes({ unidades, depositos, catalogo, categorias, refetch, onSelecionarUnidade }: ConfiguracoesProps) {
   const [criando, setCriando] = useState(false);
+  const planoAtual = usePlano();
+  const unidadesAtivas = unidades.filter((u) => u.ativo).length;
+  const cabeUnidade = planoAtual.cabeMaisUm('unidades', unidadesAtivas);
 
   return (
     <div className="space-y-6">
@@ -36,10 +42,15 @@ export function Configuracoes({ unidades, depositos, catalogo, categorias, refet
             Identidade, unidades e seus estoques, categorias, o que cada unidade trabalha e quem opera o quê.
           </p>
         </div>
-        <Button icon={<Plus size={15} />} onClick={() => setCriando(true)}>
-          Nova unidade
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button icon={<Plus size={15} />} onClick={() => setCriando(true)} disabled={!cabeUnidade}>
+            Nova unidade
+          </Button>
+          {!cabeUnidade && <Cadeado texto={planoAtual.porQueNaoMais('unidades')} />}
+        </div>
       </div>
+
+      <PlanoSection unidades={unidades} depositos={depositos} />
 
       <IdentidadeSection refetch={refetch} />
 
@@ -62,6 +73,8 @@ export function Configuracoes({ unidades, depositos, catalogo, categorias, refet
                 depositos={depositos.filter((d) => d.unit_id === u.id)}
                 catalogo={catalogo}
                 podeDesativar={unidades.filter((x) => x.ativo).length > 1}
+                cabeEstoque={planoAtual.cabeMaisUm('depositosPorUnidade', depositos.filter((d) => d.unit_id === u.id && d.ativo).length)}
+                porQueNaoMaisEstoques={planoAtual.porQueNaoMais('depositosPorUnidade')}
                 refetch={refetch}
                 onSelecionar={() => onSelecionarUnidade(u.id)}
               />

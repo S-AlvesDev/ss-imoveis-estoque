@@ -72,16 +72,19 @@ export function Emprestimo({ deposito, materials, emprestimos, staff, refetch, p
 
   useEffect(() => setPrazoHoras(String(deposito.prazo_padrao_horas ?? 2)), [deposito.id, deposito.prazo_padrao_horas]);
 
+  // Só os empréstimos deste estoque (entregas moram em outra tela). Empréstimo sempre tem prazo.
+  const daqui = useMemo(() => emprestimos.filter((e) => e.warehouse_id === deposito.id && e.tipo === 'emprestimo'), [emprestimos, deposito.id]);
+  const prazoDe = (e: EmprestimoT) => e.prazo_em ?? e.retirado_em;
+
   const pendentes = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return emprestimos
-      .filter((e) => e.warehouse_id === deposito.id)
+    return daqui
       .filter((e) => !q || e.tomador_nome.toLowerCase().includes(q) || (e.tomador_referencia ?? '').toLowerCase().includes(q) || e.material_nome.toLowerCase().includes(q))
-      .sort((a, b) => new Date(a.prazo_em).getTime() - new Date(b.prazo_em).getTime());
-  }, [emprestimos, deposito.id, busca]);
+      .sort((a, b) => new Date(prazoDe(a)).getTime() - new Date(prazoDe(b)).getTime());
+  }, [daqui, busca]);
 
-  const atrasados = useMemo(() => emprestimos.filter((e) => e.warehouse_id === deposito.id && new Date(e.prazo_em).getTime() < agora.getTime()).length, [emprestimos, deposito.id, agora]);
-  const totalPendentes = emprestimos.filter((e) => e.warehouse_id === deposito.id).length;
+  const atrasados = useMemo(() => daqui.filter((e) => new Date(prazoDe(e)).getTime() < agora.getTime()).length, [daqui, agora]);
+  const totalPendentes = daqui.length;
   const disponiveis = useMemo(() => materials.filter((m) => saldoEm(m, deposito.id) > 0), [materials, deposito.id]);
   const material = materials.find((m) => String(m.id) === materialId);
 
@@ -230,7 +233,7 @@ export function Emprestimo({ deposito, materials, emprestimos, staff, refetch, p
           <ul className="max-h-[480px] divide-y divide-[var(--border)] overflow-y-auto">
             {pendentes.length === 0 && <EmptyState icon={<PackageOpen size={20} />} title="Nada na rua" subtitle="Toda retirada registrada aqui aparece nesta lista até ser devolvida." />}
             {pendentes.map((e) => {
-              const prazo = prazoLegivel(e.prazo_em, agora);
+              const prazo = prazoLegivel(prazoDe(e), agora);
               const falta = Number(e.quantidade) - Number(e.quantidade_devolvida);
               return (
                 <li key={e.id} className="flex items-center gap-3 py-3">
@@ -280,7 +283,7 @@ export function Emprestimo({ deposito, materials, emprestimos, staff, refetch, p
               <tbody className="divide-y divide-[var(--border)]">
                 {historico.map((e) => {
                   const devolvido = Boolean(e.devolvido_em);
-                  const atrasou = devolvido ? new Date(e.devolvido_em as string).getTime() > new Date(e.prazo_em).getTime() : new Date(e.prazo_em).getTime() < agora.getTime();
+                  const atrasou = devolvido ? new Date(e.devolvido_em as string).getTime() > new Date(prazoDe(e)).getTime() : new Date(prazoDe(e)).getTime() < agora.getTime();
                   return (
                     <tr key={e.id}>
                       <td className="py-2 pr-3">

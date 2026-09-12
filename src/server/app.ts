@@ -13,6 +13,11 @@ import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/util
 import { scopedDb, type ScopedDb } from './tenant';
 import { validarPedidoDemo, ehRobo, emailDoPedido } from './demo';
 import { validarRetirada, prazoEm } from './emprestimos';
+import { validarEntrega, validoAte } from './entregas';
+import { alocarSaida, descreverConsumos, validarLote, type LoteBase, type Consumo } from './lotes';
+import { validarItem, validarEvento, transicionar } from './patrimonio';
+import { planoDaOrg, negarRecurso, negarLimite } from './planos';
+import { planoLibera, type PlanoEfetivo } from '../shared/planos';
 import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
 import {
   gerarToken,
@@ -34,6 +39,7 @@ import {
   validarEstoque,
   OPERACOES,
   ehOperacaoGenerica,
+  operacaoPermitida,
   unidadesDaOrg,
   saldosDaOrg,
   saldosDoMaterial,
@@ -103,6 +109,8 @@ declare global {
       db?: ScopedDb;
       /** Depósitos que a pessoa pode ver/operar. `null` = administrador. Ver withAcessos. */
       acessos?: Acessos;
+      /** O plano em vigor da organização da sessão (ou avaliação). Ver withTenant. */
+      plano?: PlanoEfetivo;
     }
   }
 }
@@ -127,7 +135,7 @@ function authenticate(req: express.Request, res: express.Response, next: express
  * rota usa `req.db` e não precisa lembrar de filtrar por organização — nem
  * consegue esquecer, porque não tem outro caminho para o banco.
  */
-function withTenant(req: express.Request, res: express.Response, next: express.NextFunction) {
+async function withTenant(req: express.Request, res: express.Response, next: express.NextFunction) {
   const organizationId = req.user?.organization_id;
   if (!organizationId) {
     // Token antigo, emitido antes da Fase 1b. Melhor exigir novo login do que
@@ -135,6 +143,14 @@ function withTenant(req: express.Request, res: express.Response, next: express.N
     return res.status(401).json({ error: 'Sessão desatualizada. Entre novamente.' });
   }
   req.db = scopedDb(organizationId);
+  // O plano vem junto: é ele que diz o que esta organização pode. Cache de
+  // um minuto, então não custa uma leitura por requisição.
+  try {
+    req.plano = await planoDaOrg(organizationId);
+  } catch (err: any) {
+    console.error('[withTenant] plano:', err.message);
+    return res.status(500).json({ error: 'Erro ao carregar a organização.' });
+  }
   next();
 }
 
@@ -682,7 +698,7 @@ export function createApp() {
       // Toda leitura desta rota já nasce presa à organização da sessão.
       const db = scopedDb(req.user!.organization_id);
 
-      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes, categoriasRes, emprestimosRes] = await Promise.all([
+      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes, categoriasRes, emprestimosRes, lotesRes, itensRes] = await Promise.all([
         db.from('materials').select('*').order('nome', { ascending: true }),
         fetchAllRows(() =>
           db
@@ -696,15 +712,20 @@ export function createApp() {
         unidadesDaOrg(db),
         depositosDaOrg(db, { incluirUnidadesInativas: true }),
         saldosDaOrg(db),
-        db.from('organizations').select('id, nome, slug, cor_primaria, logo_url').eq('id', req.user!.organization_id).single(),
+        db.from('organizations').select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate').eq('id', req.user!.organization_id).single(),
         db.from('categories').select('id, nome, ordem').order('ordem', { ascending: true }).order('nome', { ascending: true }),
-        // Só o que está na rua: a lista de pendentes/atrasados de cada estoque de empréstimo.
-        db.from('loans').select('*, materials(nome, unidade_medida)').is('devolvido_em', null).order('prazo_em', { ascending: true }),
+        // Só o que está na rua: pendentes/atrasados dos estoques de empréstimo e entregas abertas dos de EPI.
+        db.from('loans').select('*, materials(nome, unidade_medida)').is('devolvido_em', null).is('encerrado_em', null).order('prazo_em', { ascending: true }),
+        // Lotes com saldo dos estoques de validade, e os itens dos estoques de patrimônio.
+        db.from('lots').select('*, materials(nome, unidade_medida)').gt('quantidade', 0).order('validade', { ascending: true, nullsFirst: false }),
+        db.from('assets').select('*, materials(nome)').order('codigo', { ascending: true }),
       ]);
 
       if (materialsRes.error) throw materialsRes.error;
       if (categoriasRes.error) throw categoriasRes.error;
       if (emprestimosRes.error) throw emprestimosRes.error;
+      if (lotesRes.error) throw lotesRes.error;
+      if (itensRes.error) throw itensRes.error;
 
       // Quem não é admin só recebe os depósitos que pode ver — e as unidades
       // que têm algum deles. O saldo dos outros não sai do servidor.
@@ -731,6 +752,13 @@ export function createApp() {
         .filter((e: any) => visivel.has(e.warehouse_id))
         .map(({ materials: mat, ...e }: any) => ({ ...e, material_nome: mat?.nome ?? 'Material removido', unidade_medida: mat?.unidade_medida ?? '' }));
 
+      const lotes = (lotesRes.data || [])
+        .filter((l: any) => visivel.has(l.warehouse_id))
+        .map(({ materials: mat, ...l }: any) => ({ ...l, material_nome: mat?.nome ?? 'Material removido', unidade_medida: mat?.unidade_medida ?? '' }));
+      const itens = (itensRes.data || [])
+        .filter((i: any) => visivel.has(i.warehouse_id))
+        .map(({ materials: mat, ...i }: any) => ({ ...i, material_nome: mat?.nome ?? 'Modelo removido' }));
+
       res.json({
         materials,
         materialMovements: movements,
@@ -739,10 +767,12 @@ export function createApp() {
         depositos: depositosVisiveis,
         categorias: categoriasRes.data || [],
         emprestimos,
+        lotes,
+        itens,
         // O que ESTA pessoa pode fazer, para o front montar o menu. Admin: null.
         acessos: acessos === null ? null : [...acessos.entries()].map(([warehouse_id, nivel]) => ({ warehouse_id, nivel })),
-        // Nome, cor e logo — a identidade que as telas vestem por dentro.
-        organizacao: orgRes.data ?? null,
+        // Nome, cor e logo — a identidade que as telas vestem por dentro — e o plano em vigor.
+        organizacao: orgRes.data ? { ...orgRes.data, plano_efetivo: req.plano } : null,
       });
     } catch (err: any) {
       console.error('[GET /api/data] erro:', err.message);
@@ -778,6 +808,8 @@ export function createApp() {
         patch.nome = nome;
       }
       if (req.body?.cor_primaria !== undefined) {
+        const negada = negarRecurso(req.plano!, 'identidade-visual');
+        if (negada) return res.status(negada.status).json(negada.body);
         const cor = req.body.cor_primaria === null ? null : String(req.body.cor_primaria).trim().toLowerCase();
         if (cor !== null && !COR_HEX.test(cor)) return res.status(400).json({ error: 'Cor inválida. Use o formato #rrggbb.' });
         patch.cor_primaria = cor;
@@ -785,9 +817,9 @@ export function createApp() {
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para alterar.' });
 
       const { data, error } = await req.db!.from('organizations').update(patch)
-        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url').single();
+        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate').single();
       if (error || !data) throw error ?? new Error('organização não encontrada');
-      res.json({ organizacao: data });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
     } catch (err: any) {
       console.error('[PATCH /api/organization] erro:', err.message);
       res.status(500).json({ error: 'Erro ao atualizar a organização.' });
@@ -802,6 +834,8 @@ export function createApp() {
    */
   app.post('/api/organization/logo-upload-url', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
+      const negada = negarRecurso(req.plano!, 'identidade-visual');
+      if (negada) return res.status(negada.status).json(negada.body);
       const tipo = String(req.body?.content_type ?? '');
       const tamanho = Number(req.body?.size ?? 0);
       const ext = LOGO_TIPOS[tipo];
@@ -827,6 +861,8 @@ export function createApp() {
    */
   app.post('/api/organization/logo', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
+      const negada = negarRecurso(req.plano!, 'identidade-visual');
+      if (negada) return res.status(negada.status).json(negada.body);
       const caminho = String(req.body?.path ?? '');
       const pasta = req.user!.organization_id + '/';
       if (!caminho.startsWith(pasta) || caminho.includes('..')) return res.status(400).json({ error: 'Caminho inválido.' });
@@ -841,7 +877,7 @@ export function createApp() {
 
       const publicUrl = supabaseServer.storage.from('logos').getPublicUrl(caminho).data.publicUrl;
       const { data, error } = await req.db!.from('organizations').update({ logo_url: publicUrl })
-        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url').single();
+        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate').single();
       if (error || !data) throw error ?? new Error('organização não encontrada');
 
       if (anterior && anterior !== caminho) {
@@ -849,7 +885,7 @@ export function createApp() {
         if (rErr) console.warn('[logo] não apagou o anterior:', rErr.message);
       }
 
-      res.json({ organizacao: data });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
     } catch (err: any) {
       console.error('[POST /api/organization/logo] erro:', err.message);
       res.status(500).json({ error: 'Erro ao salvar o logo.' });
@@ -861,13 +897,13 @@ export function createApp() {
       const { data: atual } = await req.db!.from('organizations').select('logo_url').eq('id', req.user!.organization_id).single();
       const caminho = caminhoDoLogo(atual?.logo_url);
       const { data, error } = await req.db!.from('organizations').update({ logo_url: null })
-        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url').single();
+        .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate').single();
       if (error || !data) throw error ?? new Error('organização não encontrada');
       if (caminho) {
         const { error: rErr } = await supabaseServer.storage.from('logos').remove([caminho]);
         if (rErr) console.warn('[logo] não apagou o arquivo:', rErr.message);
       }
-      res.json({ organizacao: data });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
     } catch (err: any) {
       console.error('[DELETE /api/organization/logo] erro:', err.message);
       res.status(500).json({ error: 'Erro ao remover o logo.' });
@@ -899,6 +935,11 @@ export function createApp() {
         .replace(/^-+|-+$/g, '');
       if (!slug) return res.status(400).json({ error: 'Nome inválido para unidade.' });
 
+      // O plano diz quantas unidades ativas cabem.
+      const { count: ativas } = await req.db!.from('units').select('*', { count: 'exact', head: true }).eq('ativo', true);
+      const negada = negarLimite(req.plano!, 'unidades', ativas ?? 0);
+      if (negada) return res.status(negada.status).json(negada.body);
+
       const { data: unidade, error: unidadeErr } = await req.db!
         .from('units')
         .insert({ nome, slug })
@@ -919,8 +960,8 @@ export function createApp() {
         if (!v.ok) return res.status(400).json({ error: v.erro });
         const { data: dep, error: depErr } = await req.db!
           .from('warehouses')
-          .insert({ unit_id: unidade.id, nome: v.nome, tipo: 'OUTRO', modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas })
-          .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas')
+          .insert({ unit_id: unidade.id, nome: v.nome, tipo: 'OUTRO', modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas, operacoes_permitidas: v.operacoes_permitidas, exige_assinatura: v.exige_assinatura, dias_aviso_validade: v.dias_aviso_validade })
+          .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade')
           .single();
         if (depErr) throw depErr;
         depositos = [dep as Deposito];
@@ -952,6 +993,12 @@ export function createApp() {
         const { count } = await req.db!.from('units').select('*', { count: 'exact', head: true }).eq('ativo', true);
         if ((count ?? 0) <= 1) return res.status(409).json({ error: 'Não dá para desativar a única unidade ativa.' });
       }
+      if (patch.ativo === true) {
+        // Reativar também conta no limite do plano.
+        const { count } = await req.db!.from('units').select('*', { count: 'exact', head: true }).eq('ativo', true).neq('id', req.params.id);
+        const negada = negarLimite(req.plano!, 'unidades', count ?? 0);
+        if (negada) return res.status(negada.status).json(negada.body);
+      }
 
       const { data, error } = await req.db!.from('units').update(patch).eq('id', req.params.id).select('id, nome, slug, ativo').single();
       if (error || !data) return res.status(404).json({ error: 'Unidade não encontrada.' });
@@ -971,34 +1018,50 @@ export function createApp() {
     try {
       const { data: atual, error: erroAtual } = await req.db!
         .from('warehouses')
-        .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas')
+        .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade')
         .eq('id', req.params.id)
         .maybeSingle();
       if (erroAtual) throw erroAtual;
       if (!atual) return res.status(404).json({ error: 'Estoque não encontrado.' });
 
+      // O que não veio no corpo continua como está; a validação vê o estoque inteiro.
       const v = validarEstoque({
         nome: req.body?.nome ?? atual.nome,
         modo: req.body?.modo ?? atual.modo,
         prazo_padrao_horas: req.body?.prazo_padrao_horas ?? atual.prazo_padrao_horas ?? undefined,
+        operacoes_permitidas: req.body?.operacoes_permitidas ?? atual.operacoes_permitidas ?? undefined,
+        exige_assinatura: req.body?.exige_assinatura ?? atual.exige_assinatura,
+        dias_aviso_validade: req.body?.dias_aviso_validade ?? atual.dias_aviso_validade,
       });
       if (!v.ok) return res.status(400).json({ error: v.erro });
 
-      const patch: Record<string, any> = { nome: v.nome, modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas };
+      const patch: Record<string, any> = { nome: v.nome, modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas, operacoes_permitidas: v.operacoes_permitidas, exige_assinatura: v.exige_assinatura, dias_aviso_validade: v.dias_aviso_validade };
       if (req.body?.ativo !== undefined) patch.ativo = Boolean(req.body.ativo);
 
+      if (patch.ativo === true && !atual.ativo) {
+        // Reativar também conta no limite do plano.
+        const { count } = await req.db!.from('warehouses').select('*', { count: 'exact', head: true }).eq('unit_id', atual.unit_id).eq('ativo', true);
+        const negada = negarLimite(req.plano!, 'depositosPorUnidade', count ?? 0);
+        if (negada) return res.status(negada.status).json(negada.body);
+      }
+
       if (v.modo !== atual.modo || patch.ativo === false) {
-        const { count } = await req.db!.from('loans').select('*', { count: 'exact', head: true }).eq('warehouse_id', atual.id).is('devolvido_em', null);
-        if ((count ?? 0) > 0) {
-          return res.status(409).json({ error: `Há ${count} retirada(s) pendente(s) neste estoque. Registre as devoluções antes de mudar o modo ou desativar.` });
-        }
+        // Retirada na rua, entrega em mãos, lote com saldo ou item não baixado: nada disso pode ficar órfão.
+        const [{ count: abertos }, { count: lotes }, { count: itens }] = await Promise.all([
+          req.db!.from('loans').select('*', { count: 'exact', head: true }).eq('warehouse_id', atual.id).is('devolvido_em', null).is('encerrado_em', null),
+          req.db!.from('lots').select('*', { count: 'exact', head: true }).eq('warehouse_id', atual.id).gt('quantidade', 0),
+          req.db!.from('assets').select('*', { count: 'exact', head: true }).eq('warehouse_id', atual.id).neq('estado', 'baixado'),
+        ]);
+        if ((abertos ?? 0) > 0) return res.status(409).json({ error: `Há ${abertos} retirada(s)/entrega(s) em aberto neste estoque. Encerre-as antes de mudar o modo ou desativar.` });
+        if ((lotes ?? 0) > 0) return res.status(409).json({ error: `Há ${lotes} lote(s) com saldo neste estoque. Zere-os antes de mudar o modo ou desativar.` });
+        if ((itens ?? 0) > 0) return res.status(409).json({ error: `Há ${itens} item(ns) de patrimônio ativos neste estoque. Dê baixa antes de mudar o modo ou desativar.` });
       }
 
       const { data, error } = await req.db!
         .from('warehouses')
         .update(patch)
         .eq('id', atual.id)
-        .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas')
+        .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade')
         .single();
       if (error) {
         if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'Já existe um estoque com esse nome nesta unidade.' });
@@ -1024,10 +1087,15 @@ export function createApp() {
       const { data: unidade } = await req.db!.from('units').select('id, ativo').eq('id', req.params.id).maybeSingle();
       if (!unidade) return res.status(404).json({ error: 'Unidade não encontrada.' });
 
+      // O plano diz quantos estoques ativos cabem por unidade.
+      const { count: ativos } = await req.db!.from('warehouses').select('*', { count: 'exact', head: true }).eq('unit_id', unidade.id).eq('ativo', true);
+      const negada = negarLimite(req.plano!, 'depositosPorUnidade', ativos ?? 0);
+      if (negada) return res.status(negada.status).json(negada.body);
+
       const { data: dep, error } = await req.db!
         .from('warehouses')
-        .insert({ unit_id: unidade.id, nome: v.nome, tipo: 'OUTRO', modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas })
-        .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas')
+        .insert({ unit_id: unidade.id, nome: v.nome, tipo: 'OUTRO', modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas, operacoes_permitidas: v.operacoes_permitidas, exige_assinatura: v.exige_assinatura, dias_aviso_validade: v.dias_aviso_validade })
+        .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade')
         .single();
       if (error) {
         if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'Já existe um estoque com esse nome nesta unidade.' });
@@ -1263,14 +1331,22 @@ export function createApp() {
   });
 
   // --------------------------- MATERIALS CRUD (admin) ---------------------------
+  /** Validade de troca (modo entrega): dias inteiros entre 1 e 3650, ou nulo (sem troca programada). */
+  function validadeDeTroca(v: unknown): { ok: true; dias: number | null } | { ok: false; erro: string } {
+    if (v === undefined || v === null || v === '') return { ok: true, dias: null };
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 1 || n > 3650) return { ok: false, erro: 'Validade de troca inválida: use de 1 a 3650 dias.' };
+    return { ok: true, dias: n };
+  }
+
   app.post('/api/materials', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const { nome, unidade_medida, qtd_volumes, fator_multiplicador, estoque_minimo, categoria, unit_id } = req.body || {};
+      const { nome, unidade_medida, qtd_volumes, fator_multiplicador, estoque_minimo, categoria, unit_id, validade_troca_dias } = req.body || {};
       if (!nome || !unidade_medida || qtd_volumes == null || fator_multiplicador == null || estoque_minimo == null) {
         return res.status(400).json({ error: 'Preencha todos os campos obrigatórios.' });
       }
-
-      const saldoInicial = arredondar(Number(qtd_volumes) * Number(fator_multiplicador));
+      const troca = validadeDeTroca(validade_troca_dias);
+      if (!troca.ok) return res.status(400).json({ error: troca.erro });
 
       // O material nasce em todos os estoques da unidade informada, com o
       // saldo inicial no estoque escolhido (`warehouse_id`) — ou, sem escolha,
@@ -1291,6 +1367,10 @@ export function createApp() {
         daUnidade[0];
       if (!destino) return res.status(409).json({ error: 'A unidade não tem estoque cadastrado.' });
 
+      // Patrimônio conta item por item e validade conta por lote: o saldo
+      // inicial desses modos entra pela tela deles, não pelo cadastro.
+      const saldoInicial = destino.modo === 'patrimonio' || destino.modo === 'validade' ? 0 : arredondar(Number(qtd_volumes) * Number(fator_multiplicador));
+
       const { data: material, error } = await req.db!
         .from('materials')
         .insert({
@@ -1300,6 +1380,7 @@ export function createApp() {
           fator_multiplicador,
           estoque_minimo,
           categoria: categoria || 'Outros',
+          validade_troca_dias: troca.dias,
         })
         .select()
         .single();
@@ -1332,13 +1413,18 @@ export function createApp() {
   app.put('/api/materials/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { id } = req.params;
-      const { nome, categoria, unidade_medida, estoque_minimo, fator_multiplicador } = req.body || {};
+      const { nome, categoria, unidade_medida, estoque_minimo, fator_multiplicador, validade_troca_dias } = req.body || {};
 
       const updates: Record<string, any> = { updated_at: new Date().toISOString() };
       if (nome !== undefined) updates.nome = nome;
       if (categoria !== undefined) updates.categoria = categoria;
       if (unidade_medida !== undefined) updates.unidade_medida = unidade_medida;
       if (estoque_minimo !== undefined) updates.estoque_minimo = estoque_minimo;
+      if (validade_troca_dias !== undefined) {
+        const troca = validadeDeTroca(validade_troca_dias);
+        if (!troca.ok) return res.status(400).json({ error: troca.erro });
+        updates.validade_troca_dias = troca.dias;
+      }
       if (fator_multiplicador !== undefined) updates.fator_multiplicador = fator_multiplicador;
 
       const { data, error } = await req.db!
@@ -1530,7 +1616,9 @@ export function createApp() {
    * saldo. A regra é a mesma da interface (needsPurchase), calculada sobre a
    * UNIDADE onde a operação aconteceu. Nunca derruba a operação.
    */
-  async function avisarMinimo(material: any, saldosNovos: SaldosPorDeposito, saldosAntes: SaldosPorDeposito, depositosDaUnidadeDela: Deposito[], resumo: string) {
+  async function avisarMinimo(plano: PlanoEfetivo, material: any, saldosNovos: SaldosPorDeposito, saldosAntes: SaldosPorDeposito, depositosDaUnidadeDela: Deposito[], resumo: string) {
+    // Na tela o alerta é de todo mundo; o e-mail é dos planos que o incluem.
+    if (!planoLibera(plano, 'alertas-por-email')) return;
     const saldos_unidade: Record<string, number> = {};
     for (const d of depositosDaUnidadeDela) saldos_unidade[d.id] = Number(saldosNovos[d.id] ?? saldosAntes[d.id] ?? 0);
     const saldo_unidade = Object.values(saldos_unidade).reduce((s, v) => s + v, 0);
@@ -1556,14 +1644,18 @@ export function createApp() {
   }
 
   /**
-   * Uma operação num estoque do modo almoxarifado. O estoque da URL é o
-   * lado da operação (origem para saída/consumo/transferência, destino para
-   * entrada/ajuste); transferência ainda pede o destino, da mesma unidade.
-   * Quem opera precisa OPERAR o estoque da URL.
+   * Uma operação num estoque do modo almoxarifado ou validade. O estoque da
+   * URL é o lado da operação (origem para saída/consumo/transferência,
+   * destino para entrada/ajuste); transferência ainda pede o destino, da
+   * mesma unidade. Quem opera precisa OPERAR o estoque da URL.
+   *
+   * No modo validade a quantidade vive em lotes: a entrada diz o lote (e a
+   * validade), a saída consome pelo FEFO ou por um lote apontado, e o ajuste
+   * acerta um lote. O saldo em stock_balances acompanha a soma dos lotes.
    */
   app.post('/api/estoques/:id/movimentacoes', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
-      const { operacao, material_id, quantidade, justificativa, destino_id } = req.body || {};
+      const { operacao, material_id, quantidade, justificativa, destino_id, lote_id } = req.body || {};
       if (!ehOperacaoGenerica(operacao)) return res.status(400).json({ error: 'Operação inválida.' });
       if (!material_id || quantidade == null || !String(justificativa ?? '').trim()) {
         return res.status(400).json({ error: 'Preencha material, quantidade e justificativa.' });
@@ -1572,16 +1664,25 @@ export function createApp() {
       const depositos = await depositosDaOrg(req.db!);
       const estoque = depositos.find((d) => d.id === req.params.id);
       if (!estoque) return res.status(404).json({ error: 'Estoque não encontrado.' });
-      if (estoque.modo !== 'almoxarifado') return res.status(409).json({ error: 'Este estoque é de empréstimo: registre retiradas e devoluções.' });
+      if (estoque.modo === 'emprestimo') return res.status(409).json({ error: 'Este estoque é de empréstimo: registre retiradas e devoluções.' });
+      if (estoque.modo === 'entrega') return res.status(409).json({ error: 'Este estoque é de entrega: registre entregas na tela dele.' });
+      if (estoque.modo === 'patrimonio') return res.status(409).json({ error: 'Este estoque é de patrimônio: cadastre, aloque e baixe itens na tela dele.' });
       if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: 'Você não tem permissão para operar este estoque.' });
+      if (!operacaoPermitida(estoque, operacao)) return res.status(409).json({ error: `A operação ${operacao} está desligada em ${estoque.nome}.` });
+      if (operacao === 'TRANSFERENCIA') {
+        const negada = negarRecurso(req.plano!, 'transferencia');
+        if (negada) return res.status(negada.status).json(negada.body);
+      }
 
       const def = OPERACOES[operacao];
       const lados: { origem_id?: string; destino_id?: string } = def.lado === 'origem' ? { origem_id: estoque.id } : { destino_id: estoque.id };
+      let destino: Deposito | undefined;
       if (def.precisaDestino) {
-        const destino = depositos.find((d) => d.id === destino_id);
+        destino = depositos.find((d) => d.id === destino_id);
         if (!destino) return res.status(400).json({ error: 'Escolha o estoque de destino.' });
         if (destino.id === estoque.id) return res.status(400).json({ error: 'Origem e destino são o mesmo estoque.' });
         if (destino.unit_id !== estoque.unit_id) return res.status(409).json({ error: 'Transferência só entre estoques da mesma unidade.' });
+        if (destino.modo === 'patrimonio') return res.status(409).json({ error: 'Não dá para transferir quantidade para um estoque de patrimônio.' });
         lados.destino_id = destino.id;
       }
 
@@ -1594,6 +1695,91 @@ export function createApp() {
       const calculo = calcularMovimento(atuais, { ...lados, quantidade: q, ajuste: def.ajuste, rotulo: def.rotulo, nomeDe: nomeDo });
       if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
 
+      // ---- Lotes (modo validade) ----
+      // Tudo decidido antes de gravar qualquer coisa: se um lote não tem saldo,
+      // nada muda. As gravações de lote vêm antes do saldo; se falharem, o
+      // saldo continua igual à soma dos lotes.
+      let detalheLotes = '';
+      const gravacoesDeLote: Array<() => Promise<void>> = [];
+      const origemValidade = estoque.modo === 'validade' && (operacao === 'SAIDA' || operacao === 'CONSUMO' || operacao === 'TRANSFERENCIA');
+
+      const lotesDoOrigem = async () => {
+        const { data, error } = await req.db!.from('lots').select('id, lote, validade, quantidade').eq('warehouse_id', estoque.id).eq('material_id', material_id);
+        if (error) throw error;
+        return (data || []) as LoteBase[];
+      };
+
+      let consumos: Consumo[] = [];
+      if (origemValidade) {
+        const lotes = await lotesDoOrigem();
+        const aloc = alocarSaida(lotes, q, lote_id ? String(lote_id) : null);
+        if (!aloc.ok) return res.status(400).json({ error: aloc.erro });
+        consumos = aloc.consumos;
+        detalheLotes = ` — lote(s) ${descreverConsumos(consumos)}`;
+        for (const c of consumos) {
+          const l = lotes.find((x) => x.id === c.id)!;
+          gravacoesDeLote.push(async () => {
+            const { error } = await req.db!.from('lots').update({ quantidade: arredondar(Number(l.quantidade) - c.quantidade), updated_at: new Date().toISOString() }).eq('id', c.id);
+            if (error) throw error;
+          });
+        }
+      }
+
+      if (estoque.modo === 'validade' && operacao === 'ENTRADA') {
+        const v = validarLote(req.body);
+        if (!v.ok) return res.status(400).json({ error: v.erro });
+        detalheLotes = ` — lote ${v.lote.lote}${v.lote.validade ? ` (val. ${v.lote.validade})` : ''}`;
+        gravacoesDeLote.push(async () => {
+          const { data: existente } = await req.db!.from('lots').select('id, quantidade, validade').eq('warehouse_id', estoque.id).eq('material_id', material_id).eq('lote', v.lote.lote).maybeSingle();
+          if (existente) {
+            const { error } = await req.db!.from('lots').update({ quantidade: arredondar(Number(existente.quantidade) + q), validade: v.lote.validade ?? existente.validade, updated_at: new Date().toISOString() }).eq('id', existente.id);
+            if (error) throw error;
+          } else {
+            const { error } = await req.db!.from('lots').insert({ warehouse_id: estoque.id, material_id, lote: v.lote.lote, validade: v.lote.validade, quantidade: q });
+            if (error) throw error;
+          }
+        });
+      }
+
+      if (estoque.modo === 'validade' && operacao === 'AJUSTE') {
+        // Ajuste acerta UM lote: positivo achou, negativo sumiu. Sem lote apontado, recusa.
+        const lotes = await lotesDoOrigem();
+        const l = lotes.find((x) => x.id === String(lote_id ?? ''));
+        if (!l) return res.status(400).json({ error: 'Aponte o lote que está sendo ajustado.' });
+        if (Number(l.quantidade) + q < 0) return res.status(400).json({ error: `O lote ${l.lote} tem ${l.quantidade}; o ajuste deixaria negativo.` });
+        detalheLotes = ` — lote ${l.lote}`;
+        gravacoesDeLote.push(async () => {
+          const { error } = await req.db!.from('lots').update({ quantidade: arredondar(Number(l.quantidade) + q), updated_at: new Date().toISOString() }).eq('id', l.id);
+          if (error) throw error;
+        });
+      }
+
+      if (operacao === 'TRANSFERENCIA' && destino?.modo === 'validade') {
+        // O destino também controla lotes: cada lote consumido na origem entra
+        // lá com o mesmo nome e validade. Origem sem lotes (almoxarifado) entra
+        // como lote "TRANSF" sem validade — a pessoa acerta depois.
+        let partes: Array<{ lote: string; validade: string | null; quantidade: number }>;
+        if (consumos.length > 0) {
+          const lotesOrigem = await lotesDoOrigem();
+          partes = consumos.map((c) => ({ lote: c.lote, validade: lotesOrigem.find((l) => l.id === c.id)?.validade ?? null, quantidade: c.quantidade }));
+        } else {
+          partes = [{ lote: 'TRANSF', validade: null, quantidade: q }];
+        }
+        for (const p of partes) {
+          gravacoesDeLote.push(async () => {
+            const { data: existente } = await req.db!.from('lots').select('id, quantidade').eq('warehouse_id', destino!.id).eq('material_id', material_id).eq('lote', p.lote).maybeSingle();
+            if (existente) {
+              const { error } = await req.db!.from('lots').update({ quantidade: arredondar(Number(existente.quantidade) + p.quantidade), updated_at: new Date().toISOString() }).eq('id', existente.id);
+              if (error) throw error;
+            } else {
+              const { error } = await req.db!.from('lots').insert({ warehouse_id: destino!.id, material_id, lote: p.lote, validade: p.validade, quantidade: p.quantidade });
+              if (error) throw error;
+            }
+          });
+        }
+      }
+
+      for (const gravar of gravacoesDeLote) await gravar();
       await gravarSaldos(req.db!, Number(material_id), calculo.novos);
       await req.db!.from('material_movements').insert({
         material_id,
@@ -1602,12 +1788,12 @@ export function createApp() {
         warehouse_origem_id: lados.origem_id ?? null,
         warehouse_destino_id: lados.destino_id ?? null,
         funcionario_matricula: req.user!.matricula,
-        justificativa: String(justificativa).trim(),
+        justificativa: `${String(justificativa).trim()}${detalheLotes}`,
       });
 
-      await avisarMinimo(material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Operação: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Responsável: ${req.user!.nome}`);
+      await avisarMinimo(req.plano!, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Operação: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Responsável: ${req.user!.nome}`);
 
-      res.json({ success: true, material_id, saldos: calculo.novos });
+      res.json({ success: true, material_id, saldos: calculo.novos, lotes: consumos });
     } catch (err: any) {
       console.error('[POST /api/estoques/:id/movimentacoes] erro:', err.message);
       res.status(500).json({ error: 'Erro ao registrar movimentação.' });
@@ -1684,7 +1870,7 @@ export function createApp() {
         justificativa: `Retirada por ${r.tomador_nome}${r.tomador_referencia ? ` (${r.tomador_referencia})` : ''} — prazo ${r.prazo_horas} h`,
       });
 
-      await avisarMinimo(material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user!.nome}`);
+      await avisarMinimo(req.plano!, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user!.nome}`);
 
       res.status(201).json({ emprestimo: { ...emprestimo, material_nome: material.nome, unidade_medida: material.unidade_medida }, saldos: calculo.novos });
     } catch (err: any) {
@@ -1738,6 +1924,289 @@ export function createApp() {
     }
   });
 
+  // --------------------------- ENTREGAS / EPI (estoque no modo entrega) ---------------------------
+  const selecionarEntrega = '*, materials(nome, unidade_medida)';
+  const comMaterial = ({ materials: mat, ...e }: any) => ({ ...e, material_nome: mat?.nome ?? 'Material removido', unidade_medida: mat?.unidade_medida ?? '' });
+
+  /** Histórico de entregas de um estoque, mais novas primeiro. As abertas já vêm no /api/data. */
+  app.get('/api/estoques/:id/entregas', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      if (!podeVer(req.acessos ?? null, req.params.id)) return res.status(403).json({ error: 'Você não tem acesso a este estoque.' });
+      const { data, error } = await req.db!.from('loans').select(selecionarEntrega).eq('warehouse_id', req.params.id).eq('tipo', 'entrega').order('retirado_em', { ascending: false }).limit(500);
+      if (error) throw error;
+      res.json({ entregas: (data || []).map(comMaterial) });
+    } catch (err: any) {
+      console.error('[GET /api/estoques/:id/entregas] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar entregas.' });
+    }
+  });
+
+  /** Registra uma entrega: sai do saldo, fica aberta com a pessoa, "válido até" vem da validade de troca do material. */
+  async function registrarEntrega(req: express.Request, estoque: Deposito, corpo: unknown) {
+    const v = validarEntrega(corpo, estoque.exige_assinatura);
+    if (!v.ok) return { status: 400, body: { error: v.erro } };
+    const e = v.entrega;
+
+    const { data: material } = await req.db!.from('materials').select('*').eq('id', e.material_id).maybeSingle();
+    if (!material) return { status: 404, body: { error: 'Material não encontrado.' } };
+
+    const atuais = await saldosDoMaterial(req.db!, e.material_id);
+    const calculo = calcularMovimento(atuais, { origem_id: estoque.id, quantidade: e.quantidade, rotulo: 'esta entrega', nomeDe: () => estoque.nome });
+    if (!calculo.ok) return { status: 400, body: { error: calculo.erro } };
+
+    const agora = new Date();
+    const ate = validoAte(material.validade_troca_dias, agora);
+    const { data: entrega, error } = await req.db!
+      .from('loans')
+      .insert({
+        tipo: 'entrega',
+        warehouse_id: estoque.id,
+        material_id: e.material_id,
+        quantidade: e.quantidade,
+        tomador_nome: e.tomador_nome,
+        tomador_referencia: e.tomador_referencia,
+        observacao: e.observacao,
+        assinatura: e.assinatura,
+        retirado_em: agora.toISOString(),
+        prazo_em: ate ? ate.toISOString() : null,
+        retirada_matricula: req.user!.matricula,
+      })
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    await gravarSaldos(req.db!, e.material_id, calculo.novos);
+    await req.db!.from('material_movements').insert({
+      material_id: e.material_id,
+      tipo_operacao: 'ENTREGA',
+      quantidade: e.quantidade,
+      warehouse_origem_id: estoque.id,
+      warehouse_destino_id: null,
+      funcionario_matricula: req.user!.matricula,
+      justificativa: `Entrega a ${e.tomador_nome}${e.tomador_referencia ? ` (${e.tomador_referencia})` : ''}${ate ? ` — trocar até ${ate.toISOString().slice(0, 10)}` : ''}`,
+    });
+    return { status: 201, body: { entrega: { ...entrega, material_nome: material.nome, unidade_medida: material.unidade_medida }, saldos: calculo.novos }, material, saldosNovos: calculo.novos, saldosAntes: atuais };
+  }
+
+  app.post('/api/estoques/:id/entregas', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const depositos = await depositosDaOrg(req.db!);
+      const estoque = depositos.find((d) => d.id === req.params.id);
+      if (!estoque) return res.status(404).json({ error: 'Estoque não encontrado.' });
+      if (estoque.modo !== 'entrega') return res.status(409).json({ error: 'Este estoque não é de entrega.' });
+      if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: 'Você não tem permissão para operar este estoque.' });
+
+      const r = await registrarEntrega(req, estoque, req.body);
+      if (r.status === 201 && r.material) {
+        await avisarMinimo(req.plano!, r.material, r.saldosNovos!, r.saldosAntes!, depositos.filter((d) => d.unit_id === estoque.unit_id), `Entrega em ${estoque.nome} | Registrou: ${req.user!.nome}`);
+      }
+      res.status(r.status).json(r.body);
+    } catch (err: any) {
+      console.error('[POST /api/estoques/:id/entregas] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao registrar entrega.' });
+    }
+  });
+
+  /**
+   * Encerra uma entrega: `devolvido` volta ao estoque (desligamento, item em
+   * bom estado); `consumido` não volta (gasto, perdido); `substituido` fecha
+   * a antiga e registra uma nova para a mesma pessoa e material (a troca).
+   */
+  app.post('/api/entregas/:id/encerrar', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: ent } = await req.db!.from('loans').select(selecionarEntrega).eq('id', req.params.id).eq('tipo', 'entrega').maybeSingle();
+      if (!ent) return res.status(404).json({ error: 'Entrega não encontrada.' });
+      if (ent.devolvido_em || ent.encerrado_em) return res.status(409).json({ error: 'Esta entrega já foi encerrada.' });
+      if (!podeOperar(req.acessos ?? null, ent.warehouse_id)) return res.status(403).json({ error: 'Você não tem permissão para operar este estoque.' });
+
+      const modo = String(req.body?.modo ?? '');
+      const agora = new Date().toISOString();
+      const falta = arredondar(Number(ent.quantidade) - Number(ent.quantidade_devolvida));
+
+      if (modo === 'devolvido') {
+        const atuais = await saldosDoMaterial(req.db!, ent.material_id);
+        const calculo = calcularMovimento(atuais, { destino_id: ent.warehouse_id, quantidade: falta, rotulo: 'esta devolução', nomeDe: (id) => id });
+        if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
+        const { data: atualizado, error } = await req.db!.from('loans').update({ quantidade_devolvida: Number(ent.quantidade), devolvido_em: agora, devolucao_matricula: req.user!.matricula }).eq('id', ent.id).select(selecionarEntrega).single();
+        if (error) throw error;
+        await gravarSaldos(req.db!, ent.material_id, calculo.novos);
+        await req.db!.from('material_movements').insert({
+          material_id: ent.material_id, tipo_operacao: 'DEVOLUCAO_ENTREGA', quantidade: falta, warehouse_origem_id: null, warehouse_destino_id: ent.warehouse_id,
+          funcionario_matricula: req.user!.matricula, justificativa: `Devolução de ${ent.tomador_nome}${req.body?.detalhe ? ` — ${String(req.body.detalhe).slice(0, 200)}` : ''}`,
+        });
+        return res.json({ entrega: comMaterial(atualizado) });
+      }
+
+      if (modo === 'consumido') {
+        const { data: atualizado, error } = await req.db!.from('loans').update({ encerrado_em: agora, encerramento: 'consumido', devolucao_matricula: req.user!.matricula }).eq('id', ent.id).select(selecionarEntrega).single();
+        if (error) throw error;
+        return res.json({ entrega: comMaterial(atualizado) });
+      }
+
+      if (modo === 'substituido') {
+        // A troca: nova entrega igual (mesma pessoa, mesmo material, mesma quantidade), assinatura nova se veio.
+        const depositos = await depositosDaOrg(req.db!);
+        const estoque = depositos.find((d) => d.id === ent.warehouse_id);
+        if (!estoque) return res.status(409).json({ error: 'O estoque desta entrega não está mais ativo.' });
+        const r = await registrarEntrega(req, estoque, {
+          material_id: ent.material_id,
+          quantidade: falta,
+          tomador_nome: ent.tomador_nome,
+          tomador_referencia: ent.tomador_referencia,
+          observacao: req.body?.detalhe ? String(req.body.detalhe) : `Troca da entrega de ${String(ent.retirado_em).slice(0, 10)}`,
+          assinatura: req.body?.assinatura ?? null,
+        });
+        if (r.status !== 201) return res.status(r.status).json(r.body);
+        const nova = (r.body as any).entrega;
+        const { data: antiga, error } = await req.db!.from('loans').update({ encerrado_em: agora, encerramento: 'substituido', substituido_por: nova.id, devolucao_matricula: req.user!.matricula }).eq('id', ent.id).select(selecionarEntrega).single();
+        if (error) throw error;
+        return res.status(201).json({ entrega: comMaterial(antiga), nova });
+      }
+
+      return res.status(400).json({ error: 'Informe como encerrar: devolvido, consumido ou substituido.' });
+    } catch (err: any) {
+      console.error('[POST /api/entregas/:id/encerrar] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao encerrar entrega.' });
+    }
+  });
+
+  // --------------------------- PATRIMÔNIO (estoque no modo patrimonio) ---------------------------
+  const selecionarItem = '*, materials(nome)';
+  const itemComMaterial = ({ materials: mat, ...i }: any) => ({ ...i, material_nome: mat?.nome ?? 'Modelo removido' });
+
+  /** Mantém o saldo do modelo no estoque igual ao número de itens não baixados. */
+  async function sincronizarSaldoDoModelo(req: express.Request, warehouseId: string, materialId: number) {
+    const { count } = await req.db!.from('assets').select('*', { count: 'exact', head: true }).eq('warehouse_id', warehouseId).eq('material_id', materialId).neq('estado', 'baixado');
+    const atuais = await saldosDoMaterial(req.db!, materialId);
+    await gravarSaldos(req.db!, materialId, { ...atuais, [warehouseId]: count ?? 0 });
+  }
+
+  app.get('/api/estoques/:id/patrimonio', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      if (!podeVer(req.acessos ?? null, req.params.id)) return res.status(403).json({ error: 'Você não tem acesso a este estoque.' });
+      const { data, error } = await req.db!.from('assets').select(selecionarItem).eq('warehouse_id', req.params.id).order('codigo', { ascending: true });
+      if (error) throw error;
+      res.json({ itens: (data || []).map(itemComMaterial) });
+    } catch (err: any) {
+      console.error('[GET /api/estoques/:id/patrimonio] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar itens.' });
+    }
+  });
+
+  app.post('/api/estoques/:id/patrimonio', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const depositos = await depositosDaOrg(req.db!);
+      const estoque = depositos.find((d) => d.id === req.params.id);
+      if (!estoque) return res.status(404).json({ error: 'Estoque não encontrado.' });
+      if (estoque.modo !== 'patrimonio') return res.status(409).json({ error: 'Este estoque não é de patrimônio.' });
+      if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: 'Você não tem permissão para operar este estoque.' });
+
+      const v = validarItem(req.body);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { data: material } = await req.db!.from('materials').select('id, nome').eq('id', v.item.material_id).maybeSingle();
+      if (!material) return res.status(404).json({ error: 'Modelo (material) não encontrado.' });
+
+      const { data: item, error } = await req.db!.from('assets').insert({ ...v.item, warehouse_id: estoque.id }).select(selecionarItem).single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: `Já existe um item com o número ${v.item.codigo}.` });
+        throw error;
+      }
+      await req.db!.from('asset_events').insert({ asset_id: item.id, tipo: 'cadastro', detalhe: v.item.local ? `Local: ${v.item.local}` : null, funcionario_matricula: req.user!.matricula });
+      await sincronizarSaldoDoModelo(req, estoque.id, v.item.material_id);
+      await req.db!.from('material_movements').insert({
+        material_id: v.item.material_id, tipo_operacao: 'ENTRADA', quantidade: 1, warehouse_origem_id: null, warehouse_destino_id: estoque.id,
+        funcionario_matricula: req.user!.matricula, justificativa: `Cadastro do item ${v.item.codigo}`,
+      });
+      res.status(201).json({ item: itemComMaterial(item) });
+    } catch (err: any) {
+      console.error('[POST /api/estoques/:id/patrimonio] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao cadastrar item.' });
+    }
+  });
+
+  /** Edita os dados de um item (não o estado — isso é evento). */
+  app.patch('/api/patrimonio/:id', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: atual } = await req.db!.from('assets').select(selecionarItem).eq('id', req.params.id).maybeSingle();
+      if (!atual) return res.status(404).json({ error: 'Item não encontrado.' });
+      if (!podeOperar(req.acessos ?? null, atual.warehouse_id)) return res.status(403).json({ error: 'Você não tem permissão para operar este estoque.' });
+      const v = validarItem({ ...atual, ...req.body, material_id: atual.material_id });
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      // O modelo não muda pela edição: trocar de modelo é baixar e cadastrar de novo.
+      const { codigo, serie, local, observacao, adquirido_em, valor } = v.item;
+      const { data: item, error } = await req.db!.from('assets').update({ codigo, serie, local, observacao, adquirido_em, valor, updated_at: new Date().toISOString() }).eq('id', atual.id).select(selecionarItem).single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: `Já existe um item com o número ${v.item.codigo}.` });
+        throw error;
+      }
+      await req.db!.from('asset_events').insert({ asset_id: atual.id, tipo: 'edicao', detalhe: 'Dados do item alterados', funcionario_matricula: req.user!.matricula });
+      res.json({ item: itemComMaterial(item) });
+    } catch (err: any) {
+      console.error('[PATCH /api/patrimonio/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao editar item.' });
+    }
+  });
+
+  /** Alocar, devolver, mandar para manutenção, retornar, baixar. O estado muda pela transição permitida. */
+  app.post('/api/patrimonio/:id/eventos', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: atual } = await req.db!.from('assets').select(selecionarItem).eq('id', req.params.id).maybeSingle();
+      if (!atual) return res.status(404).json({ error: 'Item não encontrado.' });
+      if (!podeOperar(req.acessos ?? null, atual.warehouse_id)) return res.status(403).json({ error: 'Você não tem permissão para operar este estoque.' });
+
+      const v = validarEvento(req.body);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const t = transicionar(atual.estado, v.evento.tipo);
+      if (!t.ok) return res.status(409).json({ error: t.erro });
+
+      const patch: Record<string, any> = { estado: t.para, updated_at: new Date().toISOString() };
+      if (v.evento.tipo === 'alocacao') {
+        patch.responsavel_nome = v.evento.para_nome;
+        patch.responsavel_referencia = v.evento.para_referencia;
+      }
+      // Devolvido, na manutenção ou baixado, o item não está mais com ninguém.
+      if (v.evento.tipo === 'devolucao' || v.evento.tipo === 'manutencao' || v.evento.tipo === 'baixa') {
+        patch.responsavel_nome = null;
+        patch.responsavel_referencia = null;
+      }
+      const { data: item, error } = await req.db!.from('assets').update(patch).eq('id', atual.id).select(selecionarItem).single();
+      if (error) throw error;
+
+      const { data: evento, error: erroEv } = await req.db!
+        .from('asset_events')
+        .insert({ asset_id: atual.id, tipo: v.evento.tipo, detalhe: v.evento.detalhe, para_nome: v.evento.para_nome, para_referencia: v.evento.para_referencia, funcionario_matricula: req.user!.matricula })
+        .select('*')
+        .single();
+      if (erroEv) throw erroEv;
+
+      if (v.evento.tipo === 'baixa') {
+        await sincronizarSaldoDoModelo(req, atual.warehouse_id, atual.material_id);
+        await req.db!.from('material_movements').insert({
+          material_id: atual.material_id, tipo_operacao: 'BAIXA', quantidade: 1, warehouse_origem_id: atual.warehouse_id, warehouse_destino_id: null,
+          funcionario_matricula: req.user!.matricula, justificativa: `Baixa do item ${atual.codigo}${v.evento.detalhe ? ` — ${v.evento.detalhe}` : ''}`,
+        });
+      }
+      res.json({ item: itemComMaterial(item), evento });
+    } catch (err: any) {
+      console.error('[POST /api/patrimonio/:id/eventos] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao registrar evento.' });
+    }
+  });
+
+  app.get('/api/patrimonio/:id/eventos', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: item } = await req.db!.from('assets').select('id, warehouse_id').eq('id', req.params.id).maybeSingle();
+      if (!item) return res.status(404).json({ error: 'Item não encontrado.' });
+      if (!podeVer(req.acessos ?? null, item.warehouse_id)) return res.status(403).json({ error: 'Você não tem acesso a este estoque.' });
+      const { data, error } = await req.db!.from('asset_events').select('*').eq('asset_id', item.id).order('created_at', { ascending: false }).limit(200);
+      if (error) throw error;
+      res.json({ eventos: data || [] });
+    } catch (err: any) {
+      console.error('[GET /api/patrimonio/:id/eventos] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar histórico do item.' });
+    }
+  });
+
   // --------------------------- RECONTAGEM (ajuste em lote) ---------------------------
   app.post('/api/materials/bulk-recount', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
@@ -1767,6 +2236,11 @@ export function createApp() {
       if (!podeOperar(req.acessos ?? null, deposito.id)) {
         return res.status(403).json({ error: 'Você não tem permissão para ajustar este depósito.' });
       }
+      // Onde o saldo é a soma de lotes ou de itens, a recontagem mexeria só
+      // no total e deixaria o detalhe mentindo. Cada modo acerta na tela dele.
+      if (deposito.modo === 'validade') return res.status(409).json({ error: 'Este estoque controla lotes: ajuste lote a lote na tela dele.' });
+      if (deposito.modo === 'patrimonio') return res.status(409).json({ error: 'Este estoque é de patrimônio: cadastre ou baixe itens na tela dele.' });
+      if (!operacaoPermitida(deposito, 'AJUSTE')) return res.status(409).json({ error: `Ajuste está desligado em ${deposito.nome}.` });
       if (!Array.isArray(counts) || counts.length === 0) {
         return res.status(400).json({ error: 'Nenhuma contagem enviada.' });
       }
@@ -2080,6 +2554,11 @@ export function createApp() {
 
       const { data: existing } = await req.db!.from(ESTOQUE_USERS).select('id').eq('matricula', matricula).maybeSingle();
       if (existing) return res.status(409).json({ error: 'Já existe um usuário com esta matrícula.' });
+
+      // O plano diz quantas pessoas cabem.
+      const { count: pessoas } = await req.db!.from(ESTOQUE_USERS).select('*', { count: 'exact', head: true });
+      const negada = negarLimite(req.plano!, 'usuarios', pessoas ?? 0);
+      if (negada) return res.status(negada.status).json(negada.body);
 
       const { data, error } = await req.db!
         .from(ESTOQUE_USERS)

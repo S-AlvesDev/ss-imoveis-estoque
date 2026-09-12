@@ -11,6 +11,8 @@ import type { ManagedUser } from '@/shared/types';
 import { formatDateTime } from '@/features/estoque/utils';
 import { ROLE_LABELS } from '@/features/usuarios/constants';
 import { UserModal } from './UserModal';
+import { usePlano } from '@/features/planos/usePlano';
+import { Cadeado } from '@/features/planos/Cadeado';
 
 export function Usuarios() {
   const currentUser = useAuth((s) => s.user);
@@ -18,6 +20,8 @@ export function Usuarios() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<ManagedUser | null>(null);
   const [creating, setCreating] = useState(false);
+  const planoAtual = usePlano();
+  const cabeUsuario = planoAtual.cabeMaisUm('usuarios', users.length);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -57,9 +61,12 @@ export function Usuarios() {
             {users.length} usuário(s) com acesso ao sistema de estoque.
           </p>
         </div>
-        <Button icon={<Plus size={15} />} onClick={() => setCreating(true)}>
-          Novo usuário
-        </Button>
+        <div className="flex flex-col items-end gap-1">
+          <Button icon={<Plus size={15} />} onClick={() => setCreating(true)} disabled={!cabeUsuario}>
+            Novo usuário
+          </Button>
+          {!cabeUsuario && <Cadeado texto={planoAtual.porQueNaoMais('usuarios')} />}
+        </div>
       </div>
 
       {inseguros > 0 && (

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { track } from '@/lib/analytics';
 import { Header } from './Header';
 import { Hero } from './Hero';
-import { Prova, Dor, Recursos, ComoFunciona, AntesDepois, Multiunidade, Evolucao, CtaFinal } from './secoes';
+import { Prova, Dor, Recursos, ComoFunciona, AntesDepois, Multiunidade, Planos, Evolucao, CtaFinal } from './secoes';
 import { Footer } from './Footer';
 import { DemoModal } from './DemoModal';
 
@@ -59,6 +59,7 @@ export function Home() {
         <ComoFunciona />
         <AntesDepois />
         <Multiunidade onDemo={() => abrirDemo('empresas')} />
+        <Planos onDemo={abrirDemo} />
         <Evolucao />
         <CtaFinal onDemo={() => abrirDemo('cta-final')} />
       </main>

@@ -7,6 +7,7 @@ import { MovementsTable } from './MovementsTable';
 import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
 import { PERIODS, type Period, formatDateTime, formatNumber, movementMaterialName, staffName, withinPeriod } from './utils';
 import { OPERATION_LABELS } from '@/shared/constants';
+import { usePlano } from '@/features/planos/usePlano';
 
 interface AuditModalProps {
   open: boolean;
@@ -20,6 +21,7 @@ interface AuditModalProps {
 }
 
 export function AuditModal({ open, onClose, movements, materials, staff, typeOptions, exportFilename, title = 'Auditoria de Movimentações' }: AuditModalProps) {
+  const planoAtual = usePlano();
   const [search, setSearch] = useState('');
   const [period, setPeriod] = useState<Period>('TODOS');
   const [type, setType] = useState('TODOS');
@@ -101,7 +103,7 @@ export function AuditModal({ open, onClose, movements, materials, staff, typeOpt
             </option>
           ))}
         </select>
-        <Button variant="outline" size="md" icon={<Download size={15} />} onClick={exportPdf}>
+        <Button variant="outline" size="md" icon={<Download size={15} />} onClick={exportPdf} disabled={!planoAtual.libera('exportacoes')} title={planoAtual.libera('exportacoes') ? undefined : planoAtual.porQueNao('exportacoes')}>
           PDF
         </Button>
       </div>

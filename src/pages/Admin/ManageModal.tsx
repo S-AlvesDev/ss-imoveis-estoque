@@ -30,14 +30,16 @@ export function ManageModal({ material, categorias, depositos, onClose, onUpdate
     unidade_medida: material?.unidade_medida || '',
     fator_multiplicador: material?.fator_multiplicador ?? 1,
     estoque_minimo: material?.estoque_minimo ?? 0,
+    validade_troca_dias: material?.validade_troca_dias == null ? '' : String(material.validade_troca_dias),
   }));
+  const temEntrega = depositos.some((d) => d.ativo && d.modo === 'entrega');
 
   async function handleSaveEdit(e: React.FormEvent) {
     e.preventDefault();
     if (!material) return;
     setSaving(true);
     try {
-      await api.put(`/api/materials/${material.id}`, form);
+      await api.put(`/api/materials/${material.id}`, { ...form, validade_troca_dias: form.validade_troca_dias === '' ? null : Number(form.validade_troca_dias) });
       toast.success('Material atualizado.');
       await onUpdated();
       onClose();
@@ -107,6 +109,18 @@ export function ManageModal({ material, categorias, depositos, onClose, onUpdate
               onChange={(e) => setForm({ ...form, estoque_minimo: Number(e.target.value) })}
             />
           </div>
+          {temEntrega && (
+            <Input
+              label="Validade de troca (dias)"
+              type="number"
+              min="1"
+              max="3650"
+              step="1"
+              placeholder="Só para EPI: ex.: 180"
+              value={form.validade_troca_dias}
+              onChange={(e) => setForm({ ...form, validade_troca_dias: e.target.value })}
+            />
+          )}
           {material && (
             <p className="text-xs text-[var(--text-muted)]">
               {depositos.filter((d) => d.ativo).map((d) => (

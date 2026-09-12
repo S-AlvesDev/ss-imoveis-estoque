@@ -18,6 +18,7 @@ import {
   Users,
   Warehouse,
   Bot,
+  Check,
   ShoppingCart,
   Truck,
   Workflow,
@@ -25,6 +26,7 @@ import {
 import { ROTAS } from '@/app/router';
 import { track } from '@/lib/analytics';
 import { Botao, BotaoLink, Cartao, Container, Eyebrow, Revelar, Secao } from './ui';
+import { DEFINICOES, ENTERPRISE, PLANOS, USO_JUSTO, formatarPreco } from '@/shared/planos';
 
 /* ------------------------------------------------------------------------- */
 /*  Prova rápida — quatro valores antes de qualquer lista de funcionalidades  */
@@ -102,8 +104,8 @@ export function Dor() {
 const RECURSOS = [
   { icone: <Boxes size={20} />, titulo: 'Estoque', texto: 'Catálogo único da empresa, com unidade de medida e mínimo por material.', micro: 'Veja o que você tem' },
   { icone: <Building2 size={20} />, titulo: 'Unidades', texto: 'Cada filial com o próprio estoque e os próprios materiais. Trocar de unidade é um clique.', micro: 'Escolha a unidade' },
-  { icone: <Warehouse size={20} />, titulo: 'Depósitos', texto: 'Central e Obra em cada unidade, com saldo separado e remessa entre eles.', micro: 'Veja onde está' },
-  { icone: <ArrowLeftRight size={20} />, titulo: 'Movimentações', texto: 'Entrada, saída, remessa, consumo e devolução — sempre com origem, destino e responsável.', micro: 'Registre a saída' },
+  { icone: <Warehouse size={20} />, titulo: 'Depósitos', texto: 'Almoxarifado, armário de EPI, farmácia, patrimônio: cada unidade com os depósitos que a operação pede, cada um no seu modo.', micro: 'Veja onde está' },
+  { icone: <ArrowLeftRight size={20} />, titulo: 'Movimentações', texto: 'Entrada, saída, transferência, consumo, empréstimo com prazo, entrega com assinatura — sempre com origem, destino e responsável.', micro: 'Registre a saída' },
   { icone: <Users size={20} />, titulo: 'Usuários', texto: 'Cada pessoa vê e opera só o depósito que é dela. O administrador decide quem faz o quê.', micro: 'Saiba quem movimentou' },
   { icone: <FileText size={20} />, titulo: 'Relatórios', texto: 'Auditoria por período e lista de reposição, prontas para PDF.', micro: 'Leve para a reunião' },
 ];
@@ -135,13 +137,69 @@ export function Recursos() {
   );
 }
 
+
+/* ------------------------------------------------------------------------- */
+/*  Planos — o catálogo de src/shared/planos.ts, vendido                      */
+/* ------------------------------------------------------------------------- */
+export function Planos({ onDemo }: { onDemo: (origem: string) => void }) {
+  return (
+    <Secao id="planos" eyebrow="Planos" titulo="Do tamanho da sua operação." descricao="Comece pequeno e cresça sem trocar de sistema. Todo plano tem materiais, categorias, estoque mínimo, histórico e chamados; a diferença é quanto e o quê a mais.">
+      <ul className="mt-12 grid gap-4 lg:grid-cols-3">
+        {PLANOS.map((id, i) => {
+          const p = DEFINICOES[id];
+          const destaque = id === 'profissional';
+          return (
+            <Revelar as="li" key={id} delay={i * 0.08} className="h-full">
+              <div className={`relative flex h-full flex-col rounded-2xl border p-6 ${destaque ? 'border-[var(--laranja)]/60 bg-[var(--navy-2)] shadow-[0_30px_60px_-30px_rgba(255,138,36,0.45)]' : 'border-[var(--linha)] bg-[var(--navy-2)]/60'}`}>
+                {destaque && (
+                  <span className="absolute -top-3 left-6 rounded-full bg-[var(--laranja)] px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-[#1a0c00]">Mais escolhido</span>
+                )}
+                <p className="text-lg font-bold text-white">{p.nome}</p>
+                <p className="text-sm text-slate-400">{p.publico}</p>
+                <p className="mt-5 flex items-baseline gap-1 text-white">
+                  <span className="text-4xl font-extrabold tracking-tight">{formatarPreco(p.preco)}</span>
+                  <span className="text-sm text-slate-400">/mês</span>
+                </p>
+                <ul className="mt-6 space-y-2.5 text-sm text-slate-300">
+                  {p.destaques.map((d) => (
+                    <li key={d} className="flex items-start gap-2.5">
+                      <Check size={16} className="mt-0.5 shrink-0 text-[var(--laranja)]" aria-hidden />
+                      <span>{d}</span>
+                    </li>
+                  ))}
+                </ul>
+                {p.servicos.length > 0 && (
+                  <p className="mt-5 border-t border-[var(--linha)] pt-4 text-xs leading-relaxed text-slate-400">
+                    <span className="font-semibold text-slate-300">Inclui:</span> {p.servicos.join(' · ')}
+                  </p>
+                )}
+                <div className="mt-auto pt-6">
+                  <Botao variante={destaque ? 'primario' : 'secundario'} className="w-full" onClick={() => onDemo(`planos-${id}`)}>
+                    Falar com a gente <ArrowRight size={16} />
+                  </Botao>
+                </div>
+              </div>
+            </Revelar>
+          );
+        })}
+      </ul>
+      <Revelar className="mt-6 flex flex-col gap-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+        <p>{USO_JUSTO}</p>
+        <p>
+          <span className="font-semibold text-slate-300">{ENTERPRISE.nome}:</span> {ENTERPRISE.descricao}
+        </p>
+      </Revelar>
+    </Secao>
+  );
+}
+
 /* ------------------------------------------------------------------------- */
 /*  Como funciona — três passos                                               */
 /* ------------------------------------------------------------------------- */
 
 const PASSOS = [
-  { icone: <ClipboardList size={22} />, titulo: 'Cadastre a operação', texto: 'Empresa, unidades, depósitos e materiais. A primeira unidade já vem com Central e Obra prontos.' },
-  { icone: <ArrowLeftRight size={22} />, titulo: 'Registre as movimentações', texto: 'Entrada do fornecedor, remessa para a obra, consumo, devolução. Cada uma leva segundos.' },
+  { icone: <ClipboardList size={22} />, titulo: 'Cadastre a operação', texto: 'Empresa, unidades, depósitos e materiais. O primeiro acesso pergunta qual é o primeiro estoque e como ele funciona.' },
+  { icone: <ArrowLeftRight size={22} />, titulo: 'Registre as movimentações', texto: 'Entrada do fornecedor, transferência, consumo, empréstimo, entrega de EPI. Cada uma leva segundos.' },
   { icone: <Table2 size={22} />, titulo: 'Acompanhe e decida', texto: 'Painel com saldo, alertas de mínimo e histórico. Compre o que falta, não o que parece faltar.' },
 ];
 
@@ -326,7 +384,7 @@ export function Multiunidade({ onDemo }: { onDemo: () => void }) {
         <Revelar className="min-w-0">
           <div className="overflow-x-auto rounded-2xl border border-[var(--linha)] bg-[var(--navy)] p-4">
             <svg viewBox="0 0 630 300" className="h-auto w-full min-w-[520px]" role="img" aria-labelledby="diagrama-titulo">
-              <title id="diagrama-titulo">Empresa com três unidades, cada uma com um depósito Central e um de Obra, todos alimentando um estoque só.</title>
+              <title id="diagrama-titulo">Empresa com três unidades, cada uma com um almoxarifado e um armário de EPI, todos alimentando um estoque só.</title>
               <Caixa x={215} y={12} w={200} h={46} titulo="Construtora Horizonte" sub="EMPRESA" destaque />
               {unidades.map((u, i) => (
                 <g key={u}>
@@ -334,8 +392,8 @@ export function Multiunidade({ onDemo }: { onDemo: () => void }) {
                   <Caixa x={xU(i)} y={108} w={larguraU} h={46} titulo={u} sub="UNIDADE" />
                   <Linha de={[xU(i) + larguraU / 2, 154]} para={[xU(i) + 36, 204]} />
                   <Linha de={[xU(i) + larguraU / 2, 154]} para={[xU(i) + larguraU - 36, 204]} />
-                  <Caixa x={xU(i)} y={204} w={70} h={40} titulo="Central" />
-                  <Caixa x={xU(i) + larguraU - 70} y={204} w={70} h={40} titulo="Obra" />
+                  <Caixa x={xU(i)} y={204} w={70} h={40} titulo="Almox." />
+                  <Caixa x={xU(i) + larguraU - 70} y={204} w={70} h={40} titulo="EPI" />
                   <Linha de={[xU(i) + 36, 244]} para={[xU(i) + larguraU / 2, 276]} />
                   <Linha de={[xU(i) + larguraU - 36, 244]} para={[xU(i) + larguraU / 2, 276]} />
                   <text x={xU(i) + larguraU / 2} y={292} textAnchor="middle" fill="#ff8a24" fontSize={10} fontFamily="JetBrains Mono, monospace" fontWeight={600}>

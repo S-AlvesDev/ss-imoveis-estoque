@@ -164,6 +164,7 @@ export const GUIA: Section[] = [
           'Clique em Registrar Movimentação.',
         ],
         dicas: [
+          { tipo: 'dica', texto: 'O administrador pode desligar operações num estoque (ex.: uma cozinha só com Entrada e Consumo). As desligadas não aparecem no formulário.' },
           {
             tipo: 'dica',
             texto:
@@ -274,6 +275,113 @@ export const GUIA: Section[] = [
             texto: 'O número no botão é a quantidade de materiais nessa situação. Clique de novo para tirar o filtro.',
           },
         ],
+      },
+    ],
+  },
+
+  {
+    id: 'entrega',
+    titulo: 'Estoque no modo entrega (EPI)',
+    descricao: 'O que sai não volta: capacete, luva, uniforme, crachá. O que se cobra é a troca quando vence — com ficha por pessoa e assinatura.',
+    topicos: [
+      {
+        id: 'registrar-entrega',
+        titulo: 'Entregar um item a alguém',
+        audiencia: ['obra'],
+        resumo: 'Você anota quem recebeu, o quê e quanto; a pessoa assina na tela (se o estoque exigir). O saldo sai e o item fica na ficha dela.',
+        passos: [
+          'No menu Estoque, abra o estoque de entrega (ex.: EPI).',
+          'Em Nova entrega, digite quem recebe e, se quiser, a referência (matrícula, setor, função).',
+          'Escolha o material e a quantidade. Se o material tem validade de troca, a tela mostra “troca a cada N dias”.',
+          'Peça para a pessoa assinar no quadro (dedo, caneta ou mouse) e clique em Registrar entrega.',
+        ],
+        dicas: [
+          { tipo: 'dica', texto: 'A validade de troca é do material: em Materiais, o campo “Validade de troca (dias)” aparece quando a empresa tem um estoque de entrega. Ex.: capacete 180 dias, luva 30.' },
+          { tipo: 'dica', texto: 'O administrador liga “Exige assinatura” no cartão do estoque, em Configurações. Sem isso, a assinatura é opcional.' },
+        ],
+      },
+      {
+        id: 'ficha-troca',
+        titulo: 'Ficha por pessoa, troca e termo em PDF',
+        audiencia: ['obra'],
+        resumo: 'Cada pessoa tem uma ficha com o que recebeu. Vencida a validade, o item fica vermelho; Trocar fecha a entrega antiga e registra a nova.',
+        passos: [
+          'Em Fichas por pessoa, clique no nome para abrir a ficha. Os filtros Vencidas e Vencendo mostram só quem precisa de troca.',
+          'Trocar: registra uma entrega igual (mesma pessoa, mesmo material) com validade nova; a antiga fica no histórico como trocada.',
+          'Encerrar: escolha Devolveu ao estoque (volta ao saldo), Consumido / perdido (só sai da ficha) ou Trocar por um novo.',
+          'Termo: gera um PDF com tudo que a pessoa tem em mãos, com as assinaturas registradas — o termo de responsabilidade.',
+        ],
+        dicas: [{ tipo: 'atencao', texto: 'Trocas vencidas aparecem também na tela de Alertas. Registrar a troca no sistema é o que encerra o aviso.' }],
+      },
+    ],
+  },
+
+  {
+    id: 'validade',
+    titulo: 'Estoque no modo validade e lotes',
+    descricao: 'Remédio, alimento, reagente, cola: cada entrada é um lote com data. A saída tira do que vence primeiro.',
+    topicos: [
+      {
+        id: 'entrada-lote',
+        titulo: 'Dar entrada com lote e validade',
+        audiencia: ['central'],
+        resumo: 'Toda entrada num estoque de validade diz o lote (o número da embalagem ou da nota) e a data de validade. O saldo do material é a soma dos lotes.',
+        passos: [
+          'No menu Estoque, abra o estoque de validade (ex.: Farmácia, Cozinha).',
+          'Em Movimentar, escolha Entrada, o material e a quantidade.',
+          'Preencha o Lote (lotes já existentes aparecem como sugestão) e a Validade. Sem validade, o lote fica “sem validade” e sai por último.',
+          'Justifique (nota fiscal, guia) e registre.',
+        ],
+        dicas: [{ tipo: 'dica', texto: 'Material novo nesse estoque nasce com saldo zero: o cadastro em Materiais não cria lote. A primeira Entrada aqui é que cria.' }],
+      },
+      {
+        id: 'saida-fefo',
+        titulo: 'Saída pelo que vence primeiro (FEFO)',
+        audiencia: ['central'],
+        resumo: 'Saída, consumo e transferência tiram do lote que vence primeiro, automaticamente. Se precisar tirar de um lote específico, aponte-o.',
+        passos: [
+          'Escolha Saída, Consumo ou Transferir, o material e a quantidade.',
+          'Em “De qual lote”, deixe Automático — o que vence primeiro — ou escolha um lote da lista.',
+          'Se a quantidade atravessa mais de um lote, o histórico registra cada um: “lote(s) A (4), B (2)”.',
+          'Ajuste acerta um lote só: escolha o lote e informe a diferença com sinal (ex.: -5 para descarte de vencido).',
+        ],
+        dicas: [
+          { tipo: 'atencao', texto: 'Lote vencido não some sozinho da lista: dê baixa com um Ajuste negativo apontando o lote, ou registre o descarte como Consumo.' },
+          { tipo: 'dica', texto: 'O aviso “Vencendo” usa os dias definidos no cartão do estoque (padrão 30). Vencidos e vencendo aparecem também em Alertas.' },
+        ],
+      },
+    ],
+  },
+
+  {
+    id: 'patrimonio',
+    titulo: 'Estoque no modo patrimônio',
+    descricao: 'Notebook, projetor, cadeira, furadeira: cada item tem número próprio e uma vida — disponível, em uso, na manutenção, baixado.',
+    topicos: [
+      {
+        id: 'cadastrar-item',
+        titulo: 'Cadastrar um item',
+        audiencia: ['central'],
+        resumo: 'O material é o modelo (“Notebook Dell Latitude 5420”); o item é a unidade física, com número de patrimônio, série, local e valor.',
+        passos: [
+          'Em Materiais, cadastre o modelo escolhendo o estoque de patrimônio em “Saldo inicial entra em”. O saldo nasce zero.',
+          'No menu Estoque, abra o estoque de patrimônio e clique em Cadastrar item.',
+          'Informe o número de patrimônio (único na empresa), o modelo e, se quiser, série, local, data de aquisição e valor.',
+          'O saldo do modelo acompanha sozinho: é o número de itens não baixados.',
+        ],
+      },
+      {
+        id: 'vida-do-item',
+        titulo: 'Entregar, receber, manutenção e baixa',
+        audiencia: ['central'],
+        resumo: 'O menu de ações de cada item (⋯) só oferece o que cabe no estado dele. Cada ação fica no histórico do item, com quem fez e quando.',
+        passos: [
+          'Entregar a alguém: o item fica “em uso” com o nome e a referência de quem recebeu.',
+          'Receber de volta: fica disponível de novo.',
+          'Mandar para manutenção / Voltou da manutenção: sai e volta de circulação.',
+          'Dar baixa: fim da vida (quebrou, doado, vendido, extraviado). O item sai do saldo do modelo e não muda mais de estado; o histórico fica.',
+        ],
+        dicas: [{ tipo: 'dica', texto: 'Os cartões do topo (Disponíveis, Em uso, Manutenção, Baixados) filtram a lista ao clicar. Baixados ficam escondidos no filtro Ativos.' }],
       },
     ],
   },
@@ -449,6 +557,18 @@ export const GUIA: Section[] = [
     titulo: 'Configurações',
     descricao: 'Estoques, categorias e acessos — a empresa do jeito dela.',
     topicos: [
+      {
+        id: 'plano',
+        titulo: 'O plano da sua conta',
+        audiencia: ['admin'],
+        resumo: 'Cada conta tem um plano — Essencial, Profissional ou Empresarial — que define quantas unidades, depósitos por unidade e usuários cabem, e quais recursos existem. Sem assinatura, a conta está em avaliação, com tudo liberado.',
+        passos: [
+          'Em Configurações, o cartão Plano mostra o seu plano, o uso contra o limite e a lista do que está liberado.',
+          'Onde o plano não cobre, o botão aparece travado com um cadeado e a frase "disponível a partir do plano X".',
+          'Para mudar de plano, clique em Falar sobre planos — abre uma conversa no WhatsApp com a nossa equipe.',
+        ],
+        dicas: [{ tipo: 'dica', texto: 'Transferência entre depósitos, logo e cor da empresa, exportações em PDF/Word e alertas por e-mail começam no Profissional. A lista de compras e os alertas na tela são de todos os planos.' }],
+      },
       {
         id: 'estoques',
         titulo: 'Criar e configurar estoques',

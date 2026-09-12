@@ -16,12 +16,17 @@ import type { ScopedDb } from './tenant';
 export type TipoDeposito = 'CENTRAL' | 'OBRA' | 'OUTRO';
 
 /**
- * Como se opera um estoque (migração 018).
+ * Como se opera um estoque (migrações 018 e 019).
  *   almoxarifado  entrada, saída, consumo, ajuste, transferência na unidade.
  *   emprestimo    retirada por tempo limitado, com devolução.
+ *   entrega       entrega definitiva a uma pessoa (EPI, uniforme), com validade de troca.
+ *   validade      saldo por lote com data de validade; saída consome o que vence primeiro.
+ *   patrimonio    cada unidade é um item com número próprio, estado e responsável.
  */
-export type ModoEstoque = 'almoxarifado' | 'emprestimo';
-export const MODOS: readonly ModoEstoque[] = ['almoxarifado', 'emprestimo'];
+export type ModoEstoque = 'almoxarifado' | 'emprestimo' | 'entrega' | 'validade' | 'patrimonio';
+export const MODOS: readonly ModoEstoque[] = ['almoxarifado', 'emprestimo', 'entrega', 'validade', 'patrimonio'];
+
+export const TODAS_AS_OPERACOES = ['ENTRADA', 'SAIDA', 'CONSUMO', 'TRANSFERENCIA', 'AJUSTE'] as const;
 
 export interface Deposito {
   id: string;
@@ -33,6 +38,12 @@ export interface Deposito {
   modo: ModoEstoque;
   /** Só no modo empréstimo: quantas horas uma retirada tem, por padrão. */
   prazo_padrao_horas: number | null;
+  /** Almoxarifado: operações que a tela oferece. Nulo = todas. */
+  operacoes_permitidas: OperacaoGenerica[] | null;
+  /** Entrega: a pessoa assina na tela ao receber. */
+  exige_assinatura: boolean;
+  /** Validade: com quantos dias de antecedência avisar que um lote vence. */
+  dias_aviso_validade: number;
 }
 
 /**
@@ -67,18 +78,51 @@ export function ehOperacaoGenerica(s: unknown): s is OperacaoGenerica {
  * Nome e modo de um estoque novo ou editado. Devolve o erro para a pessoa,
  * ou os campos limpos. Prazo só existe (e é obrigatório) no modo empréstimo.
  */
-export function validarEstoque(body: unknown): { ok: true; nome: string; modo: ModoEstoque; prazo_padrao_horas: number | null } | { ok: false; erro: string } {
+export interface EstoqueValidado {
+  nome: string;
+  modo: ModoEstoque;
+  prazo_padrao_horas: number | null;
+  operacoes_permitidas: OperacaoGenerica[] | null;
+  exige_assinatura: boolean;
+  dias_aviso_validade: number;
+}
+
+export function validarEstoque(body: unknown): ({ ok: true } & EstoqueValidado) | { ok: false; erro: string } {
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   const nome = typeof b.nome === 'string' ? b.nome.trim() : '';
   if (nome.length < 2 || nome.length > 60) return { ok: false, erro: 'Informe o nome do estoque (2 a 60 caracteres).' };
   const modo = (typeof b.modo === 'string' ? b.modo : 'almoxarifado') as ModoEstoque;
   if (!MODOS.includes(modo)) return { ok: false, erro: 'Modo de estoque inválido.' };
+
   let prazo: number | null = null;
   if (modo === 'emprestimo') {
     prazo = Number(b.prazo_padrao_horas ?? 2);
     if (!Number.isInteger(prazo) || prazo < 1 || prazo > 8760) return { ok: false, erro: 'O prazo padrão deve ser de 1 a 8760 horas.' };
   }
-  return { ok: true, nome, modo, prazo_padrao_horas: prazo };
+
+  // Almoxarifado: um subconjunto das operações, ou tudo (nulo). Lista vazia não vale.
+  let operacoes: OperacaoGenerica[] | null = null;
+  if (modo === 'almoxarifado' && Array.isArray(b.operacoes_permitidas)) {
+    const lista = [...new Set(b.operacoes_permitidas.map((x) => String(x)))];
+    if (lista.length === 0) return { ok: false, erro: 'Deixe pelo menos uma operação ligada.' };
+    if (!lista.every(ehOperacaoGenerica)) return { ok: false, erro: 'Operação desconhecida na lista de permitidas.' };
+    operacoes = lista.length === TODAS_AS_OPERACOES.length ? null : (lista as OperacaoGenerica[]);
+  }
+
+  const exige_assinatura = modo === 'entrega' ? Boolean(b.exige_assinatura) : false;
+
+  let dias_aviso_validade = 30;
+  if (modo === 'validade') {
+    dias_aviso_validade = Number(b.dias_aviso_validade ?? 30);
+    if (!Number.isInteger(dias_aviso_validade) || dias_aviso_validade < 1 || dias_aviso_validade > 365) return { ok: false, erro: 'O aviso de validade deve ser de 1 a 365 dias.' };
+  }
+
+  return { ok: true, nome, modo, prazo_padrao_horas: prazo, operacoes_permitidas: operacoes, exige_assinatura, dias_aviso_validade };
+}
+
+/** A operação está ligada neste estoque? Sem lista, todas estão. */
+export function operacaoPermitida(deposito: Pick<Deposito, 'operacoes_permitidas'>, op: OperacaoGenerica): boolean {
+  return !deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes(op);
 }
 
 /** Quanto existe de um material, por depósito. */
@@ -258,7 +302,7 @@ export async function depositosDaOrg(
 ): Promise<Deposito[]> {
   let q = db
     .from('warehouses')
-    .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, units!inner(ativo)')
+    .select('id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade, units!inner(ativo)')
     .eq('ativo', true);
   if (!opcoes.incluirUnidadesInativas) q = q.eq('units.ativo', true);
   const { data, error } = await q.order('nome', { ascending: true });

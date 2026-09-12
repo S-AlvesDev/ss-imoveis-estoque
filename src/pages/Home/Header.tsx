@@ -8,6 +8,7 @@ const NAV = [
   { href: '#recursos', rotulo: 'Recursos' },
   { href: '#como-funciona', rotulo: 'Como funciona' },
   { href: '#empresas', rotulo: 'Para empresas' },
+  { href: '#planos', rotulo: 'Planos' },
 ];
 
 /**

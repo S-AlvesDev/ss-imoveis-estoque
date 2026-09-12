@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, BookOpen, Building2, Check, ChevronRight, ChevronsUpDown, LayoutDashboard, LifeBuoy, LogOut, Package, PackageOpen, Plus, Settings, Users, Warehouse,
+  AlertTriangle, BookOpen, Building2, CalendarClock, Check, ChevronRight, ChevronsUpDown, Laptop, LayoutDashboard, LifeBuoy, LogOut, Package, PackageOpen, Plus, Settings, ShieldCheck, Users, Warehouse,
 } from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { useMarca } from '@/store/marca';
@@ -44,6 +44,9 @@ interface NavGroup {
 const ICONE_DO_MODO: Record<ModoEstoque, React.ReactNode> = {
   almoxarifado: <Warehouse size={18} />,
   emprestimo: <PackageOpen size={18} />,
+  entrega: <ShieldCheck size={18} />,
+  validade: <CalendarClock size={18} />,
+  patrimonio: <Laptop size={18} />,
 };
 
 /** Um estoque que a pessoa enxerga, com o nível dela nele. */

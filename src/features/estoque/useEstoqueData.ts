@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
 import { useUnidade } from '@/store/unidade';
 import { useMarca } from '@/store/marca';
-import type { Acesso, Categoria, Deposito, Emprestimo, Material, MaterialMovement, NivelAcesso, Organizacao, StaffUser, Unidade } from '@/shared/types';
+import type { Acesso, Categoria, Deposito, Emprestimo, Item, Lote, Material, MaterialMovement, NivelAcesso, Organizacao, StaffUser, Unidade } from '@/shared/types';
 import { toast } from 'sonner';
 
 /** O que o servidor devolve. Os materiais vêm com `saldos` por depósito. */
@@ -13,8 +13,12 @@ interface EstoqueResposta {
   unidades: Unidade[];
   depositos: Deposito[];
   categorias: Categoria[];
-  /** Retiradas ainda não devolvidas, em todos os estoques de empréstimo da organização. */
+  /** Retiradas não devolvidas (empréstimo) e entregas abertas (EPI), em todos os estoques da organização. */
   emprestimos: Emprestimo[];
+  /** Lotes com saldo dos estoques de validade. */
+  lotes: Lote[];
+  /** Itens dos estoques de patrimônio (inclusive baixados). */
+  itens: Item[];
   /** O que ESTA pessoa pode, por depósito. `null` = administrador. */
   acessos: Acesso[] | null;
   organizacao: Organizacao | null;
@@ -28,6 +32,8 @@ const VAZIO: EstoqueResposta = {
   depositos: [],
   categorias: [],
   emprestimos: [],
+  lotes: [],
+  itens: [],
   acessos: null,
   organizacao: null,
 };
@@ -158,6 +164,8 @@ export function useEstoqueData() {
     estoquesVisiveis,
     categorias: data.categorias,
     emprestimos: data.emprestimos,
+    lotes: data.lotes,
+    itens: data.itens,
     organizacao: data.organizacao,
     loading,
     /** Quando os dados chegaram pela última vez — o "última atualização" do painel. */

@@ -9,6 +9,9 @@ import { ROTAS, useRouter } from '@/app/router';
 import { Dashboard } from '@/pages/Dashboard/Dashboard';
 import { Estoque } from '@/pages/Estoque/Estoque';
 import { Emprestimo } from '@/pages/Estoque/Emprestimo';
+import { Entrega } from '@/pages/Estoque/Entrega';
+import { Validade } from '@/pages/Estoque/Validade';
+import { Patrimonio } from '@/pages/Estoque/Patrimonio';
 import { PrimeiroEstoque } from '@/pages/Estoque/PrimeiroEstoque';
 import { Admin } from '@/pages/Admin/Admin';
 import { Alertas } from '@/pages/Alertas/Alertas';
@@ -71,7 +74,7 @@ const VIEW_TITLES: Record<string, string> = {
 function InventoryApp({ role }: { role: string }) {
   const [view, setView] = useState<AppView | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, estoquesVisiveis, categorias, emprestimos, loading, atualizadoEm, refetch } = useEstoqueData();
+  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, estoquesVisiveis, categorias, emprestimos, lotes, itens: itensDePatrimonio, loading, atualizadoEm, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
 
   const isAdmin = ADMIN_ROLES.includes(role);
@@ -150,7 +153,7 @@ function InventoryApp({ role }: { role: string }) {
                 onNavigate={setView}
               />
             )}
-            {viewAtual === 'alertas' && <Alertas materials={materials} depositos={depositosDaUnidade} emprestimos={emprestimos} categorias={nomesDeCategorias} />}
+            {viewAtual === 'alertas' && <Alertas materials={materials} depositos={depositosDaUnidade} emprestimos={emprestimos} lotes={lotes} categorias={nomesDeCategorias} />}
             {viewAtual === 'materiais' && (
               <Admin materials={catalogo} materialMovements={materialMovements} staff={staff} categorias={nomesDeCategorias} depositos={depositosDaUnidade} refetch={refetch} />
             )}
@@ -168,6 +171,22 @@ function InventoryApp({ role }: { role: string }) {
             )}
             {estoqueAtual && estoqueAtual.modo === 'emprestimo' && (
               <Emprestimo deposito={estoqueAtual} materials={materials} emprestimos={emprestimos} staff={staff} refetch={refetch} podeOperar={nivelEm(estoqueAtual.id) === 'OPERA'} />
+            )}
+            {estoqueAtual && estoqueAtual.modo === 'entrega' && (
+              <Entrega deposito={estoqueAtual} materials={materials} emprestimos={emprestimos} staff={staff} refetch={refetch} podeOperar={nivelEm(estoqueAtual.id) === 'OPERA'} />
+            )}
+            {estoqueAtual && estoqueAtual.modo === 'validade' && (
+              <Validade
+                deposito={estoqueAtual}
+                materials={materials.filter((m) => estoqueAtual.id in m.saldos_unidade)}
+                lotes={lotes}
+                outrosEstoques={depositosDaUnidade.filter((d) => d.id !== estoqueAtual.id && d.ativo && d.modo !== 'patrimonio')}
+                refetch={refetch}
+                podeOperar={nivelEm(estoqueAtual.id) === 'OPERA'}
+              />
+            )}
+            {estoqueAtual && estoqueAtual.modo === 'patrimonio' && (
+              <Patrimonio deposito={estoqueAtual} materials={materials.filter((m) => estoqueAtual.id in m.saldos_unidade)} itens={itensDePatrimonio} staff={staff} refetch={refetch} podeOperar={nivelEm(estoqueAtual.id) === 'OPERA'} />
             )}
             {viewAtual === 'suporte' && <Suporte materials={catalogo} />}
             {viewAtual === 'ajuda' && <Ajuda />}

@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ArrowLeftRight, FileDown, PackageX, TrendingDown, Timer } from 'lucide-react';
+import { AlertTriangle, ArrowLeftRight, CalendarClock, FileDown, PackageX, RefreshCw, TrendingDown, Timer } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { StockBar } from '@/shared/ui/StockBar';
 import { Reveal, RevealItem } from '@/shared/ui/Reveal';
-import type { Material, Deposito, Emprestimo } from '@/shared/types';
+import type { Material, Deposito, Emprestimo, Lote } from '@/shared/types';
 import { formatNumber, percentOfMinimum, stockStatus, stockTotal, saldoEm, ondeTem, formatDateTime } from '@/features/estoque/utils';
 import { exportReposicaoToWord } from './exportReposicao';
 
@@ -75,20 +75,78 @@ function AlertCard({ material, group, depositos }: { material: Material; group: 
   );
 }
 
+const DIA_MS = 24 * 60 * 60 * 1000;
+const fmtData = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' });
+
+/** Um aviso de prazo (retirada atrasada, troca vencida, lote vencido...) com a lista do que está assim. */
+function AvisoCard({ icone, tom, titulo, linhas }: { icone: React.ReactNode; tom: 'vermelho' | 'amarelo'; titulo: string; linhas: Array<{ id: string; quem: React.ReactNode; onde: React.ReactNode }> }) {
+  const cor = tom === 'vermelho' ? 'var(--vermelho)' : 'var(--amarelo)';
+  return (
+    <Card className="p-4" style={{ borderColor: `color-mix(in srgb, ${cor} 40%, transparent)` }}>
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${cor} 15%, transparent)`, color: cor }}>
+          {icone}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold text-[var(--text)]">{titulo}</p>
+          <ul className="mt-2 divide-y divide-[var(--border)]">
+            {linhas.slice(0, 40).map((l) => (
+              <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
+                <span className="min-w-0 truncate">{l.quem}</span>
+                <span className="shrink-0 text-[var(--text-muted)]">{l.onde}</span>
+              </li>
+            ))}
+          </ul>
+          {linhas.length > 40 && <p className="mt-1 text-[11px] text-[var(--text-muted)]">Mostrando 40 de {linhas.length}.</p>}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 interface AlertasProps {
   materials: Material[];
   /** Estoques ativos da unidade em uso. */
   depositos: Deposito[];
-  /** Retiradas pendentes — as atrasadas viram alerta aqui. */
+  /** Retiradas pendentes e entregas abertas — as atrasadas e as com troca vencida viram alerta aqui. */
   emprestimos: Emprestimo[];
+  /** Lotes com saldo — os vencidos e os vencendo viram alerta aqui. */
+  lotes: Lote[];
   categorias: string[];
 }
 
-export function Alertas({ materials, depositos, emprestimos, categorias }: AlertasProps) {
+export function Alertas({ materials, depositos, emprestimos, lotes, categorias }: AlertasProps) {
+  const nomeDo = (id: string) => depositos.find((d) => d.id === id)?.nome ?? '';
+  // Empréstimos vencidos e entregas com troca vencida — as duas moram na mesma tabela, com tipo.
   const atrasados = useMemo(() => {
     const agora = Date.now();
-    return emprestimos.filter((e) => new Date(e.prazo_em).getTime() < agora).map((e) => ({ ...e, estoque: depositos.find((d) => d.id === e.warehouse_id)?.nome ?? '' }));
+    return emprestimos
+      .filter((e) => e.tipo === 'emprestimo' && e.prazo_em && new Date(e.prazo_em).getTime() < agora)
+      .map((e) => ({ ...e, prazo_em: e.prazo_em as string, estoque: depositos.find((d) => d.id === e.warehouse_id)?.nome ?? '' }));
   }, [emprestimos, depositos]);
+  const trocasVencidas = useMemo(() => {
+    const agora = Date.now();
+    return emprestimos
+      .filter((e) => e.tipo === 'entrega' && e.prazo_em && new Date(e.prazo_em).getTime() < agora)
+      .map((e) => ({ ...e, prazo_em: e.prazo_em as string, estoque: depositos.find((d) => d.id === e.warehouse_id)?.nome ?? '' }));
+  }, [emprestimos, depositos]);
+  // Lotes desta unidade: vencidos, e vencendo dentro do aviso do estoque deles.
+  const lotesVencidos = useMemo(() => {
+    const hoje = new Date();
+    const inicio = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).getTime();
+    return lotes.filter((l) => l.validade && new Date(`${l.validade}T00:00:00`).getTime() < inicio && depositos.some((d) => d.id === l.warehouse_id));
+  }, [lotes, depositos]);
+  const lotesVencendo = useMemo(() => {
+    const hoje = new Date();
+    const inicio = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).getTime();
+    return lotes.filter((l) => {
+      if (!l.validade) return false;
+      const dep = depositos.find((d) => d.id === l.warehouse_id);
+      if (!dep) return false;
+      const fim = new Date(`${l.validade}T00:00:00`).getTime();
+      return fim >= inicio && fim <= inicio + (dep.dias_aviso_validade ?? 30) * DIA_MS;
+    });
+  }, [lotes, depositos]);
   const [openGroup, setOpenGroup] = useState<Group | 'TODOS'>('TODOS');
 
   const grouped = useMemo(() => {
@@ -114,7 +172,7 @@ export function Alertas({ materials, depositos, emprestimos, categorias }: Alert
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold text-[var(--text)]">Alertas</h1>
-          <p className="text-sm text-[var(--text-muted)]">O que precisa de compra, o que só precisa de transferência e o que está atrasado na rua.</p>
+          <p className="text-sm text-[var(--text-muted)]">O que precisa de compra, o que só precisa de transferência, o que está atrasado na rua e o que está vencendo.</p>
         </div>
         <Button
           variant="outline"
@@ -127,32 +185,77 @@ export function Alertas({ materials, depositos, emprestimos, categorias }: Alert
       </div>
 
       {atrasados.length > 0 && (
-        <Card className="border-[var(--vermelho)]/40 p-4">
-          <div className="flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--vermelho)]/15 text-[var(--vermelho)]">
-              <Timer size={18} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-[var(--text)]">
-                {atrasados.length} retirada{atrasados.length > 1 ? 's' : ''} passou{atrasados.length > 1 ? 'aram' : ''} do prazo de devolução
-              </p>
-              <ul className="mt-2 divide-y divide-[var(--border)]">
-                {atrasados.map((e) => (
-                  <li key={e.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
-                    <span className="min-w-0 truncate">
-                      <strong className="text-[var(--text)]">{e.tomador_nome}</strong>
-                      {e.tomador_referencia && <span className="text-[var(--text-muted)]"> · {e.tomador_referencia}</span>}
-                      <span className="text-[var(--text-muted)]"> — {formatNumber(Number(e.quantidade) - Number(e.quantidade_devolvida))} {e.unidade_medida} de {e.material_nome}</span>
-                    </span>
-                    <span className="shrink-0 text-[var(--text-muted)]">
-                      {e.estoque} · vencia {formatDateTime(e.prazo_em)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </Card>
+        <AvisoCard
+          icone={<Timer size={18} />}
+          tom="vermelho"
+          titulo={`${atrasados.length} retirada${atrasados.length > 1 ? 's' : ''} passou${atrasados.length > 1 ? 'aram' : ''} do prazo de devolução`}
+          linhas={atrasados.map((e) => ({
+            id: e.id,
+            quem: (
+              <>
+                <strong className="text-[var(--text)]">{e.tomador_nome}</strong>
+                {e.tomador_referencia && <span className="text-[var(--text-muted)]"> · {e.tomador_referencia}</span>}
+                <span className="text-[var(--text-muted)]"> — {formatNumber(Number(e.quantidade) - Number(e.quantidade_devolvida))} {e.unidade_medida} de {e.material_nome}</span>
+              </>
+            ),
+            onde: `${e.estoque} · vencia ${formatDateTime(e.prazo_em)}`,
+          }))}
+        />
+      )}
+
+      {trocasVencidas.length > 0 && (
+        <AvisoCard
+          icone={<RefreshCw size={18} />}
+          tom="vermelho"
+          titulo={`${trocasVencidas.length} ${trocasVencidas.length > 1 ? 'itens entregues passaram' : 'item entregue passou'} da validade de troca`}
+          linhas={trocasVencidas.map((e) => ({
+            id: e.id,
+            quem: (
+              <>
+                <strong className="text-[var(--text)]">{e.tomador_nome}</strong>
+                {e.tomador_referencia && <span className="text-[var(--text-muted)]"> · {e.tomador_referencia}</span>}
+                <span className="text-[var(--text-muted)]"> — {formatNumber(Number(e.quantidade))} {e.unidade_medida} de {e.material_nome}</span>
+              </>
+            ),
+            onde: `${e.estoque} · trocar desde ${fmtData.format(new Date(e.prazo_em))}`,
+          }))}
+        />
+      )}
+
+      {lotesVencidos.length > 0 && (
+        <AvisoCard
+          icone={<CalendarClock size={18} />}
+          tom="vermelho"
+          titulo={`${lotesVencidos.length} lote${lotesVencidos.length > 1 ? 's' : ''} vencido${lotesVencidos.length > 1 ? 's' : ''} ainda com saldo`}
+          linhas={lotesVencidos.map((l) => ({
+            id: l.id,
+            quem: (
+              <>
+                <strong className="text-[var(--text)]">{l.material_nome}</strong>
+                <span className="text-[var(--text-muted)]"> — lote {l.lote}, {formatNumber(Number(l.quantidade))} {l.unidade_medida}</span>
+              </>
+            ),
+            onde: `${nomeDo(l.warehouse_id)} · venceu ${fmtData.format(new Date(`${l.validade}T00:00:00`))}`,
+          }))}
+        />
+      )}
+
+      {lotesVencendo.length > 0 && (
+        <AvisoCard
+          icone={<CalendarClock size={18} />}
+          tom="amarelo"
+          titulo={`${lotesVencendo.length} lote${lotesVencendo.length > 1 ? 's' : ''} vencendo`}
+          linhas={lotesVencendo.map((l) => ({
+            id: l.id,
+            quem: (
+              <>
+                <strong className="text-[var(--text)]">{l.material_nome}</strong>
+                <span className="text-[var(--text-muted)]"> — lote {l.lote}, {formatNumber(Number(l.quantidade))} {l.unidade_medida}</span>
+              </>
+            ),
+            onde: `${nomeDo(l.warehouse_id)} · vence ${fmtData.format(new Date(`${l.validade}T00:00:00`))}`,
+          }))}
+        />
       )}
 
       {totalCompra === 0 && grouped.TRANSFERIR.length === 0 ? (

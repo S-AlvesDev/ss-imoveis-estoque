@@ -75,14 +75,17 @@ var TABELAS_DA_ORGANIZACAO = /* @__PURE__ */ new Set([
   "warehouses",
   "stock_balances",
   "estoque_user_warehouses",
-  // Estoques configuráveis (migração 018): categorias e empréstimos.
+  // Estoques configuráveis (migrações 018 e 019).
   "categories",
-  "loans"
+  "loans",
+  "lots",
+  "assets",
+  "asset_events"
 ]);
 var clientesPorOrg = /* @__PURE__ */ new Map();
 function clientePara(organizationId) {
-  const cache = clientesPorOrg.get(organizationId);
-  if (cache) return cache;
+  const cache2 = clientesPorOrg.get(organizationId);
+  if (cache2) return cache2;
   let client;
   if (RLS_ATIVO) {
     const token = jwt.sign(
@@ -276,6 +279,276 @@ function prazoEm(prazoHoras, agora = /* @__PURE__ */ new Date()) {
   return new Date(agora.getTime() + prazoHoras * 60 * 60 * 1e3);
 }
 
+// src/server/entregas.ts
+var DIA_MS = 24 * 60 * 60 * 1e3;
+function texto3(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+function assinaturaValida(s) {
+  return typeof s === "string" && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(s) && s.length <= 12e4;
+}
+function validarEntrega(body, exigeAssinatura) {
+  const b = body && typeof body === "object" ? body : {};
+  const material_id = Number(b.material_id);
+  if (!Number.isInteger(material_id) || material_id <= 0) return { ok: false, erro: "Escolha o material." };
+  const quantidade = Number(b.quantidade);
+  if (!Number.isFinite(quantidade) || quantidade <= 0) return { ok: false, erro: "A quantidade precisa ser maior que zero." };
+  const tomador_nome = texto3(b.tomador_nome);
+  if (tomador_nome.length < 2 || tomador_nome.length > 80) return { ok: false, erro: "Informe quem est\xE1 recebendo (2 a 80 caracteres)." };
+  const referencia = texto3(b.tomador_referencia);
+  if (referencia.length > 40) return { ok: false, erro: "Refer\xEAncia longa demais (at\xE9 40 caracteres)." };
+  const observacao = texto3(b.observacao);
+  if (observacao.length > 300) return { ok: false, erro: "Observa\xE7\xE3o longa demais (at\xE9 300 caracteres)." };
+  let assinatura = null;
+  if (b.assinatura !== void 0 && b.assinatura !== null && b.assinatura !== "") {
+    if (!assinaturaValida(b.assinatura)) return { ok: false, erro: "Assinatura inv\xE1lida." };
+    assinatura = b.assinatura;
+  }
+  if (exigeAssinatura && !assinatura) return { ok: false, erro: "Este estoque exige a assinatura de quem recebe." };
+  return {
+    ok: true,
+    entrega: {
+      material_id,
+      quantidade: Math.round(quantidade * 100) / 100,
+      tomador_nome,
+      tomador_referencia: referencia || null,
+      observacao: observacao || null,
+      assinatura
+    }
+  };
+}
+function validoAte(validadeTrocaDias, agora = /* @__PURE__ */ new Date()) {
+  if (!validadeTrocaDias || validadeTrocaDias <= 0) return null;
+  return new Date(agora.getTime() + validadeTrocaDias * DIA_MS);
+}
+
+// src/server/lotes.ts
+var DIA_MS2 = 24 * 60 * 60 * 1e3;
+function ordenarFefo(lotes) {
+  return [...lotes].sort((a, b) => {
+    if (a.validade === b.validade) return a.lote.localeCompare(b.lote);
+    if (a.validade === null) return 1;
+    if (b.validade === null) return -1;
+    return a.validade < b.validade ? -1 : 1;
+  });
+}
+function alocarSaida(lotes, quantidade, loteId) {
+  const q = Math.round(Number(quantidade) * 100) / 100;
+  if (!Number.isFinite(q) || q <= 0) return { ok: false, erro: "A quantidade precisa ser maior que zero." };
+  const candidatos = loteId ? lotes.filter((l) => l.id === loteId) : ordenarFefo(lotes.filter((l) => Number(l.quantidade) > 0));
+  if (loteId && candidatos.length === 0) return { ok: false, erro: "Lote n\xE3o encontrado neste estoque." };
+  const disponivel = Math.round(candidatos.reduce((s, l) => s + Number(l.quantidade), 0) * 100) / 100;
+  if (disponivel < q) {
+    return { ok: false, erro: loteId ? `O lote ${candidatos[0].lote} tem s\xF3 ${disponivel}.` : `Saldo insuficiente: h\xE1 ${disponivel} somando todos os lotes.` };
+  }
+  const consumos = [];
+  let falta = q;
+  for (const l of candidatos) {
+    if (falta <= 0) break;
+    const tira = Math.min(Number(l.quantidade), falta);
+    if (tira <= 0) continue;
+    consumos.push({ id: l.id, lote: l.lote, quantidade: Math.round(tira * 100) / 100 });
+    falta = Math.round((falta - tira) * 100) / 100;
+  }
+  return { ok: true, consumos };
+}
+function descreverConsumos(consumos) {
+  return consumos.map((c) => `${c.lote} (${c.quantidade})`).join(", ");
+}
+var DATA = /^\d{4}-\d{2}-\d{2}$/;
+function validarLote(body) {
+  const b = body && typeof body === "object" ? body : {};
+  const lote = typeof b.lote === "string" ? b.lote.trim() : "";
+  if (lote.length < 1 || lote.length > 60) return { ok: false, erro: "Informe o lote (at\xE9 60 caracteres)." };
+  let validade = null;
+  if (b.validade !== void 0 && b.validade !== null && b.validade !== "") {
+    const v = String(b.validade);
+    if (!DATA.test(v) || Number.isNaN((/* @__PURE__ */ new Date(`${v}T00:00:00`)).getTime())) return { ok: false, erro: "Validade inv\xE1lida: use AAAA-MM-DD." };
+    validade = v;
+  }
+  return { ok: true, lote: { lote, validade } };
+}
+
+// src/server/patrimonio.ts
+function texto4(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+var DATA2 = /^\d{4}-\d{2}-\d{2}$/;
+function validarItem(body) {
+  const b = body && typeof body === "object" ? body : {};
+  const material_id = Number(b.material_id);
+  if (!Number.isInteger(material_id) || material_id <= 0) return { ok: false, erro: "Escolha o modelo (material)." };
+  const codigo = texto4(b.codigo);
+  if (codigo.length < 1 || codigo.length > 40) return { ok: false, erro: "Informe o n\xFAmero de patrim\xF4nio (at\xE9 40 caracteres)." };
+  const serie = texto4(b.serie);
+  if (serie.length > 80) return { ok: false, erro: "S\xE9rie longa demais (at\xE9 80 caracteres)." };
+  const local = texto4(b.local);
+  if (local.length > 80) return { ok: false, erro: "Local longo demais (at\xE9 80 caracteres)." };
+  const observacao = texto4(b.observacao);
+  if (observacao.length > 300) return { ok: false, erro: "Observa\xE7\xE3o longa demais (at\xE9 300 caracteres)." };
+  let adquirido_em = null;
+  if (b.adquirido_em !== void 0 && b.adquirido_em !== null && b.adquirido_em !== "") {
+    const v = String(b.adquirido_em);
+    if (!DATA2.test(v)) return { ok: false, erro: "Data de aquisi\xE7\xE3o inv\xE1lida: use AAAA-MM-DD." };
+    adquirido_em = v;
+  }
+  let valor = null;
+  if (b.valor !== void 0 && b.valor !== null && b.valor !== "") {
+    valor = Number(b.valor);
+    if (!Number.isFinite(valor) || valor < 0) return { ok: false, erro: "Valor inv\xE1lido." };
+    valor = Math.round(valor * 100) / 100;
+  }
+  return { ok: true, item: { material_id, codigo, serie: serie || null, local: local || null, observacao: observacao || null, adquirido_em, valor } };
+}
+var TRANSICOES = {
+  alocacao: { de: ["disponivel"], para: "em_uso" },
+  devolucao: { de: ["em_uso"], para: "disponivel" },
+  manutencao: { de: ["disponivel", "em_uso"], para: "manutencao" },
+  retorno: { de: ["manutencao"], para: "disponivel" },
+  baixa: { de: ["disponivel", "em_uso", "manutencao"], para: "baixado" }
+};
+var EVENTOS = ["alocacao", "devolucao", "manutencao", "retorno", "baixa"];
+function ehEvento(s) {
+  return typeof s === "string" && EVENTOS.includes(s);
+}
+var NOME = { disponivel: "dispon\xEDvel", em_uso: "em uso", manutencao: "em manuten\xE7\xE3o", baixado: "baixado" };
+function transicionar(estadoAtual, evento) {
+  const t = TRANSICOES[evento];
+  if (!t.de.includes(estadoAtual)) {
+    if (estadoAtual === "baixado") return { ok: false, erro: "Item baixado n\xE3o muda mais de estado." };
+    return { ok: false, erro: `Um item ${NOME[estadoAtual]} n\xE3o pode receber "${evento}".` };
+  }
+  return { ok: true, para: t.para };
+}
+function validarEvento(body) {
+  const b = body && typeof body === "object" ? body : {};
+  if (!ehEvento(b.tipo)) return { ok: false, erro: "Evento inv\xE1lido." };
+  const para_nome = texto4(b.para_nome);
+  const para_referencia = texto4(b.para_referencia);
+  const detalhe = texto4(b.detalhe);
+  if (b.tipo === "alocacao" && (para_nome.length < 2 || para_nome.length > 80)) return { ok: false, erro: "Informe para quem o item vai (2 a 80 caracteres)." };
+  if (para_referencia.length > 40) return { ok: false, erro: "Refer\xEAncia longa demais (at\xE9 40 caracteres)." };
+  if (detalhe.length > 300) return { ok: false, erro: "Detalhe longo demais (at\xE9 300 caracteres)." };
+  return {
+    ok: true,
+    evento: { tipo: b.tipo, para_nome: b.tipo === "alocacao" ? para_nome : null, para_referencia: b.tipo === "alocacao" ? para_referencia || null : null, detalhe: detalhe || null }
+  };
+}
+
+// src/shared/planos.ts
+var PLANOS = ["essencial", "profissional", "empresarial"];
+var DEFINICOES = {
+  essencial: {
+    id: "essencial",
+    nome: "Essencial",
+    preco: 199.9,
+    publico: "Pequenas opera\xE7\xF5es",
+    limites: { unidades: 1, depositosPorUnidade: 1, usuarios: 3 },
+    recursos: [],
+    niveis: { auditoria: "B\xE1sica", alertas: "B\xE1sicos", dashboard: "B\xE1sico", relatorios: "B\xE1sicos", permissoes: "B\xE1sicas", suporte: "Normal" },
+    destaques: ["1 unidade, 1 dep\xF3sito", "At\xE9 3 usu\xE1rios", "Materiais, categorias e estoque m\xEDnimo", "Entradas, sa\xEDdas e hist\xF3rico", "Alertas na tela e lista de compras", "Sistema de chamados"],
+    servicos: []
+  },
+  profissional: {
+    id: "profissional",
+    nome: "Profissional",
+    preco: 399.9,
+    publico: "Empresas em expans\xE3o",
+    limites: { unidades: 2, depositosPorUnidade: 3, usuarios: 10 },
+    recursos: ["transferencia", "identidade-visual", "exportacoes", "alertas-por-email"],
+    niveis: { auditoria: "Completa", alertas: "Completos", dashboard: "Completo", relatorios: "Completos", permissoes: "Por dep\xF3sito", suporte: "Priorit\xE1rio" },
+    destaques: ["2 unidades, 3 dep\xF3sitos em cada", "At\xE9 10 usu\xE1rios", "Transfer\xEAncia entre dep\xF3sitos", "Auditoria em PDF e exporta\xE7\xF5es", "Alertas por e-mail", "Logo e cor da sua empresa", "WhatsApp opcional"],
+    servicos: ["Implanta\xE7\xE3o assistida", "Suporte priorit\xE1rio"]
+  },
+  empresarial: {
+    id: "empresarial",
+    nome: "Empresarial",
+    preco: 999.9,
+    publico: "Opera\xE7\xF5es maiores",
+    limites: { unidades: 4, depositosPorUnidade: null, usuarios: null },
+    recursos: ["transferencia", "identidade-visual", "exportacoes", "alertas-por-email", "relatorios-automaticos", "whatsapp"],
+    niveis: { auditoria: "Avan\xE7ada", alertas: "Autom\xE1ticos", dashboard: "Avan\xE7ado", relatorios: "Avan\xE7ados", permissoes: "Avan\xE7adas", suporte: "Prioridade m\xE1xima" },
+    destaques: ["4 unidades, dep\xF3sitos ilimitados*", "Usu\xE1rios ilimitados*", "Tudo do Profissional", "WhatsApp inclu\xEDdo", "Relat\xF3rios autom\xE1ticos", "Personaliza\xE7\xE3o completa", "Acesso antecipado a novos m\xF3dulos"],
+    servicos: ["Implanta\xE7\xE3o e treinamento da equipe", "Acompanhamento dedicado", "Prioridade m\xE1xima no suporte"]
+  }
+};
+var NOME_DO_PLANO = { essencial: "Essencial", profissional: "Profissional", empresarial: "Empresarial", avaliacao: "Avalia\xE7\xE3o" };
+function ehPlano(s) {
+  return typeof s === "string" && PLANOS.includes(s);
+}
+function planoEfetivo(plano) {
+  return ehPlano(plano) ? plano : "avaliacao";
+}
+function definicaoDe(plano) {
+  return DEFINICOES[plano === "avaliacao" ? "empresarial" : plano];
+}
+function planoLibera(plano, recurso) {
+  return definicaoDe(plano).recursos.includes(recurso);
+}
+function limiteDo(plano, limite) {
+  return definicaoDe(plano).limites[limite];
+}
+function cabeMaisUm(plano, limite, atual) {
+  const max = limiteDo(plano, limite);
+  return max === null || atual < max;
+}
+function planoMinimoPara(recurso) {
+  return PLANOS.find((p2) => DEFINICOES[p2].recursos.includes(recurso)) ?? "empresarial";
+}
+function planoMinimoParaLimite(limite, necessario) {
+  return PLANOS.find((p2) => cabeMaisUm(p2, limite, necessario - 1)) ?? null;
+}
+var ROTULO_DO_LIMITE = {
+  unidades: ["unidade", "unidades"],
+  depositosPorUnidade: ["dep\xF3sito por unidade", "dep\xF3sitos por unidade"],
+  usuarios: ["usu\xE1rio", "usu\xE1rios"]
+};
+function descreverLimite(limite, valor) {
+  const [um, varios] = ROTULO_DO_LIMITE[limite];
+  if (valor === null) return `${varios} ilimitados`;
+  return `${valor} ${valor === 1 ? um : varios}`;
+}
+function mensagemDeRecurso(recurso) {
+  const nome = NOME_DO_PLANO[planoMinimoPara(recurso)];
+  const oque = {
+    transferencia: "Transfer\xEAncia entre dep\xF3sitos",
+    "identidade-visual": "Logo e cor da empresa",
+    exportacoes: "Exporta\xE7\xE3o de relat\xF3rios",
+    "alertas-por-email": "Alertas por e-mail",
+    "relatorios-automaticos": "Relat\xF3rios autom\xE1ticos",
+    whatsapp: "Avisos por WhatsApp"
+  };
+  return `${oque[recurso]}: dispon\xEDvel a partir do plano ${nome}.`;
+}
+function mensagemDeLimite(plano, limite) {
+  const max = limiteDo(plano, limite);
+  const proximo = max === null ? null : planoMinimoParaLimite(limite, max + 1);
+  const sufixo = proximo ? ` Para mais, o plano ${NOME_DO_PLANO[proximo]}.` : " Para mais, fale com a gente (Enterprise).";
+  return `O plano ${NOME_DO_PLANO[plano]} inclui ${descreverLimite(limite, max)}.${sufixo}`;
+}
+
+// src/server/planos.ts
+var CACHE_MS = 6e4;
+var cache = /* @__PURE__ */ new Map();
+async function planoDaOrg(organizationId, agora = Date.now()) {
+  const c = cache.get(organizationId);
+  if (c && c.ate > agora) return c.plano;
+  const { data, error } = await supabaseServer.from("organizations").select("plano, plano_ate").eq("id", organizationId).maybeSingle();
+  if (error) throw error;
+  const vencido = data?.plano_ate && new Date(data.plano_ate).getTime() < agora;
+  const plano = planoEfetivo(vencido ? null : data?.plano);
+  cache.set(organizationId, { plano, ate: agora + CACHE_MS });
+  return plano;
+}
+function negarRecurso(plano, recurso) {
+  if (planoLibera(plano, recurso)) return null;
+  return { status: 402, body: { error: mensagemDeRecurso(recurso), plano, plano_minimo: planoMinimoPara(recurso) } };
+}
+function negarLimite(plano, limite, atual) {
+  if (cabeMaisUm(plano, limite, atual)) return null;
+  return { status: 402, body: { error: mensagemDeLimite(plano, limite), plano, plano_minimo: null } };
+}
+
 // src/server/mail.ts
 function configuracaoSmtp(env = process.env) {
   const brevo = Boolean(env.BREVO_SMTP_LOGIN && env.BREVO_SMTP_KEY);
@@ -368,7 +641,8 @@ function emailDeNovaEmpresa(dados) {
 }
 
 // src/server/estoque.ts
-var MODOS = ["almoxarifado", "emprestimo"];
+var MODOS = ["almoxarifado", "emprestimo", "entrega", "validade", "patrimonio"];
+var TODAS_AS_OPERACOES = ["ENTRADA", "SAIDA", "CONSUMO", "TRANSFERENCIA", "AJUSTE"];
 var OPERACOES = {
   ENTRADA: { lado: "destino", rotulo: "esta entrada" },
   SAIDA: { lado: "origem", rotulo: "esta sa\xEDda" },
@@ -390,7 +664,23 @@ function validarEstoque(body) {
     prazo = Number(b.prazo_padrao_horas ?? 2);
     if (!Number.isInteger(prazo) || prazo < 1 || prazo > 8760) return { ok: false, erro: "O prazo padr\xE3o deve ser de 1 a 8760 horas." };
   }
-  return { ok: true, nome, modo, prazo_padrao_horas: prazo };
+  let operacoes = null;
+  if (modo === "almoxarifado" && Array.isArray(b.operacoes_permitidas)) {
+    const lista = [...new Set(b.operacoes_permitidas.map((x) => String(x)))];
+    if (lista.length === 0) return { ok: false, erro: "Deixe pelo menos uma opera\xE7\xE3o ligada." };
+    if (!lista.every(ehOperacaoGenerica)) return { ok: false, erro: "Opera\xE7\xE3o desconhecida na lista de permitidas." };
+    operacoes = lista.length === TODAS_AS_OPERACOES.length ? null : lista;
+  }
+  const exige_assinatura = modo === "entrega" ? Boolean(b.exige_assinatura) : false;
+  let dias_aviso_validade = 30;
+  if (modo === "validade") {
+    dias_aviso_validade = Number(b.dias_aviso_validade ?? 30);
+    if (!Number.isInteger(dias_aviso_validade) || dias_aviso_validade < 1 || dias_aviso_validade > 365) return { ok: false, erro: "O aviso de validade deve ser de 1 a 365 dias." };
+  }
+  return { ok: true, nome, modo, prazo_padrao_horas: prazo, operacoes_permitidas: operacoes, exige_assinatura, dias_aviso_validade };
+}
+function operacaoPermitida(deposito, op) {
+  return !deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes(op);
 }
 function arredondar(n) {
   return Math.round(n * 100) / 100;
@@ -454,7 +744,7 @@ function depositosDaUnidade(depositos, unitId) {
   return depositos;
 }
 async function depositosDaOrg(db, opcoes = {}) {
-  let q = db.from("warehouses").select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, units!inner(ativo)").eq("ativo", true);
+  let q = db.from("warehouses").select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade, units!inner(ativo)").eq("ativo", true);
   if (!opcoes.incluirUnidadesInativas) q = q.eq("units.ativo", true);
   const { data, error } = await q.order("nome", { ascending: true });
   if (error) throw error;
@@ -561,12 +851,18 @@ function authenticate(req, res, next) {
     return res.status(401).json({ error: "Token inv\xE1lido ou expirado." });
   }
 }
-function withTenant(req, res, next) {
+async function withTenant(req, res, next) {
   const organizationId = req.user?.organization_id;
   if (!organizationId) {
     return res.status(401).json({ error: "Sess\xE3o desatualizada. Entre novamente." });
   }
   req.db = scopedDb(organizationId);
+  try {
+    req.plano = await planoDaOrg(organizationId);
+  } catch (err) {
+    console.error("[withTenant] plano:", err.message);
+    return res.status(500).json({ error: "Erro ao carregar a organiza\xE7\xE3o." });
+  }
   next();
 }
 async function withAcessos(req, res, next) {
@@ -903,7 +1199,7 @@ function createApp() {
   app.get("/api/data", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       const db = scopedDb(req.user.organization_id);
-      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes, categoriasRes, emprestimosRes] = await Promise.all([
+      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes, categoriasRes, emprestimosRes, lotesRes, itensRes] = await Promise.all([
         db.from("materials").select("*").order("nome", { ascending: true }),
         fetchAllRows(
           () => db.from("material_movements").select("*, materials(nome)").order("created_at", { ascending: false }).order("id", { ascending: false })
@@ -913,14 +1209,19 @@ function createApp() {
         unidadesDaOrg(db),
         depositosDaOrg(db, { incluirUnidadesInativas: true }),
         saldosDaOrg(db),
-        db.from("organizations").select("id, nome, slug, cor_primaria, logo_url").eq("id", req.user.organization_id).single(),
+        db.from("organizations").select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").eq("id", req.user.organization_id).single(),
         db.from("categories").select("id, nome, ordem").order("ordem", { ascending: true }).order("nome", { ascending: true }),
-        // Só o que está na rua: a lista de pendentes/atrasados de cada estoque de empréstimo.
-        db.from("loans").select("*, materials(nome, unidade_medida)").is("devolvido_em", null).order("prazo_em", { ascending: true })
+        // Só o que está na rua: pendentes/atrasados dos estoques de empréstimo e entregas abertas dos de EPI.
+        db.from("loans").select("*, materials(nome, unidade_medida)").is("devolvido_em", null).is("encerrado_em", null).order("prazo_em", { ascending: true }),
+        // Lotes com saldo dos estoques de validade, e os itens dos estoques de patrimônio.
+        db.from("lots").select("*, materials(nome, unidade_medida)").gt("quantidade", 0).order("validade", { ascending: true, nullsFirst: false }),
+        db.from("assets").select("*, materials(nome)").order("codigo", { ascending: true })
       ]);
       if (materialsRes.error) throw materialsRes.error;
       if (categoriasRes.error) throw categoriasRes.error;
       if (emprestimosRes.error) throw emprestimosRes.error;
+      if (lotesRes.error) throw lotesRes.error;
+      if (itensRes.error) throw itensRes.error;
       const acessos = req.acessos ?? null;
       const depositosVisiveis = depositos.filter((d) => podeVer(acessos, d.id));
       const unidadesComAcesso = new Set(depositosVisiveis.map((d) => d.unit_id));
@@ -932,6 +1233,8 @@ function createApp() {
         return { ...m, saldos: porDeposito };
       });
       const emprestimos = (emprestimosRes.data || []).filter((e) => visivel.has(e.warehouse_id)).map(({ materials: mat, ...e }) => ({ ...e, material_nome: mat?.nome ?? "Material removido", unidade_medida: mat?.unidade_medida ?? "" }));
+      const lotes = (lotesRes.data || []).filter((l) => visivel.has(l.warehouse_id)).map(({ materials: mat, ...l }) => ({ ...l, material_nome: mat?.nome ?? "Material removido", unidade_medida: mat?.unidade_medida ?? "" }));
+      const itens = (itensRes.data || []).filter((i) => visivel.has(i.warehouse_id)).map(({ materials: mat, ...i }) => ({ ...i, material_nome: mat?.nome ?? "Modelo removido" }));
       res.json({
         materials,
         materialMovements: movements,
@@ -940,10 +1243,12 @@ function createApp() {
         depositos: depositosVisiveis,
         categorias: categoriasRes.data || [],
         emprestimos,
+        lotes,
+        itens,
         // O que ESTA pessoa pode fazer, para o front montar o menu. Admin: null.
         acessos: acessos === null ? null : [...acessos.entries()].map(([warehouse_id, nivel]) => ({ warehouse_id, nivel })),
-        // Nome, cor e logo — a identidade que as telas vestem por dentro.
-        organizacao: orgRes.data ?? null
+        // Nome, cor e logo — a identidade que as telas vestem por dentro — e o plano em vigor.
+        organizacao: orgRes.data ? { ...orgRes.data, plano_efetivo: req.plano } : null
       });
     } catch (err) {
       console.error("[GET /api/data] erro:", err.message);
@@ -972,14 +1277,16 @@ function createApp() {
         patch.nome = nome;
       }
       if (req.body?.cor_primaria !== void 0) {
+        const negada = negarRecurso(req.plano, "identidade-visual");
+        if (negada) return res.status(negada.status).json(negada.body);
         const cor = req.body.cor_primaria === null ? null : String(req.body.cor_primaria).trim().toLowerCase();
         if (cor !== null && !COR_HEX.test(cor)) return res.status(400).json({ error: "Cor inv\xE1lida. Use o formato #rrggbb." });
         patch.cor_primaria = cor;
       }
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nada para alterar." });
-      const { data, error } = await req.db.from("organizations").update(patch).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url").single();
+      const { data, error } = await req.db.from("organizations").update(patch).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
       if (error || !data) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
-      res.json({ organizacao: data });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
     } catch (err) {
       console.error("[PATCH /api/organization] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar a organiza\xE7\xE3o." });
@@ -987,6 +1294,8 @@ function createApp() {
   });
   app.post("/api/organization/logo-upload-url", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
+      const negada = negarRecurso(req.plano, "identidade-visual");
+      if (negada) return res.status(negada.status).json(negada.body);
       const tipo = String(req.body?.content_type ?? "");
       const tamanho = Number(req.body?.size ?? 0);
       const ext = LOGO_TIPOS[tipo];
@@ -1004,6 +1313,8 @@ function createApp() {
   });
   app.post("/api/organization/logo", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
+      const negada = negarRecurso(req.plano, "identidade-visual");
+      if (negada) return res.status(negada.status).json(negada.body);
       const caminho = String(req.body?.path ?? "");
       const pasta = req.user.organization_id + "/";
       if (!caminho.startsWith(pasta) || caminho.includes("..")) return res.status(400).json({ error: "Caminho inv\xE1lido." });
@@ -1014,13 +1325,13 @@ function createApp() {
       const { data: atual } = await req.db.from("organizations").select("logo_url").eq("id", req.user.organization_id).single();
       const anterior = caminhoDoLogo(atual?.logo_url);
       const publicUrl = supabaseServer.storage.from("logos").getPublicUrl(caminho).data.publicUrl;
-      const { data, error } = await req.db.from("organizations").update({ logo_url: publicUrl }).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url").single();
+      const { data, error } = await req.db.from("organizations").update({ logo_url: publicUrl }).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
       if (error || !data) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
       if (anterior && anterior !== caminho) {
         const { error: rErr } = await supabaseServer.storage.from("logos").remove([anterior]);
         if (rErr) console.warn("[logo] n\xE3o apagou o anterior:", rErr.message);
       }
-      res.json({ organizacao: data });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
     } catch (err) {
       console.error("[POST /api/organization/logo] erro:", err.message);
       res.status(500).json({ error: "Erro ao salvar o logo." });
@@ -1030,13 +1341,13 @@ function createApp() {
     try {
       const { data: atual } = await req.db.from("organizations").select("logo_url").eq("id", req.user.organization_id).single();
       const caminho = caminhoDoLogo(atual?.logo_url);
-      const { data, error } = await req.db.from("organizations").update({ logo_url: null }).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url").single();
+      const { data, error } = await req.db.from("organizations").update({ logo_url: null }).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
       if (error || !data) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
       if (caminho) {
         const { error: rErr } = await supabaseServer.storage.from("logos").remove([caminho]);
         if (rErr) console.warn("[logo] n\xE3o apagou o arquivo:", rErr.message);
       }
-      res.json({ organizacao: data });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
     } catch (err) {
       console.error("[DELETE /api/organization/logo] erro:", err.message);
       res.status(500).json({ error: "Erro ao remover o logo." });
@@ -1050,6 +1361,9 @@ function createApp() {
       }
       const slug = nome.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
       if (!slug) return res.status(400).json({ error: "Nome inv\xE1lido para unidade." });
+      const { count: ativas } = await req.db.from("units").select("*", { count: "exact", head: true }).eq("ativo", true);
+      const negada = negarLimite(req.plano, "unidades", ativas ?? 0);
+      if (negada) return res.status(negada.status).json(negada.body);
       const { data: unidade, error: unidadeErr } = await req.db.from("units").insert({ nome, slug }).select("id, nome, slug, ativo").single();
       if (unidadeErr) {
         if (/duplicate|unique/i.test(unidadeErr.message)) {
@@ -1061,7 +1375,7 @@ function createApp() {
       if (req.body?.estoque) {
         const v = validarEstoque(req.body.estoque);
         if (!v.ok) return res.status(400).json({ error: v.erro });
-        const { data: dep, error: depErr } = await req.db.from("warehouses").insert({ unit_id: unidade.id, nome: v.nome, tipo: "OUTRO", modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas }).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas").single();
+        const { data: dep, error: depErr } = await req.db.from("warehouses").insert({ unit_id: unidade.id, nome: v.nome, tipo: "OUTRO", modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas, operacoes_permitidas: v.operacoes_permitidas, exige_assinatura: v.exige_assinatura, dias_aviso_validade: v.dias_aviso_validade }).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade").single();
         if (depErr) throw depErr;
         depositos = [dep];
       }
@@ -1086,6 +1400,11 @@ function createApp() {
         const { count } = await req.db.from("units").select("*", { count: "exact", head: true }).eq("ativo", true);
         if ((count ?? 0) <= 1) return res.status(409).json({ error: "N\xE3o d\xE1 para desativar a \xFAnica unidade ativa." });
       }
+      if (patch.ativo === true) {
+        const { count } = await req.db.from("units").select("*", { count: "exact", head: true }).eq("ativo", true).neq("id", req.params.id);
+        const negada = negarLimite(req.plano, "unidades", count ?? 0);
+        if (negada) return res.status(negada.status).json(negada.body);
+      }
       const { data, error } = await req.db.from("units").update(patch).eq("id", req.params.id).select("id, nome, slug, ativo").single();
       if (error || !data) return res.status(404).json({ error: "Unidade n\xE3o encontrada." });
       res.json({ unidade: data });
@@ -1096,24 +1415,36 @@ function createApp() {
   });
   app.patch("/api/warehouses/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const { data: atual, error: erroAtual } = await req.db.from("warehouses").select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas").eq("id", req.params.id).maybeSingle();
+      const { data: atual, error: erroAtual } = await req.db.from("warehouses").select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade").eq("id", req.params.id).maybeSingle();
       if (erroAtual) throw erroAtual;
       if (!atual) return res.status(404).json({ error: "Estoque n\xE3o encontrado." });
       const v = validarEstoque({
         nome: req.body?.nome ?? atual.nome,
         modo: req.body?.modo ?? atual.modo,
-        prazo_padrao_horas: req.body?.prazo_padrao_horas ?? atual.prazo_padrao_horas ?? void 0
+        prazo_padrao_horas: req.body?.prazo_padrao_horas ?? atual.prazo_padrao_horas ?? void 0,
+        operacoes_permitidas: req.body?.operacoes_permitidas ?? atual.operacoes_permitidas ?? void 0,
+        exige_assinatura: req.body?.exige_assinatura ?? atual.exige_assinatura,
+        dias_aviso_validade: req.body?.dias_aviso_validade ?? atual.dias_aviso_validade
       });
       if (!v.ok) return res.status(400).json({ error: v.erro });
-      const patch = { nome: v.nome, modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas };
+      const patch = { nome: v.nome, modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas, operacoes_permitidas: v.operacoes_permitidas, exige_assinatura: v.exige_assinatura, dias_aviso_validade: v.dias_aviso_validade };
       if (req.body?.ativo !== void 0) patch.ativo = Boolean(req.body.ativo);
-      if (v.modo !== atual.modo || patch.ativo === false) {
-        const { count } = await req.db.from("loans").select("*", { count: "exact", head: true }).eq("warehouse_id", atual.id).is("devolvido_em", null);
-        if ((count ?? 0) > 0) {
-          return res.status(409).json({ error: `H\xE1 ${count} retirada(s) pendente(s) neste estoque. Registre as devolu\xE7\xF5es antes de mudar o modo ou desativar.` });
-        }
+      if (patch.ativo === true && !atual.ativo) {
+        const { count } = await req.db.from("warehouses").select("*", { count: "exact", head: true }).eq("unit_id", atual.unit_id).eq("ativo", true);
+        const negada = negarLimite(req.plano, "depositosPorUnidade", count ?? 0);
+        if (negada) return res.status(negada.status).json(negada.body);
       }
-      const { data, error } = await req.db.from("warehouses").update(patch).eq("id", atual.id).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas").single();
+      if (v.modo !== atual.modo || patch.ativo === false) {
+        const [{ count: abertos }, { count: lotes }, { count: itens }] = await Promise.all([
+          req.db.from("loans").select("*", { count: "exact", head: true }).eq("warehouse_id", atual.id).is("devolvido_em", null).is("encerrado_em", null),
+          req.db.from("lots").select("*", { count: "exact", head: true }).eq("warehouse_id", atual.id).gt("quantidade", 0),
+          req.db.from("assets").select("*", { count: "exact", head: true }).eq("warehouse_id", atual.id).neq("estado", "baixado")
+        ]);
+        if ((abertos ?? 0) > 0) return res.status(409).json({ error: `H\xE1 ${abertos} retirada(s)/entrega(s) em aberto neste estoque. Encerre-as antes de mudar o modo ou desativar.` });
+        if ((lotes ?? 0) > 0) return res.status(409).json({ error: `H\xE1 ${lotes} lote(s) com saldo neste estoque. Zere-os antes de mudar o modo ou desativar.` });
+        if ((itens ?? 0) > 0) return res.status(409).json({ error: `H\xE1 ${itens} item(ns) de patrim\xF4nio ativos neste estoque. D\xEA baixa antes de mudar o modo ou desativar.` });
+      }
+      const { data, error } = await req.db.from("warehouses").update(patch).eq("id", atual.id).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade").single();
       if (error) {
         if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe um estoque com esse nome nesta unidade." });
         throw error;
@@ -1130,7 +1461,10 @@ function createApp() {
       if (!v.ok) return res.status(400).json({ error: v.erro });
       const { data: unidade } = await req.db.from("units").select("id, ativo").eq("id", req.params.id).maybeSingle();
       if (!unidade) return res.status(404).json({ error: "Unidade n\xE3o encontrada." });
-      const { data: dep, error } = await req.db.from("warehouses").insert({ unit_id: unidade.id, nome: v.nome, tipo: "OUTRO", modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas }).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas").single();
+      const { count: ativos } = await req.db.from("warehouses").select("*", { count: "exact", head: true }).eq("unit_id", unidade.id).eq("ativo", true);
+      const negada = negarLimite(req.plano, "depositosPorUnidade", ativos ?? 0);
+      if (negada) return res.status(negada.status).json(negada.body);
+      const { data: dep, error } = await req.db.from("warehouses").insert({ unit_id: unidade.id, nome: v.nome, tipo: "OUTRO", modo: v.modo, prazo_padrao_horas: v.prazo_padrao_horas, operacoes_permitidas: v.operacoes_permitidas, exige_assinatura: v.exige_assinatura, dias_aviso_validade: v.dias_aviso_validade }).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade").single();
       if (error) {
         if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe um estoque com esse nome nesta unidade." });
         throw error;
@@ -1296,13 +1630,20 @@ function createApp() {
       res.status(500).json({ error: "Erro ao remover material da unidade." });
     }
   });
+  function validadeDeTroca(v) {
+    if (v === void 0 || v === null || v === "") return { ok: true, dias: null };
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 1 || n > 3650) return { ok: false, erro: "Validade de troca inv\xE1lida: use de 1 a 3650 dias." };
+    return { ok: true, dias: n };
+  }
   app.post("/api/materials", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const { nome, unidade_medida, qtd_volumes, fator_multiplicador, estoque_minimo, categoria, unit_id } = req.body || {};
+      const { nome, unidade_medida, qtd_volumes, fator_multiplicador, estoque_minimo, categoria, unit_id, validade_troca_dias } = req.body || {};
       if (!nome || !unidade_medida || qtd_volumes == null || fator_multiplicador == null || estoque_minimo == null) {
         return res.status(400).json({ error: "Preencha todos os campos obrigat\xF3rios." });
       }
-      const saldoInicial = arredondar(Number(qtd_volumes) * Number(fator_multiplicador));
+      const troca = validadeDeTroca(validade_troca_dias);
+      if (!troca.ok) return res.status(400).json({ error: troca.erro });
       const depositos = await depositosDaOrg(req.db);
       let daUnidade;
       try {
@@ -1312,13 +1653,15 @@ function createApp() {
       }
       const destino = daUnidade.find((d) => d.id === req.body?.warehouse_id) ?? daUnidade.find((d) => d.tipo === "CENTRAL") ?? daUnidade.find((d) => d.modo === "almoxarifado") ?? daUnidade[0];
       if (!destino) return res.status(409).json({ error: "A unidade n\xE3o tem estoque cadastrado." });
+      const saldoInicial = destino.modo === "patrimonio" || destino.modo === "validade" ? 0 : arredondar(Number(qtd_volumes) * Number(fator_multiplicador));
       const { data: material, error } = await req.db.from("materials").insert({
         nome,
         unidade_medida,
         qtd_volumes,
         fator_multiplicador,
         estoque_minimo,
-        categoria: categoria || "Outros"
+        categoria: categoria || "Outros",
+        validade_troca_dias: troca.dias
       }).select().single();
       if (error) throw error;
       const saldos = Object.fromEntries(daUnidade.map((d) => [d.id, d.id === destino.id ? saldoInicial : 0]));
@@ -1342,12 +1685,17 @@ function createApp() {
   app.put("/api/materials/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { id } = req.params;
-      const { nome, categoria, unidade_medida, estoque_minimo, fator_multiplicador } = req.body || {};
+      const { nome, categoria, unidade_medida, estoque_minimo, fator_multiplicador, validade_troca_dias } = req.body || {};
       const updates = { updated_at: (/* @__PURE__ */ new Date()).toISOString() };
       if (nome !== void 0) updates.nome = nome;
       if (categoria !== void 0) updates.categoria = categoria;
       if (unidade_medida !== void 0) updates.unidade_medida = unidade_medida;
       if (estoque_minimo !== void 0) updates.estoque_minimo = estoque_minimo;
+      if (validade_troca_dias !== void 0) {
+        const troca = validadeDeTroca(validade_troca_dias);
+        if (!troca.ok) return res.status(400).json({ error: troca.erro });
+        updates.validade_troca_dias = troca.dias;
+      }
       if (fator_multiplicador !== void 0) updates.fator_multiplicador = fator_multiplicador;
       const { data, error } = await req.db.from("materials").update(updates).eq("id", id).select().single();
       if (error) throw error;
@@ -1467,7 +1815,8 @@ function createApp() {
       res.status(500).json({ error: "Erro ao unificar materiais." });
     }
   });
-  async function avisarMinimo(material, saldosNovos, saldosAntes, depositosDaUnidadeDela, resumo) {
+  async function avisarMinimo(plano, material, saldosNovos, saldosAntes, depositosDaUnidadeDela, resumo) {
+    if (!planoLibera(plano, "alertas-por-email")) return;
     const saldos_unidade = {};
     for (const d of depositosDaUnidadeDela) saldos_unidade[d.id] = Number(saldosNovos[d.id] ?? saldosAntes[d.id] ?? 0);
     const saldo_unidade = Object.values(saldos_unidade).reduce((s, v) => s + v, 0);
@@ -1490,7 +1839,7 @@ function createApp() {
   }
   app.post("/api/estoques/:id/movimentacoes", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
-      const { operacao, material_id, quantidade, justificativa, destino_id } = req.body || {};
+      const { operacao, material_id, quantidade, justificativa, destino_id, lote_id } = req.body || {};
       if (!ehOperacaoGenerica(operacao)) return res.status(400).json({ error: "Opera\xE7\xE3o inv\xE1lida." });
       if (!material_id || quantidade == null || !String(justificativa ?? "").trim()) {
         return res.status(400).json({ error: "Preencha material, quantidade e justificativa." });
@@ -1498,15 +1847,24 @@ function createApp() {
       const depositos = await depositosDaOrg(req.db);
       const estoque = depositos.find((d) => d.id === req.params.id);
       if (!estoque) return res.status(404).json({ error: "Estoque n\xE3o encontrado." });
-      if (estoque.modo !== "almoxarifado") return res.status(409).json({ error: "Este estoque \xE9 de empr\xE9stimo: registre retiradas e devolu\xE7\xF5es." });
+      if (estoque.modo === "emprestimo") return res.status(409).json({ error: "Este estoque \xE9 de empr\xE9stimo: registre retiradas e devolu\xE7\xF5es." });
+      if (estoque.modo === "entrega") return res.status(409).json({ error: "Este estoque \xE9 de entrega: registre entregas na tela dele." });
+      if (estoque.modo === "patrimonio") return res.status(409).json({ error: "Este estoque \xE9 de patrim\xF4nio: cadastre, aloque e baixe itens na tela dele." });
       if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      if (!operacaoPermitida(estoque, operacao)) return res.status(409).json({ error: `A opera\xE7\xE3o ${operacao} est\xE1 desligada em ${estoque.nome}.` });
+      if (operacao === "TRANSFERENCIA") {
+        const negada = negarRecurso(req.plano, "transferencia");
+        if (negada) return res.status(negada.status).json(negada.body);
+      }
       const def = OPERACOES[operacao];
       const lados = def.lado === "origem" ? { origem_id: estoque.id } : { destino_id: estoque.id };
+      let destino;
       if (def.precisaDestino) {
-        const destino = depositos.find((d) => d.id === destino_id);
+        destino = depositos.find((d) => d.id === destino_id);
         if (!destino) return res.status(400).json({ error: "Escolha o estoque de destino." });
         if (destino.id === estoque.id) return res.status(400).json({ error: "Origem e destino s\xE3o o mesmo estoque." });
         if (destino.unit_id !== estoque.unit_id) return res.status(409).json({ error: "Transfer\xEAncia s\xF3 entre estoques da mesma unidade." });
+        if (destino.modo === "patrimonio") return res.status(409).json({ error: "N\xE3o d\xE1 para transferir quantidade para um estoque de patrim\xF4nio." });
         lados.destino_id = destino.id;
       }
       const { data: material, error: fetchError } = await req.db.from("materials").select("*").eq("id", material_id).single();
@@ -1516,6 +1874,77 @@ function createApp() {
       const atuais = await saldosDoMaterial(req.db, Number(material_id));
       const calculo = calcularMovimento(atuais, { ...lados, quantidade: q, ajuste: def.ajuste, rotulo: def.rotulo, nomeDe: nomeDo });
       if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
+      let detalheLotes = "";
+      const gravacoesDeLote = [];
+      const origemValidade = estoque.modo === "validade" && (operacao === "SAIDA" || operacao === "CONSUMO" || operacao === "TRANSFERENCIA");
+      const lotesDoOrigem = async () => {
+        const { data, error } = await req.db.from("lots").select("id, lote, validade, quantidade").eq("warehouse_id", estoque.id).eq("material_id", material_id);
+        if (error) throw error;
+        return data || [];
+      };
+      let consumos = [];
+      if (origemValidade) {
+        const lotes = await lotesDoOrigem();
+        const aloc = alocarSaida(lotes, q, lote_id ? String(lote_id) : null);
+        if (!aloc.ok) return res.status(400).json({ error: aloc.erro });
+        consumos = aloc.consumos;
+        detalheLotes = ` \u2014 lote(s) ${descreverConsumos(consumos)}`;
+        for (const c of consumos) {
+          const l = lotes.find((x) => x.id === c.id);
+          gravacoesDeLote.push(async () => {
+            const { error } = await req.db.from("lots").update({ quantidade: arredondar(Number(l.quantidade) - c.quantidade), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", c.id);
+            if (error) throw error;
+          });
+        }
+      }
+      if (estoque.modo === "validade" && operacao === "ENTRADA") {
+        const v = validarLote(req.body);
+        if (!v.ok) return res.status(400).json({ error: v.erro });
+        detalheLotes = ` \u2014 lote ${v.lote.lote}${v.lote.validade ? ` (val. ${v.lote.validade})` : ""}`;
+        gravacoesDeLote.push(async () => {
+          const { data: existente } = await req.db.from("lots").select("id, quantidade, validade").eq("warehouse_id", estoque.id).eq("material_id", material_id).eq("lote", v.lote.lote).maybeSingle();
+          if (existente) {
+            const { error } = await req.db.from("lots").update({ quantidade: arredondar(Number(existente.quantidade) + q), validade: v.lote.validade ?? existente.validade, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", existente.id);
+            if (error) throw error;
+          } else {
+            const { error } = await req.db.from("lots").insert({ warehouse_id: estoque.id, material_id, lote: v.lote.lote, validade: v.lote.validade, quantidade: q });
+            if (error) throw error;
+          }
+        });
+      }
+      if (estoque.modo === "validade" && operacao === "AJUSTE") {
+        const lotes = await lotesDoOrigem();
+        const l = lotes.find((x) => x.id === String(lote_id ?? ""));
+        if (!l) return res.status(400).json({ error: "Aponte o lote que est\xE1 sendo ajustado." });
+        if (Number(l.quantidade) + q < 0) return res.status(400).json({ error: `O lote ${l.lote} tem ${l.quantidade}; o ajuste deixaria negativo.` });
+        detalheLotes = ` \u2014 lote ${l.lote}`;
+        gravacoesDeLote.push(async () => {
+          const { error } = await req.db.from("lots").update({ quantidade: arredondar(Number(l.quantidade) + q), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", l.id);
+          if (error) throw error;
+        });
+      }
+      if (operacao === "TRANSFERENCIA" && destino?.modo === "validade") {
+        let partes;
+        if (consumos.length > 0) {
+          const lotesOrigem = await lotesDoOrigem();
+          partes = consumos.map((c) => ({ lote: c.lote, validade: lotesOrigem.find((l) => l.id === c.id)?.validade ?? null, quantidade: c.quantidade }));
+        } else {
+          partes = [{ lote: "TRANSF", validade: null, quantidade: q }];
+        }
+        for (const p2 of partes) {
+          gravacoesDeLote.push(async () => {
+            const { data: existente } = await req.db.from("lots").select("id, quantidade").eq("warehouse_id", destino.id).eq("material_id", material_id).eq("lote", p2.lote).maybeSingle();
+            if (existente) {
+              const { error } = await req.db.from("lots").update({ quantidade: arredondar(Number(existente.quantidade) + p2.quantidade), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", existente.id);
+              if (error) throw error;
+            } else {
+              const { error } = await req.db.from("lots").insert({ warehouse_id: destino.id, material_id, lote: p2.lote, validade: p2.validade, quantidade: p2.quantidade });
+              if (error) throw error;
+            }
+          });
+        }
+      }
+      for (const gravar of gravacoesDeLote) await gravar();
       await gravarSaldos(req.db, Number(material_id), calculo.novos);
       await req.db.from("material_movements").insert({
         material_id,
@@ -1524,10 +1953,10 @@ function createApp() {
         warehouse_origem_id: lados.origem_id ?? null,
         warehouse_destino_id: lados.destino_id ?? null,
         funcionario_matricula: req.user.matricula,
-        justificativa: String(justificativa).trim()
+        justificativa: `${String(justificativa).trim()}${detalheLotes}`
       });
-      await avisarMinimo(material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Opera\xE7\xE3o: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Respons\xE1vel: ${req.user.nome}`);
-      res.json({ success: true, material_id, saldos: calculo.novos });
+      await avisarMinimo(req.plano, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Opera\xE7\xE3o: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Respons\xE1vel: ${req.user.nome}`);
+      res.json({ success: true, material_id, saldos: calculo.novos, lotes: consumos });
     } catch (err) {
       console.error("[POST /api/estoques/:id/movimentacoes] erro:", err.message);
       res.status(500).json({ error: "Erro ao registrar movimenta\xE7\xE3o." });
@@ -1584,7 +2013,7 @@ function createApp() {
         funcionario_matricula: req.user.matricula,
         justificativa: `Retirada por ${r.tomador_nome}${r.tomador_referencia ? ` (${r.tomador_referencia})` : ""} \u2014 prazo ${r.prazo_horas} h`
       });
-      await avisarMinimo(material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user.nome}`);
+      await avisarMinimo(req.plano, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user.nome}`);
       res.status(201).json({ emprestimo: { ...emprestimo, material_nome: material.nome, unidade_medida: material.unidade_medida }, saldos: calculo.novos });
     } catch (err) {
       console.error("[POST /api/estoques/:id/emprestimos] erro:", err.message);
@@ -1624,6 +2053,253 @@ function createApp() {
       res.status(500).json({ error: "Erro ao registrar devolu\xE7\xE3o." });
     }
   });
+  const selecionarEntrega = "*, materials(nome, unidade_medida)";
+  const comMaterial = ({ materials: mat, ...e }) => ({ ...e, material_nome: mat?.nome ?? "Material removido", unidade_medida: mat?.unidade_medida ?? "" });
+  app.get("/api/estoques/:id/entregas", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      if (!podeVer(req.acessos ?? null, req.params.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este estoque." });
+      const { data, error } = await req.db.from("loans").select(selecionarEntrega).eq("warehouse_id", req.params.id).eq("tipo", "entrega").order("retirado_em", { ascending: false }).limit(500);
+      if (error) throw error;
+      res.json({ entregas: (data || []).map(comMaterial) });
+    } catch (err) {
+      console.error("[GET /api/estoques/:id/entregas] erro:", err.message);
+      res.status(500).json({ error: "Erro ao carregar entregas." });
+    }
+  });
+  async function registrarEntrega(req, estoque, corpo) {
+    const v = validarEntrega(corpo, estoque.exige_assinatura);
+    if (!v.ok) return { status: 400, body: { error: v.erro } };
+    const e = v.entrega;
+    const { data: material } = await req.db.from("materials").select("*").eq("id", e.material_id).maybeSingle();
+    if (!material) return { status: 404, body: { error: "Material n\xE3o encontrado." } };
+    const atuais = await saldosDoMaterial(req.db, e.material_id);
+    const calculo = calcularMovimento(atuais, { origem_id: estoque.id, quantidade: e.quantidade, rotulo: "esta entrega", nomeDe: () => estoque.nome });
+    if (!calculo.ok) return { status: 400, body: { error: calculo.erro } };
+    const agora = /* @__PURE__ */ new Date();
+    const ate = validoAte(material.validade_troca_dias, agora);
+    const { data: entrega, error } = await req.db.from("loans").insert({
+      tipo: "entrega",
+      warehouse_id: estoque.id,
+      material_id: e.material_id,
+      quantidade: e.quantidade,
+      tomador_nome: e.tomador_nome,
+      tomador_referencia: e.tomador_referencia,
+      observacao: e.observacao,
+      assinatura: e.assinatura,
+      retirado_em: agora.toISOString(),
+      prazo_em: ate ? ate.toISOString() : null,
+      retirada_matricula: req.user.matricula
+    }).select("*").single();
+    if (error) throw error;
+    await gravarSaldos(req.db, e.material_id, calculo.novos);
+    await req.db.from("material_movements").insert({
+      material_id: e.material_id,
+      tipo_operacao: "ENTREGA",
+      quantidade: e.quantidade,
+      warehouse_origem_id: estoque.id,
+      warehouse_destino_id: null,
+      funcionario_matricula: req.user.matricula,
+      justificativa: `Entrega a ${e.tomador_nome}${e.tomador_referencia ? ` (${e.tomador_referencia})` : ""}${ate ? ` \u2014 trocar at\xE9 ${ate.toISOString().slice(0, 10)}` : ""}`
+    });
+    return { status: 201, body: { entrega: { ...entrega, material_nome: material.nome, unidade_medida: material.unidade_medida }, saldos: calculo.novos }, material, saldosNovos: calculo.novos, saldosAntes: atuais };
+  }
+  app.post("/api/estoques/:id/entregas", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const depositos = await depositosDaOrg(req.db);
+      const estoque = depositos.find((d) => d.id === req.params.id);
+      if (!estoque) return res.status(404).json({ error: "Estoque n\xE3o encontrado." });
+      if (estoque.modo !== "entrega") return res.status(409).json({ error: "Este estoque n\xE3o \xE9 de entrega." });
+      if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      const r = await registrarEntrega(req, estoque, req.body);
+      if (r.status === 201 && r.material) {
+        await avisarMinimo(req.plano, r.material, r.saldosNovos, r.saldosAntes, depositos.filter((d) => d.unit_id === estoque.unit_id), `Entrega em ${estoque.nome} | Registrou: ${req.user.nome}`);
+      }
+      res.status(r.status).json(r.body);
+    } catch (err) {
+      console.error("[POST /api/estoques/:id/entregas] erro:", err.message);
+      res.status(500).json({ error: "Erro ao registrar entrega." });
+    }
+  });
+  app.post("/api/entregas/:id/encerrar", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: ent } = await req.db.from("loans").select(selecionarEntrega).eq("id", req.params.id).eq("tipo", "entrega").maybeSingle();
+      if (!ent) return res.status(404).json({ error: "Entrega n\xE3o encontrada." });
+      if (ent.devolvido_em || ent.encerrado_em) return res.status(409).json({ error: "Esta entrega j\xE1 foi encerrada." });
+      if (!podeOperar(req.acessos ?? null, ent.warehouse_id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      const modo = String(req.body?.modo ?? "");
+      const agora = (/* @__PURE__ */ new Date()).toISOString();
+      const falta = arredondar(Number(ent.quantidade) - Number(ent.quantidade_devolvida));
+      if (modo === "devolvido") {
+        const atuais = await saldosDoMaterial(req.db, ent.material_id);
+        const calculo = calcularMovimento(atuais, { destino_id: ent.warehouse_id, quantidade: falta, rotulo: "esta devolu\xE7\xE3o", nomeDe: (id) => id });
+        if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
+        const { data: atualizado, error } = await req.db.from("loans").update({ quantidade_devolvida: Number(ent.quantidade), devolvido_em: agora, devolucao_matricula: req.user.matricula }).eq("id", ent.id).select(selecionarEntrega).single();
+        if (error) throw error;
+        await gravarSaldos(req.db, ent.material_id, calculo.novos);
+        await req.db.from("material_movements").insert({
+          material_id: ent.material_id,
+          tipo_operacao: "DEVOLUCAO_ENTREGA",
+          quantidade: falta,
+          warehouse_origem_id: null,
+          warehouse_destino_id: ent.warehouse_id,
+          funcionario_matricula: req.user.matricula,
+          justificativa: `Devolu\xE7\xE3o de ${ent.tomador_nome}${req.body?.detalhe ? ` \u2014 ${String(req.body.detalhe).slice(0, 200)}` : ""}`
+        });
+        return res.json({ entrega: comMaterial(atualizado) });
+      }
+      if (modo === "consumido") {
+        const { data: atualizado, error } = await req.db.from("loans").update({ encerrado_em: agora, encerramento: "consumido", devolucao_matricula: req.user.matricula }).eq("id", ent.id).select(selecionarEntrega).single();
+        if (error) throw error;
+        return res.json({ entrega: comMaterial(atualizado) });
+      }
+      if (modo === "substituido") {
+        const depositos = await depositosDaOrg(req.db);
+        const estoque = depositos.find((d) => d.id === ent.warehouse_id);
+        if (!estoque) return res.status(409).json({ error: "O estoque desta entrega n\xE3o est\xE1 mais ativo." });
+        const r = await registrarEntrega(req, estoque, {
+          material_id: ent.material_id,
+          quantidade: falta,
+          tomador_nome: ent.tomador_nome,
+          tomador_referencia: ent.tomador_referencia,
+          observacao: req.body?.detalhe ? String(req.body.detalhe) : `Troca da entrega de ${String(ent.retirado_em).slice(0, 10)}`,
+          assinatura: req.body?.assinatura ?? null
+        });
+        if (r.status !== 201) return res.status(r.status).json(r.body);
+        const nova = r.body.entrega;
+        const { data: antiga, error } = await req.db.from("loans").update({ encerrado_em: agora, encerramento: "substituido", substituido_por: nova.id, devolucao_matricula: req.user.matricula }).eq("id", ent.id).select(selecionarEntrega).single();
+        if (error) throw error;
+        return res.status(201).json({ entrega: comMaterial(antiga), nova });
+      }
+      return res.status(400).json({ error: "Informe como encerrar: devolvido, consumido ou substituido." });
+    } catch (err) {
+      console.error("[POST /api/entregas/:id/encerrar] erro:", err.message);
+      res.status(500).json({ error: "Erro ao encerrar entrega." });
+    }
+  });
+  const selecionarItem = "*, materials(nome)";
+  const itemComMaterial = ({ materials: mat, ...i }) => ({ ...i, material_nome: mat?.nome ?? "Modelo removido" });
+  async function sincronizarSaldoDoModelo(req, warehouseId, materialId) {
+    const { count } = await req.db.from("assets").select("*", { count: "exact", head: true }).eq("warehouse_id", warehouseId).eq("material_id", materialId).neq("estado", "baixado");
+    const atuais = await saldosDoMaterial(req.db, materialId);
+    await gravarSaldos(req.db, materialId, { ...atuais, [warehouseId]: count ?? 0 });
+  }
+  app.get("/api/estoques/:id/patrimonio", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      if (!podeVer(req.acessos ?? null, req.params.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este estoque." });
+      const { data, error } = await req.db.from("assets").select(selecionarItem).eq("warehouse_id", req.params.id).order("codigo", { ascending: true });
+      if (error) throw error;
+      res.json({ itens: (data || []).map(itemComMaterial) });
+    } catch (err) {
+      console.error("[GET /api/estoques/:id/patrimonio] erro:", err.message);
+      res.status(500).json({ error: "Erro ao carregar itens." });
+    }
+  });
+  app.post("/api/estoques/:id/patrimonio", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const depositos = await depositosDaOrg(req.db);
+      const estoque = depositos.find((d) => d.id === req.params.id);
+      if (!estoque) return res.status(404).json({ error: "Estoque n\xE3o encontrado." });
+      if (estoque.modo !== "patrimonio") return res.status(409).json({ error: "Este estoque n\xE3o \xE9 de patrim\xF4nio." });
+      if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      const v = validarItem(req.body);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { data: material } = await req.db.from("materials").select("id, nome").eq("id", v.item.material_id).maybeSingle();
+      if (!material) return res.status(404).json({ error: "Modelo (material) n\xE3o encontrado." });
+      const { data: item, error } = await req.db.from("assets").insert({ ...v.item, warehouse_id: estoque.id }).select(selecionarItem).single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: `J\xE1 existe um item com o n\xFAmero ${v.item.codigo}.` });
+        throw error;
+      }
+      await req.db.from("asset_events").insert({ asset_id: item.id, tipo: "cadastro", detalhe: v.item.local ? `Local: ${v.item.local}` : null, funcionario_matricula: req.user.matricula });
+      await sincronizarSaldoDoModelo(req, estoque.id, v.item.material_id);
+      await req.db.from("material_movements").insert({
+        material_id: v.item.material_id,
+        tipo_operacao: "ENTRADA",
+        quantidade: 1,
+        warehouse_origem_id: null,
+        warehouse_destino_id: estoque.id,
+        funcionario_matricula: req.user.matricula,
+        justificativa: `Cadastro do item ${v.item.codigo}`
+      });
+      res.status(201).json({ item: itemComMaterial(item) });
+    } catch (err) {
+      console.error("[POST /api/estoques/:id/patrimonio] erro:", err.message);
+      res.status(500).json({ error: "Erro ao cadastrar item." });
+    }
+  });
+  app.patch("/api/patrimonio/:id", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: atual } = await req.db.from("assets").select(selecionarItem).eq("id", req.params.id).maybeSingle();
+      if (!atual) return res.status(404).json({ error: "Item n\xE3o encontrado." });
+      if (!podeOperar(req.acessos ?? null, atual.warehouse_id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      const v = validarItem({ ...atual, ...req.body, material_id: atual.material_id });
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { codigo, serie, local, observacao, adquirido_em, valor } = v.item;
+      const { data: item, error } = await req.db.from("assets").update({ codigo, serie, local, observacao, adquirido_em, valor, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", atual.id).select(selecionarItem).single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: `J\xE1 existe um item com o n\xFAmero ${v.item.codigo}.` });
+        throw error;
+      }
+      await req.db.from("asset_events").insert({ asset_id: atual.id, tipo: "edicao", detalhe: "Dados do item alterados", funcionario_matricula: req.user.matricula });
+      res.json({ item: itemComMaterial(item) });
+    } catch (err) {
+      console.error("[PATCH /api/patrimonio/:id] erro:", err.message);
+      res.status(500).json({ error: "Erro ao editar item." });
+    }
+  });
+  app.post("/api/patrimonio/:id/eventos", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: atual } = await req.db.from("assets").select(selecionarItem).eq("id", req.params.id).maybeSingle();
+      if (!atual) return res.status(404).json({ error: "Item n\xE3o encontrado." });
+      if (!podeOperar(req.acessos ?? null, atual.warehouse_id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
+      const v = validarEvento(req.body);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const t = transicionar(atual.estado, v.evento.tipo);
+      if (!t.ok) return res.status(409).json({ error: t.erro });
+      const patch = { estado: t.para, updated_at: (/* @__PURE__ */ new Date()).toISOString() };
+      if (v.evento.tipo === "alocacao") {
+        patch.responsavel_nome = v.evento.para_nome;
+        patch.responsavel_referencia = v.evento.para_referencia;
+      }
+      if (v.evento.tipo === "devolucao" || v.evento.tipo === "manutencao" || v.evento.tipo === "baixa") {
+        patch.responsavel_nome = null;
+        patch.responsavel_referencia = null;
+      }
+      const { data: item, error } = await req.db.from("assets").update(patch).eq("id", atual.id).select(selecionarItem).single();
+      if (error) throw error;
+      const { data: evento, error: erroEv } = await req.db.from("asset_events").insert({ asset_id: atual.id, tipo: v.evento.tipo, detalhe: v.evento.detalhe, para_nome: v.evento.para_nome, para_referencia: v.evento.para_referencia, funcionario_matricula: req.user.matricula }).select("*").single();
+      if (erroEv) throw erroEv;
+      if (v.evento.tipo === "baixa") {
+        await sincronizarSaldoDoModelo(req, atual.warehouse_id, atual.material_id);
+        await req.db.from("material_movements").insert({
+          material_id: atual.material_id,
+          tipo_operacao: "BAIXA",
+          quantidade: 1,
+          warehouse_origem_id: atual.warehouse_id,
+          warehouse_destino_id: null,
+          funcionario_matricula: req.user.matricula,
+          justificativa: `Baixa do item ${atual.codigo}${v.evento.detalhe ? ` \u2014 ${v.evento.detalhe}` : ""}`
+        });
+      }
+      res.json({ item: itemComMaterial(item), evento });
+    } catch (err) {
+      console.error("[POST /api/patrimonio/:id/eventos] erro:", err.message);
+      res.status(500).json({ error: "Erro ao registrar evento." });
+    }
+  });
+  app.get("/api/patrimonio/:id/eventos", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
+    try {
+      const { data: item } = await req.db.from("assets").select("id, warehouse_id").eq("id", req.params.id).maybeSingle();
+      if (!item) return res.status(404).json({ error: "Item n\xE3o encontrado." });
+      if (!podeVer(req.acessos ?? null, item.warehouse_id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este estoque." });
+      const { data, error } = await req.db.from("asset_events").select("*").eq("asset_id", item.id).order("created_at", { ascending: false }).limit(200);
+      if (error) throw error;
+      res.json({ eventos: data || [] });
+    } catch (err) {
+      console.error("[GET /api/patrimonio/:id/eventos] erro:", err.message);
+      res.status(500).json({ error: "Erro ao carregar hist\xF3rico do item." });
+    }
+  });
   app.post("/api/materials/bulk-recount", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       const { location, warehouse_id, unit_id, counts } = req.body || {};
@@ -1646,6 +2322,9 @@ function createApp() {
       if (!podeOperar(req.acessos ?? null, deposito.id)) {
         return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para ajustar este dep\xF3sito." });
       }
+      if (deposito.modo === "validade") return res.status(409).json({ error: "Este estoque controla lotes: ajuste lote a lote na tela dele." });
+      if (deposito.modo === "patrimonio") return res.status(409).json({ error: "Este estoque \xE9 de patrim\xF4nio: cadastre ou baixe itens na tela dele." });
+      if (!operacaoPermitida(deposito, "AJUSTE")) return res.status(409).json({ error: `Ajuste est\xE1 desligado em ${deposito.nome}.` });
       if (!Array.isArray(counts) || counts.length === 0) {
         return res.status(400).json({ error: "Nenhuma contagem enviada." });
       }
@@ -1881,6 +2560,9 @@ function createApp() {
       }
       const { data: existing } = await req.db.from(ESTOQUE_USERS).select("id").eq("matricula", matricula).maybeSingle();
       if (existing) return res.status(409).json({ error: "J\xE1 existe um usu\xE1rio com esta matr\xEDcula." });
+      const { count: pessoas } = await req.db.from(ESTOQUE_USERS).select("*", { count: "exact", head: true });
+      const negada = negarLimite(req.plano, "usuarios", pessoas ?? 0);
+      if (negada) return res.status(negada.status).json(negada.body);
       const { data, error } = await req.db.from(ESTOQUE_USERS).insert({
         nome: String(nome).trim(),
         matricula: String(matricula).trim(),

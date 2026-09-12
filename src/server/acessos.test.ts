@@ -5,8 +5,8 @@ import { CENTRAL_ROLES, OBRA_ROLES, ALL_INVENTORY_ROLES, ADMIN_ROLES } from '../
 
 const CENTRAL = 'c1', OBRA = 'o1';
 const depositos: Deposito[] = [
-  { id: CENTRAL, nome: 'Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null },
-  { id: OBRA, nome: 'Obra', tipo: 'OBRA', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null },
+  { id: CENTRAL, nome: 'Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null, operacoes_permitidas: null, exige_assinatura: false, dias_aviso_validade: 30 },
+  { id: OBRA, nome: 'Obra', tipo: 'OBRA', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null, operacoes_permitidas: null, exige_assinatura: false, dias_aviso_validade: 30 },
 ];
 
 const admin: Acessos = null;

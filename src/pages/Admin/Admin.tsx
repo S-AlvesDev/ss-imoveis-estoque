@@ -17,6 +17,7 @@ import { naUnidade } from '@/store/unidade';
 import type { Material, MaterialMovement, StaffUser, Deposito } from '@/shared/types';
 import { formatNumber, stockStatus } from '@/features/estoque/utils';
 import { buscaInicial } from '@/store/busca';
+import { usePlano } from '@/features/planos/usePlano';
 
 /**
  * Filtros por situação. TRANSFERIR é avaliado da ótica da Obra: são os itens
@@ -56,14 +57,19 @@ const emptyForm = {
   qtd_volumes: '',
   fator_multiplicador: '1',
   estoque_minimo: '0',
+  validade_troca_dias: '',
 };
 
 export function Admin({ materials, materialMovements, staff, categorias, depositos, refetch }: AdminProps) {
+  const planoAtual = usePlano();
   const [form, setForm] = useState({ ...emptyForm, categoria: categorias[0] ?? '' });
   // Onde o saldo inicial entra. Com um estoque só, nem pergunta.
   const estoquesAtivos = depositos.filter((d) => d.ativo);
   const [estoqueInicial, setEstoqueInicial] = useState(() => (estoquesAtivos.find((d) => d.modo === 'almoxarifado') ?? estoquesAtivos[0])?.id ?? '');
   const [allowDuplicate, setAllowDuplicate] = useState(false);
+  // A validade de troca só faz sentido onde existe estoque de entrega; o aviso de saldo depende do modo do estoque escolhido.
+  const temEntrega = estoquesAtivos.some((d) => d.modo === 'entrega');
+  const modoDoInicial = estoquesAtivos.find((d) => d.id === estoqueInicial)?.modo;
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>('TODOS');
   const [categoria, setCategoria] = useState('TODAS');
@@ -126,6 +132,7 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
         qtd_volumes: Number(form.qtd_volumes),
         fator_multiplicador: Number(form.fator_multiplicador),
         estoque_minimo: Number(form.estoque_minimo),
+        validade_troca_dias: form.validade_troca_dias === '' ? null : Number(form.validade_troca_dias),
       }));
       toast.success('Material cadastrado com sucesso.');
       setForm(emptyForm);
@@ -190,7 +197,7 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
           >
             {selectMode ? 'Cancelar Seleção' : 'Selecionar Múltiplos'}
           </Button>
-          <Button variant="outline" icon={<FileDown size={15} />} onClick={() => exportMaterialsToWord(materials, categorias, depositos)}>
+          <Button variant="outline" icon={<FileDown size={15} />} onClick={() => exportMaterialsToWord(materials, categorias, depositos)} disabled={!planoAtual.libera('exportacoes')} title={planoAtual.libera('exportacoes') ? undefined : planoAtual.porQueNao('exportacoes')}>
             Exportar Word
           </Button>
           <Button variant="outline" icon={<Clock size={15} />} onClick={() => setAuditOpen(true)}>
@@ -292,6 +299,19 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
               onChange={(e) => setForm({ ...form, estoque_minimo: e.target.value })}
             />
 
+            {temEntrega && (
+              <Input
+                label="Validade de troca (dias)"
+                type="number"
+                min="1"
+                max="3650"
+                step="1"
+                placeholder="Só para EPI: ex.: 180"
+                value={form.validade_troca_dias}
+                onChange={(e) => setForm({ ...form, validade_troca_dias: e.target.value })}
+              />
+            )}
+
             {estoquesAtivos.length > 1 && (
               <Select label="Saldo inicial entra em" value={estoqueInicial} onChange={(e) => setEstoqueInicial(e.target.value)}>
                 {estoquesAtivos.map((d) => (
@@ -302,10 +322,18 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
               </Select>
             )}
 
-            <div className="rounded-lg bg-[var(--brand)]/10 px-3 py-2 text-xs font-semibold text-[var(--brand)]">
-              Saldo Calculado: {formatNumber(saldoCalculado)} {form.unidade_medida}
-              {estoquesAtivos.length > 1 ? ` em ${estoquesAtivos.find((d) => d.id === estoqueInicial)?.nome ?? ''}` : ''}
-            </div>
+            {modoDoInicial === 'patrimonio' || modoDoInicial === 'validade' ? (
+              <div className="rounded-lg bg-[var(--bg-2)] px-3 py-2 text-xs text-[var(--text-muted)]">
+                {modoDoInicial === 'patrimonio'
+                  ? 'Estoque de patrimônio: o material é o modelo. O saldo nasce zerado e cresce a cada item cadastrado na tela dele.'
+                  : 'Estoque de validade: o saldo nasce zerado; registre a entrada com lote e validade na tela dele.'}
+              </div>
+            ) : (
+              <div className="rounded-lg bg-[var(--brand)]/10 px-3 py-2 text-xs font-semibold text-[var(--brand)]">
+                Saldo Calculado: {formatNumber(saldoCalculado)} {form.unidade_medida}
+                {estoquesAtivos.length > 1 ? ` em ${estoquesAtivos.find((d) => d.id === estoqueInicial)?.nome ?? ''}` : ''}
+              </div>
+            )}
 
             <Button type="submit" fullWidth loading={creating}>
               Cadastrar Material

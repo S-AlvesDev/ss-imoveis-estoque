@@ -152,7 +152,7 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
         <Card className="p-5 lg:col-span-2">
           <p className="mb-4 text-sm font-bold text-[var(--text)]">Registrar movimentação</p>
           {podeOperar ? (
-            <MovementForm materials={filteredMaterials} deposito={deposito} outrosEstoques={outros.filter((d) => d.modo === 'almoxarifado' || d.modo === 'emprestimo')} onSubmit={handleMovement} />
+            <MovementForm materials={filteredMaterials} deposito={deposito} outrosEstoques={outros.filter((d) => d.modo !== 'patrimonio')} onSubmit={handleMovement} />
           ) : (
             <p className="text-sm text-[var(--text-muted)]">
               Você tem acesso de consulta a este estoque. Para registrar movimentações, peça ao administrador o nível “Opera” em Configurações.

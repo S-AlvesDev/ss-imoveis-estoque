@@ -8,6 +8,8 @@ import { MarcaProduto } from '@/shared/ui/Logo';
 import { api } from '@/lib/api';
 import { useMarca, aplicarCor, COR_PADRAO } from '@/store/marca';
 import type { Organizacao } from '@/shared/types';
+import { usePlano } from '@/features/planos/usePlano';
+import { Cadeado } from '@/features/planos/Cadeado';
 
 const LOGO_MAX_BYTES = 5 * 1024 * 1024;
 const LOGO_TIPOS = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
@@ -36,6 +38,9 @@ interface IdentidadeSectionProps {
 export function IdentidadeSection({ refetch }: IdentidadeSectionProps) {
   const organizacao = useMarca((s) => s.organizacao);
   const setOrganizacao = useMarca((s) => s.setOrganizacao);
+  // Cor e logo são do plano; o nome é de qualquer um.
+  const planoAtual = usePlano();
+  const personaliza = planoAtual.libera('identidade-visual');
 
   const [nome, setNome] = useState(organizacao?.nome ?? '');
   const [cor, setCor] = useState(organizacao?.cor_primaria ?? COR_PADRAO);
@@ -52,13 +57,14 @@ export function IdentidadeSection({ refetch }: IdentidadeSectionProps) {
 
   const corSalva = organizacao?.cor_primaria ?? COR_PADRAO;
   const corValida = /^#[0-9a-fA-F]{6}$/.test(cor);
-  const mudou = nome.trim() !== (organizacao?.nome ?? '') || cor.toLowerCase() !== corSalva.toLowerCase();
+  const mudou = nome.trim() !== (organizacao?.nome ?? '') || (personaliza && cor.toLowerCase() !== corSalva.toLowerCase());
 
   // Pré-visualização ao vivo. Se a pessoa sair sem salvar, volta.
   useEffect(() => {
+    if (!personaliza) return;
     if (corValida) aplicarCor(cor);
     return () => aplicarCor(corSalva);
-  }, [cor, corValida, corSalva]);
+  }, [cor, corValida, corSalva, personaliza]);
 
   function aplicar(o: Organizacao) {
     setOrganizacao(o);
@@ -71,7 +77,7 @@ export function IdentidadeSection({ refetch }: IdentidadeSectionProps) {
     try {
       const { organizacao: o } = await api.patch<{ organizacao: Organizacao }>('/api/organization', {
         nome: nome.trim(),
-        cor_primaria: cor.toLowerCase() === COR_PADRAO ? null : cor.toLowerCase(),
+        ...(personaliza ? { cor_primaria: cor.toLowerCase() === COR_PADRAO ? null : cor.toLowerCase() } : {}),
       });
       aplicar(o);
       toast.success('Identidade salva.');
@@ -143,6 +149,8 @@ export function IdentidadeSection({ refetch }: IdentidadeSectionProps) {
             <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
               <Palette size={12} /> Cor do sistema
             </p>
+            {!personaliza && <Cadeado texto={planoAtual.porQueNao('identidade-visual')} />}
+            {personaliza && (
             <div className="flex flex-wrap items-center gap-2">
               {PALETA.map((p) => {
                 const ativa = cor.toLowerCase() === p.hex;
@@ -176,9 +184,12 @@ export function IdentidadeSection({ refetch }: IdentidadeSectionProps) {
                 />
               </label>
             </div>
+            )}
+            {personaliza && (
             <p className="mt-2 text-[11px] text-[var(--text-muted)]">
               A cor se aplica ao vivo enquanto você escolhe. Só fica depois de salvar.
             </p>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] pt-4">
@@ -213,16 +224,20 @@ export function IdentidadeSection({ refetch }: IdentidadeSectionProps) {
             className="hidden"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarLogo(f); }}
           />
-          <div className="flex w-full flex-col gap-2">
-            <Button fullWidth size="sm" icon={organizacao.logo_url ? <Upload size={13} /> : <ImagePlus size={13} />} loading={enviando} onClick={() => arquivoRef.current?.click()}>
-              {organizacao.logo_url ? 'Trocar logo' : 'Enviar logo'}
-            </Button>
-            {organizacao.logo_url && (
-              <Button fullWidth size="sm" variant="ghost" icon={<Trash2 size={13} />} loading={removendo} onClick={removerLogo}>
-                Remover
+          {personaliza ? (
+            <div className="flex w-full flex-col gap-2">
+              <Button fullWidth size="sm" icon={organizacao.logo_url ? <Upload size={13} /> : <ImagePlus size={13} />} loading={enviando} onClick={() => arquivoRef.current?.click()}>
+                {organizacao.logo_url ? 'Trocar logo' : 'Enviar logo'}
               </Button>
-            )}
-          </div>
+              {organizacao.logo_url && (
+                <Button fullWidth size="sm" variant="ghost" icon={<Trash2 size={13} />} loading={removendo} onClick={removerLogo}>
+                  Remover
+                </Button>
+              )}
+            </div>
+          ) : (
+            <Cadeado texto={planoAtual.porQueNao('identidade-visual')} />
+          )}
         </Card>
       </div>
     </section>

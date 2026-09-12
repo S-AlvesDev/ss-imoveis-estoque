@@ -1,3 +1,5 @@
+import type { Plano, PlanoEfetivo } from './planos';
+
 /** A conta: a empresa dona dos dados. Nome, cor e logo são a identidade que as telas vestem. */
 export interface Organizacao {
   id: string;
@@ -6,6 +8,11 @@ export interface Organizacao {
   /** #rrggbb, ou null para a cor de fábrica. */
   cor_primaria: string | null;
   logo_url: string | null;
+  /** O plano contratado; null = sem assinatura (avaliação). */
+  plano: Plano | null;
+  plano_ate: string | null;
+  /** O que vale de fato — o servidor já resolveu vencimento e avaliação. */
+  plano_efetivo: PlanoEfetivo;
 }
 
 /** Uma filial: "Nova Cruz", "Natal". Cada unidade tem os próprios estoques. */
@@ -23,8 +30,13 @@ export type TipoDeposito = 'CENTRAL' | 'OBRA' | 'OUTRO';
  * Como se opera um estoque.
  *   almoxarifado  entrada, saída, consumo, ajuste, transferência na unidade.
  *   emprestimo    retirada por tempo limitado, com devolução.
+ *   entrega       entrega definitiva a uma pessoa (EPI, uniforme), com validade de troca.
+ *   validade      saldo por lote com data de validade; saída consome o que vence primeiro.
+ *   patrimonio    cada unidade é um item com número próprio, estado e responsável.
  */
-export type ModoEstoque = 'almoxarifado' | 'emprestimo';
+export type ModoEstoque = 'almoxarifado' | 'emprestimo' | 'entrega' | 'validade' | 'patrimonio';
+
+export type OperacaoGenerica = 'ENTRADA' | 'SAIDA' | 'CONSUMO' | 'TRANSFERENCIA' | 'AJUSTE';
 
 /** Um estoque: o lugar onde o material fica, com nome livre e um modo. Pertence a uma unidade. */
 export interface Deposito {
@@ -36,6 +48,12 @@ export interface Deposito {
   modo: ModoEstoque;
   /** Só no modo empréstimo: horas que uma retirada tem por padrão. */
   prazo_padrao_horas: number | null;
+  /** Almoxarifado: operações que a tela oferece. Nulo = todas. */
+  operacoes_permitidas: OperacaoGenerica[] | null;
+  /** Entrega: a pessoa assina na tela ao receber. */
+  exige_assinatura: boolean;
+  /** Validade: com quantos dias de antecedência avisar que um lote vence. */
+  dias_aviso_validade: number;
 }
 
 /** Categoria de material, cadastro da organização. */
@@ -45,9 +63,14 @@ export interface Categoria {
   ordem: number;
 }
 
-/** Uma retirada num estoque de empréstimo. Pendente enquanto `devolvido_em` for nulo. */
+/**
+ * Uma retirada (empréstimo) ou uma entrega (EPI) — a mesma tabela, com `tipo`.
+ * Aberta enquanto `devolvido_em` e `encerrado_em` forem nulos. No empréstimo,
+ * `prazo_em` é quando devolver; na entrega, é "válido até" (a troca).
+ */
 export interface Emprestimo {
   id: string;
+  tipo: 'emprestimo' | 'entrega';
   warehouse_id: string;
   material_id: number;
   material_nome: string;
@@ -58,10 +81,63 @@ export interface Emprestimo {
   tomador_referencia: string | null;
   observacao: string | null;
   retirado_em: string;
-  prazo_em: string;
+  prazo_em: string | null;
   devolvido_em: string | null;
   retirada_matricula: string;
   devolucao_matricula: string | null;
+  /** Entrega: PNG (data URL) da assinatura desenhada na tela. */
+  assinatura: string | null;
+  encerrado_em: string | null;
+  encerramento: 'consumido' | 'substituido' | null;
+  substituido_por: string | null;
+}
+
+/** Um lote de um material num estoque do modo validade. */
+export interface Lote {
+  id: string;
+  warehouse_id: string;
+  material_id: number;
+  material_nome: string;
+  unidade_medida: string;
+  lote: string;
+  /** AAAA-MM-DD, ou nulo (sem validade). */
+  validade: string | null;
+  quantidade: number;
+  updated_at: string;
+}
+
+export type EstadoDoItem = 'disponivel' | 'em_uso' | 'manutencao' | 'baixado';
+
+/** Um item de patrimônio: o material é o modelo, o item tem número próprio. */
+export interface Item {
+  id: string;
+  warehouse_id: string;
+  material_id: number;
+  material_nome: string;
+  codigo: string;
+  serie: string | null;
+  estado: EstadoDoItem;
+  responsavel_nome: string | null;
+  responsavel_referencia: string | null;
+  local: string | null;
+  observacao: string | null;
+  adquirido_em: string | null;
+  valor: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type TipoDeEventoDoItem = 'cadastro' | 'alocacao' | 'devolucao' | 'manutencao' | 'retorno' | 'baixa' | 'transferencia' | 'edicao';
+
+export interface EventoDoItem {
+  id: string;
+  asset_id: string;
+  tipo: TipoDeEventoDoItem;
+  detalhe: string | null;
+  para_nome: string | null;
+  para_referencia: string | null;
+  funcionario_matricula: string;
+  created_at: string;
 }
 
 export interface Material {
@@ -90,6 +166,8 @@ export interface Material {
   na_unidade: boolean;
   estoque_minimo: number;
   categoria: string;
+  /** Modo entrega: a cada quantos dias este material precisa ser trocado. Nulo = sem prazo. */
+  validade_troca_dias: number | null;
   created_at: string;
   updated_at: string;
 }

@@ -24,6 +24,67 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '3.3',
+    data: '2026-09-12',
+    titulo: 'Planos: Essencial, Profissional e Empresarial',
+    resumo:
+      'A conta passa a ter um plano, com limite de unidades, depósitos por unidade e usuários, e recursos que entram a partir de cada nível. Quem ainda não assinou está em avaliação, com tudo liberado. Em Configurações, o cartão Plano mostra o que a sua conta inclui e quanto já está em uso.',
+    mudancas: [
+      {
+        tipo: 'novo',
+        titulo: 'Cartão Plano em Configurações',
+        descricao: 'Qual é o seu plano, quantas unidades e depósitos já existem contra o limite, e a lista do que está liberado ou travado. Um clique para falar com a gente sobre mudar.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Cadeados com o plano certo',
+        descricao: 'Onde o plano não cobre — transferir entre depósitos, logo e cor, exportar relatórios, criar além do limite — o botão trava e diz a partir de qual plano existe. O servidor recusa também.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Home com os planos',
+        descricao: 'A página pública mostra os três planos, preços e o que cada um inclui. O botão de cada plano abre o pedido de contato.',
+      },
+    ],
+  },
+  {
+    versao: '3.2',
+    data: '2026-09-12',
+    titulo: 'Três modos novos: Entrega / EPI, Validade e lotes, Patrimônio',
+    resumo:
+      'Além de almoxarifado e empréstimo, um estoque agora pode ser de entrega (o que sai não volta, cobra-se a troca), de validade (lotes com data, saída pelo que vence primeiro) ou de patrimônio (cada item com número e vida própria). E o almoxarifado pode ter operações desligadas.',
+    mudancas: [
+      {
+        tipo: 'novo',
+        titulo: 'Modo Entrega / EPI',
+        descricao:
+          'Ficha por pessoa com o que ela recebeu, assinatura na tela (opcional ou exigida), validade de troca por material, botão Trocar e termo de responsabilidade em PDF. Trocas vencidas viram alerta.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Modo Validade e lotes',
+        descricao:
+          'Entrada informa lote e validade; saída, consumo e transferência tiram do lote que vence primeiro (FEFO) ou de um lote apontado; ajuste acerta um lote. Vencidos e vencendo em destaque e em Alertas.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Modo Patrimônio',
+        descricao:
+          'O material é o modelo; cada item tem número de patrimônio, série, local, valor e estado (disponível, em uso, manutenção, baixado). Entregar, receber, manutenção e baixa ficam no histórico do item.',
+      },
+      {
+        tipo: 'novo',
+        titulo: 'Operações por estoque',
+        descricao: 'No cartão do estoque, o administrador desliga as operações que não fazem sentido ali. O formulário só mostra as ligadas; o servidor recusa as outras.',
+      },
+      {
+        tipo: 'melhoria',
+        titulo: 'Materiais',
+        descricao: 'Campo “Validade de troca (dias)” quando a empresa tem estoque de entrega. Material cadastrado num estoque de validade ou patrimônio nasce com saldo zero — o saldo entra pela tela do estoque.',
+      },
+    ],
+  },
+  {
     versao: '3.1',
     data: '2026-09-12',
     titulo: 'Estoques do seu jeito: nome livre, modo de operação e categorias próprias',

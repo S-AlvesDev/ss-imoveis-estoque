@@ -5,7 +5,8 @@ import { Button } from '@/shared/ui/Button';
 import { Input } from '@/shared/ui/Field';
 import { api } from '@/lib/api';
 import type { Deposito, ModoEstoque, Unidade } from '@/shared/types';
-import { SeletorDeModo } from '@/features/estoques/EstoqueModal';
+import { CONFIG_PADRAO, CamposDoModo, SeletorDeModo, corpoDoEstoque, type ConfigDoModo } from '@/features/estoques/EstoqueModal';
+import { MODO_LABELS } from '@/shared/constants';
 
 interface NovaUnidadeModalProps {
   open: boolean;
@@ -22,7 +23,7 @@ export function NovaUnidadeModal({ open, onClose, onCreated }: NovaUnidadeModalP
   const [nome, setNome] = useState('');
   const [estoqueNome, setEstoqueNome] = useState('Almoxarifado');
   const [modo, setModo] = useState<ModoEstoque>('almoxarifado');
-  const [prazo, setPrazo] = useState('2');
+  const [config, setConfig] = useState<ConfigDoModo>(CONFIG_PADRAO);
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -35,7 +36,7 @@ export function NovaUnidadeModal({ open, onClose, onCreated }: NovaUnidadeModalP
     try {
       const { unidade } = await api.post<{ unidade: Unidade; depositos: Deposito[] }>('/api/units', {
         nome: limpo,
-        estoque: { nome: estoqueNome.trim(), modo, prazo_padrao_horas: modo === 'emprestimo' ? Number(prazo) : undefined },
+        estoque: corpoDoEstoque(estoqueNome, modo, config),
       });
       toast.success(`Unidade "${unidade.nome}" criada com o estoque ${estoqueNome.trim()}.`);
       setNome('');
@@ -51,15 +52,15 @@ export function NovaUnidadeModal({ open, onClose, onCreated }: NovaUnidadeModalP
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Nova unidade" subtitle="Uma filial com o próprio estoque">
+    <Modal open={open} onClose={onClose} title="Nova unidade" subtitle="Uma filial com o próprio estoque" maxWidth="max-w-2xl">
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input label="Nome da unidade" required maxLength={60} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Ex.: Natal" autoFocus />
         <div>
           <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Primeiro estoque</p>
           <SeletorDeModo value={modo} onChange={setModo} />
         </div>
-        <Input label="Nome do estoque" required maxLength={60} value={estoqueNome} onChange={(e) => setEstoqueNome(e.target.value)} placeholder={modo === 'emprestimo' ? 'Ex.: Coordenação de Esportes' : 'Ex.: Almoxarifado'} />
-        {modo === 'emprestimo' && <Input label="Prazo padrão de devolução (horas)" required type="number" min="1" max="8760" value={prazo} onChange={(e) => setPrazo(e.target.value)} />}
+        <Input label="Nome do estoque" required maxLength={60} value={estoqueNome} onChange={(e) => setEstoqueNome(e.target.value)} placeholder={`Ex.: ${MODO_LABELS[modo].exemplos.split(',')[0]}`} />
+        <CamposDoModo modo={modo} config={config} onChange={setConfig} />
         <p className="text-xs text-[var(--text-muted)]">A unidade nova começa sem materiais; escolha quais ela trabalha no cartão dela, em “gerenciar”.</p>
         <Button type="submit" fullWidth loading={saving}>
           Criar unidade

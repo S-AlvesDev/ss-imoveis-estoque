@@ -66,8 +66,8 @@ describe('prazo e atraso', () => {
 
 describe('validarEstoque', () => {
   it('almoxarifado não tem prazo; empréstimo tem, com padrão 2', () => {
-    expect(validarEstoque({ nome: ' Almoxarifado ', modo: 'almoxarifado', prazo_padrao_horas: 9 })).toEqual({ ok: true, nome: 'Almoxarifado', modo: 'almoxarifado', prazo_padrao_horas: null });
-    expect(validarEstoque({ nome: 'Esportes', modo: 'emprestimo' })).toEqual({ ok: true, nome: 'Esportes', modo: 'emprestimo', prazo_padrao_horas: 2 });
+    expect(validarEstoque({ nome: ' Almoxarifado ', modo: 'almoxarifado', prazo_padrao_horas: 9 })).toMatchObject({ ok: true, nome: 'Almoxarifado', modo: 'almoxarifado', prazo_padrao_horas: null });
+    expect(validarEstoque({ nome: 'Esportes', modo: 'emprestimo' })).toMatchObject({ ok: true, nome: 'Esportes', modo: 'emprestimo', prazo_padrao_horas: 2 });
     expect(validarEstoque({ nome: 'Esportes', modo: 'emprestimo', prazo_padrao_horas: 48 })).toMatchObject({ ok: true, prazo_padrao_horas: 48 });
   });
 

@@ -43,9 +43,12 @@ const TABELAS_DA_ORGANIZACAO = new Set([
   'warehouses',
   'stock_balances',
   'estoque_user_warehouses',
-  // Estoques configuráveis (migração 018): categorias e empréstimos.
+  // Estoques configuráveis (migrações 018 e 019).
   'categories',
   'loans',
+  'lots',
+  'assets',
+  'asset_events',
 ]);
 
 const clientesPorOrg = new Map<string, SupabaseClient>();

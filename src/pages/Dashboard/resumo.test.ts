@@ -123,7 +123,7 @@ describe('porCategoria', () => {
 });
 
 describe('filtrarPorUnidade', () => {
-  const depositos: Deposito[] = [{ id: 'c1', nome: 'Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null }];
+  const depositos: Deposito[] = [{ id: 'c1', nome: 'Central', tipo: 'CENTRAL', unit_id: 'u1', ativo: true, modo: 'almoxarifado', prazo_padrao_horas: null, operacoes_permitidas: null, exige_assinatura: false, dias_aviso_validade: 30 }];
   const comDeposito = { ...mov({ tipo_operacao: 'SAIDA', quantidade: 1, created_at: dia(0) }), warehouse_origem_id: 'c1' } as MaterialMovement;
   const deOutra = { ...mov({ tipo_operacao: 'SAIDA', quantidade: 1, created_at: dia(0) }), warehouse_origem_id: 'c9' } as MaterialMovement;
   const antiga = mov({ tipo_operacao: 'SAIDA', quantidade: 1, created_at: dia(0) });
