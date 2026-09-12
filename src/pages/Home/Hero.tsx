@@ -2,6 +2,7 @@ import { motion, useReducedMotion } from 'motion/react';
 import { ArrowRight, PlayCircle } from 'lucide-react';
 import { ROTAS } from '@/app/router';
 import { PRODUTO } from '@/shared/produto';
+import { AVALIACAO_DIAS } from '@/shared/planos';
 import { track } from '@/lib/analytics';
 import { Botao, BotaoLink, Container, Eyebrow } from './ui';
 import { DashboardMockup } from './DashboardMockup';
@@ -49,7 +50,7 @@ export function Hero({ onDemo }: { onDemo: () => void }) {
 
           <motion.div {...entrada(0.24)} className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
             <BotaoLink href={ROTAS.criarConta} tamanho="lg" onClick={() => track('home_hero_cta', { cta: 'comecar' })}>
-              Começar agora <ArrowRight size={18} />
+              Começar grátis por {AVALIACAO_DIAS} dias <ArrowRight size={18} />
             </BotaoLink>
             <Botao
               variante="secundario"

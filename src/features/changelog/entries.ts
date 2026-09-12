@@ -24,6 +24,18 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '3.4',
+    data: '2026-09-12',
+    titulo: 'Assinatura pelo Mercado Pago e 7 dias grátis',
+    resumo:
+      'Conta nova começa com 7 dias grátis, sem cartão. Depois, o administrador assina um plano em Configurações e conclui no Mercado Pago — mensal ou anual (2 meses grátis). Cobrança recusada dá 2 dias de aviso antes de travar; nada é apagado.',
+    mudancas: [
+      { tipo: 'novo', titulo: 'Assinar, trocar e cancelar em Configurações', descricao: 'O cartão Plano ganhou o botão Assinar (ou Trocar de plano), o histórico de cobranças e o cancelamento. O pagamento é no checkout do Mercado Pago, no cartão de crédito; o recibo vai para o e-mail do administrador.' },
+      { tipo: 'novo', titulo: 'Avaliação de 7 dias', descricao: 'Toda conta nova entra com tudo do Empresarial por 7 dias. Uma faixa no topo mostra quanto falta; no fim, a tela pede um plano — os dados continuam guardados.' },
+      { tipo: 'melhoria', titulo: 'Home', descricao: 'Os botões viraram "Começar grátis"; os cartões de plano mostram também o preço anual.' },
+    ],
+  },
+  {
     versao: '3.3',
     data: '2026-09-12',
     titulo: 'Planos: Essencial, Profissional e Empresarial',

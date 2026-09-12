@@ -91,6 +91,103 @@ export const DEFINICOES: Record<Plano, DefinicaoDoPlano> = {
   },
 };
 
+// ---------------------------------------------------------------------------
+//  Ciclos, avaliação e carência
+// ---------------------------------------------------------------------------
+
+export type Ciclo = 'mensal' | 'anual';
+export const CICLOS: readonly Ciclo[] = ['mensal', 'anual'];
+
+/** Conta nova entra com tudo liberado por estes dias; depois precisa assinar. */
+export const AVALIACAO_DIAS = 7;
+/** Cartão recusado: a conta continua por estes dias depois do vencimento, com aviso; depois trava. */
+export const CARENCIA_DIAS = 2;
+/** No anual, paga-se 12 meses menos estes. */
+export const MESES_GRATIS_NO_ANUAL = 2;
+
+/** O que se paga por ciclo: mensal é o preço; anual é 12 meses menos os grátis. */
+export function precoDo(plano: Plano, ciclo: Ciclo): number {
+  const mensal = DEFINICOES[plano].preco;
+  return ciclo === 'anual' ? Math.round(mensal * (12 - MESES_GRATIS_NO_ANUAL) * 100) / 100 : mensal;
+}
+
+export const NOME_DO_CICLO: Record<Ciclo, string> = { mensal: 'Mensal', anual: 'Anual' };
+
+/**
+ * Os planos de assinatura criados no painel do Mercado Pago (o id que vai na
+ * URL do checkout deles). Um por plano e ciclo; nulo = ainda não existe no
+ * painel e a assinatura é criada pela API com o valor do catálogo.
+ */
+export const MP_PLANO_ID: Record<Plano, Record<Ciclo, string | null>> = {
+  essencial: { mensal: '80d0a2509b3747b29c6ac81861ff32dd', anual: null },
+  profissional: { mensal: '146fe762b8a6479c91eb942920b6d2ce', anual: null },
+  empresarial: { mensal: '2aa62da2af554e63806660ac1aa7c145', anual: null },
+};
+
+/** Plano de R$ 0,50 no painel, para testar o fluxo inteiro sem pagar o Essencial. Entra no lugar do Essencial mensal com MP_MODO_TESTE=1. */
+export const MP_PLANO_DE_TESTE = 'd498ce9708594fec89331933d452b488';
+
+/** De um id de plano do Mercado Pago para o nosso plano e ciclo. */
+export function planoDoMpPlanId(planId: string | null | undefined, modoTeste = false): { plano: Plano; ciclo: Ciclo } | null {
+  if (!planId) return null;
+  if (modoTeste && planId === MP_PLANO_DE_TESTE) return { plano: 'essencial', ciclo: 'mensal' };
+  for (const plano of PLANOS) for (const ciclo of CICLOS) if (MP_PLANO_ID[plano][ciclo] === planId) return { plano, ciclo };
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+//  A situação da conta: assinada, em avaliação, em carência ou bloqueada
+// ---------------------------------------------------------------------------
+
+export type SituacaoDaConta = 'assinada' | 'avaliacao' | 'carencia' | 'bloqueada';
+
+export interface Conta {
+  situacao: SituacaoDaConta;
+  /** O plano que vale hoje (na avaliação e na carência ainda vale; bloqueada não vale nenhum). */
+  plano: PlanoEfetivo;
+  /** Quando a situação atual termina (fim da avaliação, próxima cobrança, fim da carência). Nulo = sem prazo. */
+  ate: string | null;
+  /** Dias até `ate`, arredondado para cima; nulo sem prazo. */
+  dias_restantes: number | null;
+}
+
+export interface CamposDaConta {
+  plano: string | null;
+  plano_ate: string | null;
+  avaliacao_ate: string | null;
+}
+
+const DIA_MS = 24 * 60 * 60 * 1000;
+
+function dias(ate: Date, agora: Date): number {
+  return Math.max(0, Math.ceil((ate.getTime() - agora.getTime()) / DIA_MS));
+}
+
+/**
+ * A regra inteira de "esta conta pode usar o sistema?":
+ *  - plano gravado e sem vencimento (cortesia) ou vencimento no futuro → assinada;
+ *  - plano vencido há menos de CARENCIA_DIAS → carência (funciona, com aviso);
+ *  - sem plano e avaliação ainda no prazo → avaliação (tudo do Empresarial);
+ *  - o resto → bloqueada.
+ */
+export function situacaoDaConta(c: CamposDaConta, agora: Date = new Date()): Conta {
+  if (ehPlano(c.plano)) {
+    if (!c.plano_ate) return { situacao: 'assinada', plano: c.plano, ate: null, dias_restantes: null };
+    const vence = new Date(c.plano_ate);
+    if (vence.getTime() >= agora.getTime()) return { situacao: 'assinada', plano: c.plano, ate: vence.toISOString(), dias_restantes: dias(vence, agora) };
+    const fimDaCarencia = new Date(vence.getTime() + CARENCIA_DIAS * DIA_MS);
+    if (fimDaCarencia.getTime() >= agora.getTime()) return { situacao: 'carencia', plano: c.plano, ate: fimDaCarencia.toISOString(), dias_restantes: dias(fimDaCarencia, agora) };
+    return { situacao: 'bloqueada', plano: 'avaliacao', ate: fimDaCarencia.toISOString(), dias_restantes: 0 };
+  }
+  if (c.avaliacao_ate) {
+    const fim = new Date(c.avaliacao_ate);
+    if (fim.getTime() >= agora.getTime()) return { situacao: 'avaliacao', plano: 'avaliacao', ate: fim.toISOString(), dias_restantes: dias(fim, agora) };
+    return { situacao: 'bloqueada', plano: 'avaliacao', ate: fim.toISOString(), dias_restantes: 0 };
+  }
+  // Sem plano e sem data de avaliação: conta de antes da cobrança existir. Não trava.
+  return { situacao: 'avaliacao', plano: 'avaliacao', ate: null, dias_restantes: null };
+}
+
 /** A nota de rodapé dos "ilimitados". */
 export const USO_JUSTO = '* Sujeito a uso justo e limites operacionais definidos em contrato.';
 

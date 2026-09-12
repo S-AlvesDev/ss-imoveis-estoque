@@ -49,6 +49,9 @@ const TABELAS_DA_ORGANIZACAO = new Set([
   'lots',
   'assets',
   'asset_events',
+  // Assinaturas (migração 021).
+  'assinaturas',
+  'pagamentos',
 ]);
 
 const clientesPorOrg = new Map<string, SupabaseClient>();

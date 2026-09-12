@@ -1,4 +1,4 @@
-import type { Plano, PlanoEfetivo } from './planos';
+import type { Conta, Plano, PlanoEfetivo } from './planos';
 
 /** A conta: a empresa dona dos dados. Nome, cor e logo são a identidade que as telas vestem. */
 export interface Organizacao {
@@ -11,8 +11,12 @@ export interface Organizacao {
   /** O plano contratado; null = sem assinatura (avaliação). */
   plano: Plano | null;
   plano_ate: string | null;
+  /** Fim dos dias grátis de conta nova; null para quem já tem plano. */
+  avaliacao_ate: string | null;
   /** O que vale de fato — o servidor já resolveu vencimento e avaliação. */
   plano_efetivo: PlanoEfetivo;
+  /** A situação da conta: assinada, avaliação, carência ou bloqueada, com o prazo. */
+  conta: Conta;
 }
 
 /** Uma filial: "Nova Cruz", "Natal". Cada unidade tem os próprios estoques. */

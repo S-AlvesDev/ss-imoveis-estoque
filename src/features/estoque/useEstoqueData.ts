@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
+import type { Conta } from '@/shared/planos';
 import { useUnidade } from '@/store/unidade';
 import { useMarca } from '@/store/marca';
 import type { Acesso, Categoria, Deposito, Emprestimo, Item, Lote, Material, MaterialMovement, NivelAcesso, Organizacao, StaffUser, Unidade } from '@/shared/types';
@@ -54,6 +55,9 @@ export function useEstoqueData() {
   const [data, setData] = useState<EstoqueResposta>(VAZIO);
   const [loading, setLoading] = useState(true);
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
+  // Conta bloqueada (avaliação terminou, cartão recusado): o servidor recusa
+  // o /api/data com 402 e diz a situação. A tela de bloqueio assume dali.
+  const [bloqueio, setBloqueio] = useState<Conta | null>(null);
   const unidadeEscolhida = useUnidade((s) => s.unidadeId);
   const setUnidade = useUnidade((s) => s.setUnidade);
   const setOrganizacao = useMarca((s) => s.setOrganizacao);
@@ -63,9 +67,14 @@ export function useEstoqueData() {
       const result = await api.get<EstoqueResposta>('/api/data');
       setData({ ...VAZIO, ...result });
       setAtualizadoEm(new Date());
+      setBloqueio(null);
       // Veste a cor e o logo desta organização assim que se sabe qual é.
       setOrganizacao(result.organizacao ?? null);
     } catch (err: any) {
+      if (err instanceof ApiError && err.status === 402 && err.body?.bloqueada) {
+        setBloqueio(err.body.conta ?? { situacao: 'bloqueada', plano: 'avaliacao', ate: null, dias_restantes: 0 });
+        return;
+      }
       toast.error(err.message || 'Erro ao carregar dados do estoque.');
     } finally {
       setLoading(false);
@@ -167,6 +176,8 @@ export function useEstoqueData() {
     lotes: data.lotes,
     itens: data.itens,
     organizacao: data.organizacao,
+    /** A situação quando o servidor bloqueou a conta; null quando está tudo bem. */
+    bloqueio,
     loading,
     /** Quando os dados chegaram pela última vez — o "última atualização" do painel. */
     atualizadoEm,

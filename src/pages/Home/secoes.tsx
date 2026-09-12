@@ -26,7 +26,7 @@ import {
 import { ROTAS } from '@/app/router';
 import { track } from '@/lib/analytics';
 import { Botao, BotaoLink, Cartao, Container, Eyebrow, Revelar, Secao } from './ui';
-import { DEFINICOES, ENTERPRISE, PLANOS, USO_JUSTO, formatarPreco } from '@/shared/planos';
+import { AVALIACAO_DIAS, DEFINICOES, ENTERPRISE, MESES_GRATIS_NO_ANUAL, PLANOS, USO_JUSTO, formatarPreco, precoDo } from '@/shared/planos';
 
 /* ------------------------------------------------------------------------- */
 /*  Prova rápida — quatro valores antes de qualquer lista de funcionalidades  */
@@ -143,7 +143,7 @@ export function Recursos() {
 /* ------------------------------------------------------------------------- */
 export function Planos({ onDemo }: { onDemo: (origem: string) => void }) {
   return (
-    <Secao id="planos" eyebrow="Planos" titulo="Do tamanho da sua operação." descricao="Comece pequeno e cresça sem trocar de sistema. Todo plano tem materiais, categorias, estoque mínimo, histórico e chamados; a diferença é quanto e o quê a mais.">
+    <Secao id="planos" eyebrow="Planos" titulo="Do tamanho da sua operação." descricao={`Comece com ${AVALIACAO_DIAS} dias grátis, sem cartão, e escolha o plano quando quiser continuar. Todo plano tem materiais, categorias, estoque mínimo, histórico e chamados; a diferença é quanto e o quê a mais.`}>
       <ul className="mt-12 grid gap-4 lg:grid-cols-3">
         {PLANOS.map((id, i) => {
           const p = DEFINICOES[id];
@@ -160,6 +160,9 @@ export function Planos({ onDemo }: { onDemo: (origem: string) => void }) {
                   <span className="text-4xl font-extrabold tracking-tight">{formatarPreco(p.preco)}</span>
                   <span className="text-sm text-slate-400">/mês</span>
                 </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  ou {formatarPreco(precoDo(id, 'anual'))}/ano — {MESES_GRATIS_NO_ANUAL} meses grátis
+                </p>
                 <ul className="mt-6 space-y-2.5 text-sm text-slate-300">
                   {p.destaques.map((d) => (
                     <li key={d} className="flex items-start gap-2.5">
@@ -174,9 +177,9 @@ export function Planos({ onDemo }: { onDemo: (origem: string) => void }) {
                   </p>
                 )}
                 <div className="mt-auto pt-6">
-                  <Botao variante={destaque ? 'primario' : 'secundario'} className="w-full" onClick={() => onDemo(`planos-${id}`)}>
-                    Falar com a gente <ArrowRight size={16} />
-                  </Botao>
+                  <BotaoLink href={ROTAS.criarConta} variante={destaque ? 'primario' : 'secundario'} className="w-full" onClick={() => track('home_plano_click', { plano: id })}>
+                    Começar {AVALIACAO_DIAS} dias grátis <ArrowRight size={16} />
+                  </BotaoLink>
                 </div>
               </div>
             </Revelar>
@@ -186,7 +189,10 @@ export function Planos({ onDemo }: { onDemo: (origem: string) => void }) {
       <Revelar className="mt-6 flex flex-col gap-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
         <p>{USO_JUSTO}</p>
         <p>
-          <span className="font-semibold text-slate-300">{ENTERPRISE.nome}:</span> {ENTERPRISE.descricao}
+          <span className="font-semibold text-slate-300">{ENTERPRISE.nome}:</span> {ENTERPRISE.descricao}{' '}
+          <button type="button" onClick={() => onDemo('planos-enterprise')} className="font-semibold text-[var(--laranja)] hover:underline">
+            Falar com a gente
+          </button>
         </p>
       </Revelar>
     </Secao>

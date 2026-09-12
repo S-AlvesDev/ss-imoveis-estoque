@@ -19,7 +19,7 @@ export const PRODUTO = {
   navy: '#050B18',
   navy2: '#0B1426',
   /** Só dígitos, com DDI: é o formato que o wa.me exige. */
-  whatsapp: '5584991284470',
+  whatsapp: '5584991434190',
   simbolo: '/brand/symbol.webp',
   simboloGrande: '/brand/symbol-512.png',
   /** Símbolo + nome. "Stok" em branco na versão escura, em preto na clara: cada fundo tem a sua. */

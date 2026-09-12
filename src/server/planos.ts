@@ -7,23 +7,29 @@
  * cada requisição, e montar a resposta padrão quando o plano não cobre.
  */
 import { supabaseServer } from '../lib/supabaseServer';
-import { planoEfetivo, planoLibera, cabeMaisUm, mensagemDeRecurso, mensagemDeLimite, planoMinimoPara, type PlanoEfetivo, type Recurso, type Limite } from '../shared/planos';
+import { planoLibera, cabeMaisUm, mensagemDeRecurso, mensagemDeLimite, planoMinimoPara, situacaoDaConta, type Conta, type PlanoEfetivo, type Recurso, type Limite } from '../shared/planos';
 
 const CACHE_MS = 60_000;
-const cache = new Map<string, { plano: PlanoEfetivo; ate: number }>();
+const cache = new Map<string, { conta: Conta; ate: number }>();
 
-/** Lê o plano da organização — do cache por um minuto, depois do banco. */
-export async function planoDaOrg(organizationId: string, agora: number = Date.now()): Promise<PlanoEfetivo> {
+/**
+ * A situação da conta — assinada, em avaliação, em carência ou bloqueada —
+ * e o plano que vale. Do cache por um minuto, depois do banco. A regra em
+ * si (avaliação de 7 dias, carência de 2) mora em shared/planos.ts.
+ */
+export async function contaDaOrg(organizationId: string, agora: number = Date.now()): Promise<Conta> {
   const c = cache.get(organizationId);
-  if (c && c.ate > agora) return c.plano;
-  const { data, error } = await supabaseServer.from('organizations').select('plano, plano_ate').eq('id', organizationId).maybeSingle();
+  if (c && c.ate > agora) return c.conta;
+  const { data, error } = await supabaseServer.from('organizations').select('plano, plano_ate, avaliacao_ate').eq('id', organizationId).maybeSingle();
   if (error) throw error;
-  // Plano vencido conta como sem plano — a avaliação. Quando o pagamento
-  // existir, é aqui que "vencido" vira "bloqueado".
-  const vencido = data?.plano_ate && new Date(data.plano_ate).getTime() < agora;
-  const plano = planoEfetivo(vencido ? null : data?.plano);
-  cache.set(organizationId, { plano, ate: agora + CACHE_MS });
-  return plano;
+  const conta = situacaoDaConta({ plano: data?.plano ?? null, plano_ate: data?.plano_ate ?? null, avaliacao_ate: data?.avaliacao_ate ?? null }, new Date(agora));
+  cache.set(organizationId, { conta, ate: agora + CACHE_MS });
+  return conta;
+}
+
+/** Só o plano que vale. */
+export async function planoDaOrg(organizationId: string, agora: number = Date.now()): Promise<PlanoEfetivo> {
+  return (await contaDaOrg(organizationId, agora)).plano;
 }
 
 /** Depois de mudar o plano de uma organização, para a próxima leitura ver o novo. */

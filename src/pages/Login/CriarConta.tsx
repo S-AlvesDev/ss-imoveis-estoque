@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AVALIACAO_DIAS } from '@/shared/planos';
 import { toast } from 'sonner';
 import { ArrowRight, Building2, Lock, Mail, User } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
@@ -51,7 +52,7 @@ export function CriarConta() {
     <>
       <h2 className="font-display text-3xl font-bold text-[var(--text)]">Criar conta</h2>
       <p className="mt-1.5 text-sm text-[var(--text-muted)]">
-        Sua empresa ganha o próprio estoque, com uma unidade e dois almoxarifados prontos. Você entra como administrador.
+        <strong className="text-[var(--text)]">{AVALIACAO_DIAS} dias grátis, sem cartão.</strong> Sua empresa ganha o próprio estoque e você entra como administrador. Depois, escolha o plano que couber.
       </p>
 
       <form onSubmit={handleSubmit} className="mt-8 space-y-4">

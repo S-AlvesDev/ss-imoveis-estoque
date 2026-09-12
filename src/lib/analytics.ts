@@ -11,7 +11,10 @@ export type Evento =
   | 'home_scroll_90'
   | 'home_mockup_tab' // qual aba do mockup
   | 'home_demo_click' // abriu o formulário, de onde
-  | 'home_demo_submit'; // enviou o formulário
+  | 'home_demo_submit' // enviou o formulário
+  | 'home_plano_click' // clicou em começar num cartão de plano
+  | 'assinatura_iniciar' // foi para o checkout do Mercado Pago
+  | 'assinatura_confirmada'; // voltou do checkout com a assinatura ativa
 
 type Props = Record<string, string | number | boolean>;
 

@@ -50,7 +50,7 @@ export function Configuracoes({ unidades, depositos, catalogo, categorias, refet
         </div>
       </div>
 
-      <PlanoSection unidades={unidades} depositos={depositos} />
+      <PlanoSection unidades={unidades} depositos={depositos} refetch={refetch} />
 
       <IdentidadeSection refetch={refetch} />
 

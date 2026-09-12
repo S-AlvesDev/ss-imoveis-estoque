@@ -80,7 +80,10 @@ var TABELAS_DA_ORGANIZACAO = /* @__PURE__ */ new Set([
   "loans",
   "lots",
   "assets",
-  "asset_events"
+  "asset_events",
+  // Assinaturas (migração 021).
+  "assinaturas",
+  "pagamentos"
 ]);
 var clientesPorOrg = /* @__PURE__ */ new Map();
 function clientePara(organizationId) {
@@ -163,7 +166,7 @@ var PRODUTO = {
   navy: "#050B18",
   navy2: "#0B1426",
   /** Só dígitos, com DDI: é o formato que o wa.me exige. */
-  whatsapp: "5584991284470",
+  whatsapp: "5584991434190",
   simbolo: "/brand/symbol.webp",
   simboloGrande: "/brand/symbol-512.png",
   /** Símbolo + nome. "Stok" em branco na versão escura, em preto na clara: cada fundo tem a sua. */
@@ -472,12 +475,50 @@ var DEFINICOES = {
     servicos: ["Implanta\xE7\xE3o e treinamento da equipe", "Acompanhamento dedicado", "Prioridade m\xE1xima no suporte"]
   }
 };
+var CICLOS = ["mensal", "anual"];
+var AVALIACAO_DIAS = 7;
+var CARENCIA_DIAS = 2;
+var MESES_GRATIS_NO_ANUAL = 2;
+function precoDo(plano, ciclo) {
+  const mensal = DEFINICOES[plano].preco;
+  return ciclo === "anual" ? Math.round(mensal * (12 - MESES_GRATIS_NO_ANUAL) * 100) / 100 : mensal;
+}
+var NOME_DO_CICLO = { mensal: "Mensal", anual: "Anual" };
+var MP_PLANO_ID = {
+  essencial: { mensal: "80d0a2509b3747b29c6ac81861ff32dd", anual: null },
+  profissional: { mensal: "146fe762b8a6479c91eb942920b6d2ce", anual: null },
+  empresarial: { mensal: "2aa62da2af554e63806660ac1aa7c145", anual: null }
+};
+var MP_PLANO_DE_TESTE = "d498ce9708594fec89331933d452b488";
+function planoDoMpPlanId(planId, modoTeste2 = false) {
+  if (!planId) return null;
+  if (modoTeste2 && planId === MP_PLANO_DE_TESTE) return { plano: "essencial", ciclo: "mensal" };
+  for (const plano of PLANOS) for (const ciclo of CICLOS) if (MP_PLANO_ID[plano][ciclo] === planId) return { plano, ciclo };
+  return null;
+}
+var DIA_MS3 = 24 * 60 * 60 * 1e3;
+function dias(ate, agora) {
+  return Math.max(0, Math.ceil((ate.getTime() - agora.getTime()) / DIA_MS3));
+}
+function situacaoDaConta(c, agora = /* @__PURE__ */ new Date()) {
+  if (ehPlano(c.plano)) {
+    if (!c.plano_ate) return { situacao: "assinada", plano: c.plano, ate: null, dias_restantes: null };
+    const vence = new Date(c.plano_ate);
+    if (vence.getTime() >= agora.getTime()) return { situacao: "assinada", plano: c.plano, ate: vence.toISOString(), dias_restantes: dias(vence, agora) };
+    const fimDaCarencia = new Date(vence.getTime() + CARENCIA_DIAS * DIA_MS3);
+    if (fimDaCarencia.getTime() >= agora.getTime()) return { situacao: "carencia", plano: c.plano, ate: fimDaCarencia.toISOString(), dias_restantes: dias(fimDaCarencia, agora) };
+    return { situacao: "bloqueada", plano: "avaliacao", ate: fimDaCarencia.toISOString(), dias_restantes: 0 };
+  }
+  if (c.avaliacao_ate) {
+    const fim = new Date(c.avaliacao_ate);
+    if (fim.getTime() >= agora.getTime()) return { situacao: "avaliacao", plano: "avaliacao", ate: fim.toISOString(), dias_restantes: dias(fim, agora) };
+    return { situacao: "bloqueada", plano: "avaliacao", ate: fim.toISOString(), dias_restantes: 0 };
+  }
+  return { situacao: "avaliacao", plano: "avaliacao", ate: null, dias_restantes: null };
+}
 var NOME_DO_PLANO = { essencial: "Essencial", profissional: "Profissional", empresarial: "Empresarial", avaliacao: "Avalia\xE7\xE3o" };
 function ehPlano(s) {
   return typeof s === "string" && PLANOS.includes(s);
-}
-function planoEfetivo(plano) {
-  return ehPlano(plano) ? plano : "avaliacao";
 }
 function definicaoDe(plano) {
   return DEFINICOES[plano === "avaliacao" ? "empresarial" : plano];
@@ -530,15 +571,17 @@ function mensagemDeLimite(plano, limite) {
 // src/server/planos.ts
 var CACHE_MS = 6e4;
 var cache = /* @__PURE__ */ new Map();
-async function planoDaOrg(organizationId, agora = Date.now()) {
+async function contaDaOrg(organizationId, agora = Date.now()) {
   const c = cache.get(organizationId);
-  if (c && c.ate > agora) return c.plano;
-  const { data, error } = await supabaseServer.from("organizations").select("plano, plano_ate").eq("id", organizationId).maybeSingle();
+  if (c && c.ate > agora) return c.conta;
+  const { data, error } = await supabaseServer.from("organizations").select("plano, plano_ate, avaliacao_ate").eq("id", organizationId).maybeSingle();
   if (error) throw error;
-  const vencido = data?.plano_ate && new Date(data.plano_ate).getTime() < agora;
-  const plano = planoEfetivo(vencido ? null : data?.plano);
-  cache.set(organizationId, { plano, ate: agora + CACHE_MS });
-  return plano;
+  const conta = situacaoDaConta({ plano: data?.plano ?? null, plano_ate: data?.plano_ate ?? null, avaliacao_ate: data?.avaliacao_ate ?? null }, new Date(agora));
+  cache.set(organizationId, { conta, ate: agora + CACHE_MS });
+  return conta;
+}
+function esquecerPlano(organizationId) {
+  cache.delete(organizationId);
 }
 function negarRecurso(plano, recurso) {
   if (planoLibera(plano, recurso)) return null;
@@ -547,6 +590,312 @@ function negarRecurso(plano, recurso) {
 function negarLimite(plano, limite, atual) {
   if (cabeMaisUm(plano, limite, atual)) return null;
   return { status: 402, body: { error: mensagemDeLimite(plano, limite), plano, plano_minimo: null } };
+}
+
+// src/server/mercadopago.ts
+import { createHmac, timingSafeEqual } from "node:crypto";
+var API = "https://api.mercadopago.com";
+var CHECKOUT_DE_PLANO = "https://www.mercadopago.com.br/subscriptions/checkout";
+function modoTeste(env = process.env) {
+  return env.MP_MODO_TESTE === "1";
+}
+function mpConfigurado(env = process.env) {
+  return Boolean(env.MP_ACCESS_TOKEN);
+}
+function siteUrl(env) {
+  return (env.SITE_URL || env.VITE_SITE_URL || "https://stokai.app").replace(/\/+$/, "");
+}
+function urlDeRetorno(env = process.env) {
+  return `${siteUrl(env)}/assinatura/retorno`;
+}
+function mpPlanId(plano, ciclo, env = process.env) {
+  if (modoTeste(env) && plano === "essencial" && ciclo === "mensal") return MP_PLANO_DE_TESTE;
+  return MP_PLANO_ID[plano][ciclo];
+}
+function urlDoCheckoutDoPlano(planId, organizationId) {
+  const q = new URLSearchParams({ preapproval_plan_id: planId, external_reference: organizationId });
+  return `${CHECKOUT_DE_PLANO}?${q.toString()}`;
+}
+function motivo(plano, ciclo) {
+  return `Stok A\xED \u2014 ${DEFINICOES[plano].nome} (${NOME_DO_CICLO[ciclo].toLowerCase()})`;
+}
+function corpoDaAssinatura(args) {
+  const env = args.env ?? process.env;
+  return {
+    reason: motivo(args.plano, args.ciclo),
+    external_reference: args.organizationId,
+    payer_email: args.payerEmail,
+    auto_recurring: {
+      frequency: args.ciclo === "anual" ? 12 : 1,
+      frequency_type: "months",
+      transaction_amount: precoDo(args.plano, args.ciclo),
+      currency_id: "BRL"
+    },
+    back_url: urlDeRetorno(env),
+    status: "pending"
+  };
+}
+async function mp(caminho, init = {}, env = process.env) {
+  if (!env.MP_ACCESS_TOKEN) throw new Error("MP_ACCESS_TOKEN n\xE3o configurado.");
+  const r = await fetch(`${API}${caminho}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${env.MP_ACCESS_TOKEN}`, "Content-Type": "application/json", ...init.headers }
+  });
+  const texto5 = await r.text();
+  let corpo = null;
+  try {
+    corpo = texto5 ? JSON.parse(texto5) : null;
+  } catch {
+    corpo = { raw: texto5 };
+  }
+  if (!r.ok) {
+    const msg = corpo?.message || corpo?.error || `HTTP ${r.status}`;
+    throw new Error(`Mercado Pago ${init.method ?? "GET"} ${caminho}: ${msg}`);
+  }
+  return corpo;
+}
+function criarAssinaturaSemPlano(args) {
+  return mp("/preapproval", { method: "POST", body: JSON.stringify(corpoDaAssinatura(args)) });
+}
+function buscarAssinatura(id) {
+  return mp(`/preapproval/${encodeURIComponent(id)}`);
+}
+function cancelarAssinatura(id) {
+  return mp(`/preapproval/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ status: "cancelled" }) });
+}
+function buscarPagamentoAutorizado(id) {
+  return mp(`/authorized_payments/${encodeURIComponent(id)}`);
+}
+function assinaturaDoWebhookValida(args) {
+  if (!args.secret) return null;
+  if (!args.xSignature || !args.dataId) return false;
+  const partes = Object.fromEntries(
+    args.xSignature.split(",").map((p2) => {
+      const i = p2.indexOf("=");
+      return [p2.slice(0, i).trim(), p2.slice(i + 1).trim()];
+    })
+  );
+  const ts = partes.ts;
+  const v1 = partes.v1;
+  if (!ts || !v1) return false;
+  const id = /^[a-zA-Z0-9]+$/.test(args.dataId) ? args.dataId.toLowerCase() : args.dataId;
+  const manifesto = `id:${id};${args.xRequestId ? `request-id:${args.xRequestId};` : ""}ts:${ts};`;
+  const esperado = createHmac("sha256", args.secret).update(manifesto).digest("hex");
+  const a = Buffer.from(esperado);
+  const b = Buffer.from(v1);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function idDoEvento(body, query) {
+  const q = query["data.id"] ?? query["id"];
+  const v = body?.data?.id ?? q;
+  return v === void 0 || v === null || v === "" ? null : String(v);
+}
+function tipoDoEvento(body, query) {
+  return String(body?.type ?? query["type"] ?? query["topic"] ?? "");
+}
+
+// src/server/assinaturas.ts
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function traduzirStatus(s) {
+  switch (s) {
+    case "authorized":
+      return "autorizada";
+    case "paused":
+      return "pausada";
+    case "cancelled":
+      return "cancelada";
+    default:
+      return "pendente";
+  }
+}
+function traduzirPagamento(ap) {
+  const p2 = ap.payment?.status;
+  const detalhe = ap.payment?.status_detail ?? null;
+  if (ap.status === "scheduled") return { status: "agendado", detalhe };
+  if (ap.status === "cancelled") return { status: "cancelado", detalhe };
+  if (ap.status === "recycling") return { status: "pendente", detalhe: detalhe ?? "nova tentativa agendada" };
+  switch (p2) {
+    case "approved":
+      return { status: "aprovado", detalhe };
+    case "rejected":
+      return { status: "recusado", detalhe };
+    case "refunded":
+    case "charged_back":
+      return { status: "reembolsado", detalhe };
+    case "cancelled":
+      return { status: "cancelado", detalhe };
+    default:
+      return { status: "pendente", detalhe };
+  }
+}
+function planoAteDe(pre, ciclo, agora = /* @__PURE__ */ new Date()) {
+  if (pre.next_payment_date) return new Date(pre.next_payment_date).toISOString();
+  const d = new Date(agora);
+  d.setMonth(d.getMonth() + (ciclo === "anual" ? 12 : 1));
+  return d.toISOString();
+}
+async function contaDe(organizationId) {
+  const { data, error } = await supabaseServer.from("organizations").select("id, nome, slug, plano, plano_desde, plano_ate, avaliacao_ate").eq("id", organizationId).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return { organizacao: data, conta: situacaoDaConta(data) };
+}
+async function assinaturaAtual(organizationId) {
+  const { data, error } = await supabaseServer.from("assinaturas").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(20);
+  if (error) throw error;
+  const lista = data || [];
+  return lista.find((a) => a.status === "autorizada") ?? lista.find((a) => a.status === "pausada") ?? lista[0] ?? null;
+}
+async function pagamentosDe(organizationId, limite = 24) {
+  const { data, error } = await supabaseServer.from("pagamentos").select("*").eq("organization_id", organizationId).order("data", { ascending: false }).limit(limite);
+  if (error) throw error;
+  return data || [];
+}
+async function iniciarAssinatura(args) {
+  const atual = await assinaturaAtual(args.organizationId);
+  if (atual && (atual.status === "autorizada" || atual.status === "pausada")) {
+    if (!args.trocar) throw new ErroDeAssinatura(409, "Esta conta j\xE1 tem uma assinatura em vigor. Para mudar de plano, use a troca.");
+    if (atual.mp_preapproval_id) await cancelarAssinatura(atual.mp_preapproval_id);
+    await supabaseServer.from("assinaturas").update({ status: "cancelada", cancelada_em: (/* @__PURE__ */ new Date()).toISOString(), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", atual.id);
+  }
+  await supabaseServer.from("assinaturas").delete().eq("organization_id", args.organizationId).eq("status", "pendente").is("mp_preapproval_id", null);
+  const planId = mpPlanId(args.plano, args.ciclo);
+  const base = { organization_id: args.organizationId, plano: args.plano, ciclo: args.ciclo, valor: precoDo(args.plano, args.ciclo), payer_email: args.payerEmail, status: "pendente" };
+  if (planId) {
+    const { data: data2, error: error2 } = await supabaseServer.from("assinaturas").insert({ ...base, mp_plan_id: planId }).select("*").single();
+    if (error2) throw error2;
+    return { url: urlDoCheckoutDoPlano(planId, args.organizationId), assinatura: data2 };
+  }
+  const pre = await criarAssinaturaSemPlano({ plano: args.plano, ciclo: args.ciclo, organizationId: args.organizationId, payerEmail: args.payerEmail });
+  if (!pre.init_point) throw new Error("O Mercado Pago n\xE3o devolveu o link do checkout.");
+  const { data, error } = await supabaseServer.from("assinaturas").insert({ ...base, mp_preapproval_id: pre.id }).select("*").single();
+  if (error) throw error;
+  return { url: pre.init_point, assinatura: data };
+}
+async function cancelarAssinatura2(organizationId) {
+  const atual = await assinaturaAtual(organizationId);
+  if (!atual || atual.status !== "autorizada" && atual.status !== "pausada") throw new ErroDeAssinatura(409, "N\xE3o h\xE1 assinatura em vigor para cancelar.");
+  if (atual.mp_preapproval_id) await cancelarAssinatura(atual.mp_preapproval_id);
+  const { data, error } = await supabaseServer.from("assinaturas").update({ status: "cancelada", cancelada_em: (/* @__PURE__ */ new Date()).toISOString(), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", atual.id).select("*").single();
+  if (error) throw error;
+  esquecerPlano(organizationId);
+  return data;
+}
+var ErroDeAssinatura = class extends Error {
+  constructor(status, mensagem) {
+    super(mensagem);
+    this.status = status;
+  }
+};
+async function organizacaoExiste(id) {
+  if (!id || !UUID.test(id)) return false;
+  const { data } = await supabaseServer.from("organizations").select("id").eq("id", id).maybeSingle();
+  return Boolean(data);
+}
+async function acharDona(pre, sugerida) {
+  const { data: existente } = await supabaseServer.from("assinaturas").select("*").eq("mp_preapproval_id", pre.id).maybeSingle();
+  if (existente) return { organizationId: existente.organization_id, intencao: existente };
+  const candidatas = [sugerida, pre.external_reference].filter((x) => Boolean(x));
+  for (const id of candidatas) {
+    if (await organizacaoExiste(id)) {
+      const { data: intencao } = await supabaseServer.from("assinaturas").select("*").eq("organization_id", id).eq("status", "pendente").is("mp_preapproval_id", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      return { organizationId: id, intencao: intencao ?? null };
+    }
+  }
+  if (pre.payer_email) {
+    const { data: intencao } = await supabaseServer.from("assinaturas").select("*").eq("status", "pendente").is("mp_preapproval_id", null).ilike("payer_email", pre.payer_email).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (intencao) return { organizationId: intencao.organization_id, intencao };
+  }
+  return null;
+}
+async function aplicarPreapproval(pre, opcoes = {}) {
+  const dona = await acharDona(pre, opcoes.organizationId);
+  if (!dona) return { casou: false, organizationId: null, assinatura: null, motivo: "nenhuma organiza\xE7\xE3o corresponde (sem external_reference, inten\xE7\xE3o ou e-mail)" };
+  if (opcoes.organizationId && dona.organizationId !== opcoes.organizationId) {
+    return { casou: false, organizationId: dona.organizationId, assinatura: null, motivo: "a assinatura pertence a outra organiza\xE7\xE3o" };
+  }
+  const doPainel = planoDoMpPlanId(pre.preapproval_plan_id, modoTeste());
+  const plano = doPainel?.plano ?? dona.intencao?.plano ?? null;
+  const ciclo = doPainel?.ciclo ?? dona.intencao?.ciclo ?? (pre.auto_recurring?.frequency === 12 ? "anual" : "mensal");
+  if (!ehPlano(plano)) return { casou: false, organizationId: dona.organizationId, assinatura: null, motivo: `plano do MP desconhecido (${pre.preapproval_plan_id ?? "sem plano"})` };
+  const agora = (/* @__PURE__ */ new Date()).toISOString();
+  const status = traduzirStatus(pre.status);
+  const campos = {
+    organization_id: dona.organizationId,
+    plano,
+    ciclo,
+    valor: pre.auto_recurring?.transaction_amount ?? precoDo(plano, ciclo),
+    mp_preapproval_id: pre.id,
+    mp_plan_id: pre.preapproval_plan_id ?? null,
+    status,
+    payer_email: pre.payer_email ?? dona.intencao?.payer_email ?? null,
+    proxima_cobranca: pre.next_payment_date ?? null,
+    autorizada_em: status === "autorizada" ? dona.intencao?.autorizada_em ?? agora : dona.intencao?.autorizada_em ?? null,
+    cancelada_em: status === "cancelada" ? dona.intencao?.cancelada_em ?? agora : null,
+    updated_at: agora
+  };
+  let assinatura;
+  if (dona.intencao) {
+    const { data, error } = await supabaseServer.from("assinaturas").update(campos).eq("id", dona.intencao.id).select("*").single();
+    if (error) throw error;
+    assinatura = data;
+  } else {
+    const { data, error } = await supabaseServer.from("assinaturas").insert(campos).select("*").single();
+    if (error) throw error;
+    assinatura = data;
+  }
+  if (status === "autorizada") {
+    await supabaseServer.from("assinaturas").update({ status: "cancelada", cancelada_em: agora, updated_at: agora }).eq("organization_id", dona.organizationId).eq("status", "autorizada").neq("id", assinatura.id);
+    const { data: org } = await supabaseServer.from("organizations").select("plano_desde").eq("id", dona.organizationId).maybeSingle();
+    await supabaseServer.from("organizations").update({ plano, plano_desde: org?.plano_desde ?? agora, plano_ate: planoAteDe(pre, ciclo) }).eq("id", dona.organizationId);
+  }
+  esquecerPlano(dona.organizationId);
+  return { casou: true, organizationId: dona.organizationId, assinatura };
+}
+async function aplicarPagamentoAutorizado(ap) {
+  let { data: assinatura } = await supabaseServer.from("assinaturas").select("*").eq("mp_preapproval_id", ap.preapproval_id).maybeSingle();
+  if (!assinatura) {
+    const pre = await buscarAssinatura(ap.preapproval_id);
+    const r = await aplicarPreapproval(pre);
+    if (!r.casou) return r;
+    assinatura = r.assinatura;
+  }
+  const a = assinatura;
+  const { status, detalhe } = traduzirPagamento(ap);
+  const agora = (/* @__PURE__ */ new Date()).toISOString();
+  const campos = {
+    organization_id: a.organization_id,
+    assinatura_id: a.id,
+    mp_authorized_payment_id: String(ap.id),
+    mp_payment_id: ap.payment?.id != null ? String(ap.payment.id) : null,
+    status,
+    valor: ap.transaction_amount ?? a.valor,
+    moeda: ap.currency_id ?? "BRL",
+    detalhe,
+    data: ap.debit_date ?? ap.date_created ?? agora,
+    updated_at: agora
+  };
+  const { error } = await supabaseServer.from("pagamentos").upsert(campos, { onConflict: "mp_authorized_payment_id" });
+  if (error) throw error;
+  if (status === "aprovado") {
+    const pre = await buscarAssinatura(ap.preapproval_id);
+    await supabaseServer.from("assinaturas").update({ proxima_cobranca: pre.next_payment_date ?? null, status: traduzirStatus(pre.status), updated_at: agora }).eq("id", a.id);
+    await supabaseServer.from("organizations").update({ plano: a.plano, plano_ate: planoAteDe(pre, a.ciclo) }).eq("id", a.organization_id);
+    esquecerPlano(a.organization_id);
+  }
+  return { casou: true, organizationId: a.organization_id, assinatura: a };
+}
+async function tratarEvento(tipo, id) {
+  if (tipo === "subscription_preapproval") return aplicarPreapproval(await buscarAssinatura(id));
+  if (tipo === "subscription_authorized_payment") return aplicarPagamentoAutorizado(await buscarPagamentoAutorizado(id));
+  return { ignorado: true };
+}
+async function registrarEvento(args) {
+  try {
+    await supabaseServer.from("mp_eventos").insert({ tipo: args.tipo, mp_id: args.mpId, organization_id: args.organizationId, tratado: args.tratado, erro: args.erro, payload: args.payload ?? null });
+  } catch (e) {
+    console.error("[mp_eventos] n\xE3o gravou:", e.message);
+  }
 }
 
 // src/server/mail.ts
@@ -574,7 +923,7 @@ import { createHash, randomBytes } from "node:crypto";
 var VALIDADE_DO_TOKEN_MS = 60 * 60 * 1e3;
 var MIN_SENHA = 8;
 var MAX_SENHA = 200;
-function siteUrl(env = process.env) {
+function siteUrl2(env = process.env) {
   return (env.SITE_URL || env.VITE_SITE_URL || "https://stokai.app").replace(/\/+$/, "");
 }
 function gerarToken() {
@@ -598,7 +947,7 @@ function validarNovaSenha(senha) {
   return null;
 }
 function linkDeRedefinicao(token, env) {
-  return `${siteUrl(env)}/redefinir-senha?token=${encodeURIComponent(token)}`;
+  return `${siteUrl2(env)}/redefinir-senha?token=${encodeURIComponent(token)}`;
 }
 function primeiroNome(nome) {
   return nome.trim().split(/\s+/)[0] || nome;
@@ -615,7 +964,7 @@ function emailDeRecuperacao(nome, link) {
   };
 }
 function emailDeBoasVindas(nome, empresa, env) {
-  const base = siteUrl(env);
+  const base = siteUrl2(env);
   return {
     subject: `Bem-vindo(a) ao Stok A\xED, ${primeiroNome(nome)}`,
     html: layoutEmail({
@@ -858,10 +1207,18 @@ async function withTenant(req, res, next) {
   }
   req.db = scopedDb(organizationId);
   try {
-    req.plano = await planoDaOrg(organizationId);
+    req.conta = await contaDaOrg(organizationId);
+    req.plano = req.conta.plano;
   } catch (err) {
-    console.error("[withTenant] plano:", err.message);
+    console.error("[withTenant] conta:", err.message);
     return res.status(500).json({ error: "Erro ao carregar a organiza\xE7\xE3o." });
+  }
+  if (req.conta.situacao === "bloqueada" && !req.path.startsWith("/api/assinatura")) {
+    return res.status(402).json({
+      error: ehPlano(req.conta.plano) || req.conta.ate ? "Sua conta est\xE1 bloqueada. Assine um plano para continuar." : "Sua conta est\xE1 bloqueada.",
+      bloqueada: true,
+      conta: req.conta
+    });
   }
   next();
 }
@@ -1209,7 +1566,7 @@ function createApp() {
         unidadesDaOrg(db),
         depositosDaOrg(db, { incluirUnidadesInativas: true }),
         saldosDaOrg(db),
-        db.from("organizations").select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").eq("id", req.user.organization_id).single(),
+        db.from("organizations").select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate, avaliacao_ate").eq("id", req.user.organization_id).single(),
         db.from("categories").select("id, nome, ordem").order("ordem", { ascending: true }).order("nome", { ascending: true }),
         // Só o que está na rua: pendentes/atrasados dos estoques de empréstimo e entregas abertas dos de EPI.
         db.from("loans").select("*, materials(nome, unidade_medida)").is("devolvido_em", null).is("encerrado_em", null).order("prazo_em", { ascending: true }),
@@ -1248,7 +1605,7 @@ function createApp() {
         // O que ESTA pessoa pode fazer, para o front montar o menu. Admin: null.
         acessos: acessos === null ? null : [...acessos.entries()].map(([warehouse_id, nivel]) => ({ warehouse_id, nivel })),
         // Nome, cor e logo — a identidade que as telas vestem por dentro — e o plano em vigor.
-        organizacao: orgRes.data ? { ...orgRes.data, plano_efetivo: req.plano } : null
+        organizacao: orgRes.data ? { ...orgRes.data, plano_efetivo: req.plano, conta: req.conta } : null
       });
     } catch (err) {
       console.error("[GET /api/data] erro:", err.message);
@@ -1286,7 +1643,7 @@ function createApp() {
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nada para alterar." });
       const { data, error } = await req.db.from("organizations").update(patch).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
       if (error || !data) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err) {
       console.error("[PATCH /api/organization] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar a organiza\xE7\xE3o." });
@@ -1331,7 +1688,7 @@ function createApp() {
         const { error: rErr } = await supabaseServer.storage.from("logos").remove([anterior]);
         if (rErr) console.warn("[logo] n\xE3o apagou o anterior:", rErr.message);
       }
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err) {
       console.error("[POST /api/organization/logo] erro:", err.message);
       res.status(500).json({ error: "Erro ao salvar o logo." });
@@ -1347,7 +1704,7 @@ function createApp() {
         const { error: rErr } = await supabaseServer.storage.from("logos").remove([caminho]);
         if (rErr) console.warn("[logo] n\xE3o apagou o arquivo:", rErr.message);
       }
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err) {
       console.error("[DELETE /api/organization/logo] erro:", err.message);
       res.status(500).json({ error: "Erro ao remover o logo." });
@@ -2298,6 +2655,95 @@ function createApp() {
     } catch (err) {
       console.error("[GET /api/patrimonio/:id/eventos] erro:", err.message);
       res.status(500).json({ error: "Erro ao carregar hist\xF3rico do item." });
+    }
+  });
+  const resumoDaAssinatura = async (organizationId) => {
+    const [c, assinatura, pagamentos] = await Promise.all([contaDe(organizationId), assinaturaAtual(organizationId), pagamentosDe(organizationId)]);
+    return {
+      organizacao: c?.organizacao ?? null,
+      conta: c?.conta ?? null,
+      assinatura,
+      pagamentos,
+      // O que dá para assinar agora: por plano e ciclo, se existe caminho (plano no painel ou API configurada).
+      disponivel: Object.fromEntries(CICLOS.map((ciclo) => [ciclo, mpConfigurado() || PLANOS.some((p2) => mpPlanId(p2, ciclo))])),
+      modo_teste: modoTeste(),
+      avaliacao_dias: AVALIACAO_DIAS
+    };
+  };
+  app.get("/api/assinatura", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      res.json(await resumoDaAssinatura(req.user.organization_id));
+    } catch (err) {
+      console.error("[GET /api/assinatura] erro:", err.message);
+      res.status(500).json({ error: "Erro ao carregar a assinatura." });
+    }
+  });
+  app.post("/api/assinatura", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const plano = req.body?.plano;
+      const ciclo = req.body?.ciclo ?? "mensal";
+      if (!ehPlano(plano)) return res.status(400).json({ error: "Escolha o plano." });
+      if (!CICLOS.includes(ciclo)) return res.status(400).json({ error: "Ciclo inv\xE1lido: mensal ou anual." });
+      if (!mpPlanId(plano, ciclo) && !mpConfigurado()) return res.status(503).json({ error: "Pagamento ainda n\xE3o configurado para este ciclo. Fale com a gente." });
+      const { data: eu } = await req.db.from(ESTOQUE_USERS).select("email").eq("id", req.user.id).maybeSingle();
+      const email = String(eu?.email || "").trim().toLowerCase();
+      if (!email) return res.status(400).json({ error: "Cadastre um e-mail no seu usu\xE1rio antes de assinar: \xE9 para onde v\xE3o os recibos." });
+      const r = await iniciarAssinatura({ organizationId: req.user.organization_id, plano, ciclo, payerEmail: email, trocar: Boolean(req.body?.trocar) });
+      console.info(`[assinatura] ${req.user.organization_id} \u2192 ${plano}/${ciclo} (${r.assinatura.mp_plan_id ? "plano do painel" : "API"})`);
+      res.json({ url: r.url, valor: precoDo(plano, ciclo) });
+    } catch (err) {
+      if (err instanceof ErroDeAssinatura) return res.status(err.status).json({ error: err.message });
+      console.error("[POST /api/assinatura] erro:", err.message);
+      res.status(500).json({ error: "N\xE3o foi poss\xEDvel iniciar a assinatura." });
+    }
+  });
+  app.post("/api/assinatura/cancelar", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      await cancelarAssinatura2(req.user.organization_id);
+      res.json(await resumoDaAssinatura(req.user.organization_id));
+    } catch (err) {
+      if (err instanceof ErroDeAssinatura) return res.status(err.status).json({ error: err.message });
+      console.error("[POST /api/assinatura/cancelar] erro:", err.message);
+      res.status(500).json({ error: "N\xE3o foi poss\xEDvel cancelar a assinatura." });
+    }
+  });
+  app.post("/api/assinatura/sincronizar", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const id = String(req.body?.preapproval_id ?? "").trim();
+      if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return res.status(400).json({ error: "Assinatura inv\xE1lida." });
+      const pre = await buscarAssinatura(id);
+      const r = await aplicarPreapproval(pre, { organizationId: req.user.organization_id });
+      if (!r.casou) return res.status(409).json({ error: r.motivo ?? "A assinatura n\xE3o corresponde a esta conta." });
+      res.json(await resumoDaAssinatura(req.user.organization_id));
+    } catch (err) {
+      console.error("[POST /api/assinatura/sincronizar] erro:", err.message);
+      res.status(500).json({ error: "N\xE3o foi poss\xEDvel confirmar a assinatura. O Mercado Pago ainda vai avisar a gente; tente de novo em instantes." });
+    }
+  });
+  app.post("/api/webhooks/mercadopago", async (req, res) => {
+    const tipo = tipoDoEvento(req.body, req.query);
+    const id = idDoEvento(req.body, req.query);
+    if (!id) return res.status(400).json({ error: "Evento sem id." });
+    const valida = assinaturaDoWebhookValida({
+      xSignature: req.header("x-signature"),
+      xRequestId: req.header("x-request-id"),
+      dataId: id,
+      secret: process.env.MP_WEBHOOK_SECRET
+    });
+    if (valida === false) {
+      console.warn("[webhook MP] assinatura inv\xE1lida", { tipo, id });
+      return res.status(401).json({ error: "Assinatura do webhook inv\xE1lida." });
+    }
+    if (valida === null) console.warn("[webhook MP] MP_WEBHOOK_SECRET n\xE3o configurado \u2014 evento aceito sem conferir a assinatura.");
+    res.status(200).json({ ok: true });
+    try {
+      const r = await tratarEvento(tipo, id);
+      const casou = "casou" in r ? r.casou : true;
+      await registrarEvento({ tipo, mpId: id, organizationId: "organizationId" in r ? r.organizationId : null, tratado: casou, erro: "motivo" in r ? r.motivo ?? null : null, payload: req.body });
+      if (!("ignorado" in r)) console.info(`[webhook MP] ${tipo} ${id}: ${casou ? "aplicado" : `n\xE3o casou (${r.motivo})`}`);
+    } catch (err) {
+      console.error("[webhook MP] erro:", err.message);
+      await registrarEvento({ tipo, mpId: id, organizationId: null, tratado: false, erro: err.message, payload: req.body });
     }
   });
   app.post("/api/materials/bulk-recount", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {

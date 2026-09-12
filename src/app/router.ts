@@ -12,6 +12,8 @@ export const ROTAS = {
   esqueciSenha: '/esqueci-senha',
   /** Chega por link de e-mail, com ?token=... */
   redefinirSenha: '/redefinir-senha',
+  /** Para onde o Mercado Pago devolve a pessoa depois do checkout, com ?preapproval_id=... */
+  assinaturaRetorno: '/assinatura/retorno',
 } as const;
 
 export type Rota = (typeof ROTAS)[keyof typeof ROTAS];

@@ -13,6 +13,9 @@ import { Entrega } from '@/pages/Estoque/Entrega';
 import { Validade } from '@/pages/Estoque/Validade';
 import { Patrimonio } from '@/pages/Estoque/Patrimonio';
 import { PrimeiroEstoque } from '@/pages/Estoque/PrimeiroEstoque';
+import { ContaBloqueada } from '@/features/planos/ContaBloqueada';
+import { AvisoDaConta } from '@/features/planos/AvisoDaConta';
+import { RetornoAssinatura } from '@/features/planos/RetornoAssinatura';
 import { Admin } from '@/pages/Admin/Admin';
 import { Alertas } from '@/pages/Alertas/Alertas';
 import { Suporte } from '@/pages/Suporte/Suporte';
@@ -74,7 +77,7 @@ const VIEW_TITLES: Record<string, string> = {
 function InventoryApp({ role }: { role: string }) {
   const [view, setView] = useState<AppView | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, estoquesVisiveis, categorias, emprestimos, lotes, itens: itensDePatrimonio, loading, atualizadoEm, refetch } = useEstoqueData();
+  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, estoquesVisiveis, categorias, emprestimos, lotes, itens: itensDePatrimonio, bloqueio, loading, atualizadoEm, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
 
   const isAdmin = ADMIN_ROLES.includes(role);
@@ -98,6 +101,9 @@ function InventoryApp({ role }: { role: string }) {
   }, [loading, viewAtual, estoqueAtual]);
 
   if (loading) return <LoadingScreen />;
+
+  // Conta bloqueada (avaliação terminou, cartão recusado): só a tela de assinar.
+  if (bloqueio) return <ContaBloqueada conta={bloqueio} />;
 
   // Organização sem estoque nenhum: o primeiro acesso pergunta qual é.
   if (depositos.length === 0) {
@@ -137,6 +143,7 @@ function InventoryApp({ role }: { role: string }) {
           alertas={alertas}
           podeVerAlertas={isAdmin}
         />
+        <AvisoDaConta admin={isAdmin} onIrParaPlano={() => setView('configuracoes')} />
         <main className="p-6">
           {/* Novidades aparecem uma vez por versao, na tela inicial de cada perfil. */}
           {viewAtual === landingView && <UpdateBanner />}
@@ -214,11 +221,12 @@ export default function App() {
   // Entrou (ou já estava) em /entrar ou /criar-conta: a URL volta para a raiz,
   // para um F5 não reabrir a tela de login por cima do painel.
   useEffect(() => {
-    if (user && path !== ROTAS.home) navigate(ROTAS.home, { replace: true });
+    if (user && path !== ROTAS.home && path !== ROTAS.assinaturaRetorno) navigate(ROTAS.home, { replace: true });
   }, [user, path, navigate]);
 
   let tela: React.ReactNode;
-  if (user) tela = <InventoryApp role={user.role} />;
+  if (user && path === ROTAS.assinaturaRetorno) tela = <RetornoAssinatura />;
+  else if (user) tela = <InventoryApp role={user.role} />;
   else if (path === ROTAS.entrar) tela = <Login modo="entrar" />;
   else if (path === ROTAS.criarConta) tela = <Login modo="criar" />;
   else if (path === ROTAS.esqueciSenha) tela = <Login modo="esqueci" />;

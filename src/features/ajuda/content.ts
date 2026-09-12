@@ -561,13 +561,17 @@ export const GUIA: Section[] = [
         id: 'plano',
         titulo: 'O plano da sua conta',
         audiencia: ['admin'],
-        resumo: 'Cada conta tem um plano — Essencial, Profissional ou Empresarial — que define quantas unidades, depósitos por unidade e usuários cabem, e quais recursos existem. Sem assinatura, a conta está em avaliação, com tudo liberado.',
+        resumo: 'Cada conta tem um plano — Essencial, Profissional ou Empresarial — que define quantas unidades, depósitos por unidade e usuários cabem, e quais recursos existem. Conta nova tem 7 dias grátis com tudo liberado.',
         passos: [
-          'Em Configurações, o cartão Plano mostra o seu plano, o uso contra o limite e a lista do que está liberado.',
+          'Em Configurações, o cartão Plano e assinatura mostra o seu plano, o uso contra o limite e a lista do que está liberado.',
           'Onde o plano não cobre, o botão aparece travado com um cadeado e a frase "disponível a partir do plano X".',
-          'Para mudar de plano, clique em Falar sobre planos — abre uma conversa no WhatsApp com a nossa equipe.',
+          'Para assinar ou trocar, clique em Assinar / Trocar de plano, escolha mensal ou anual e conclua no Mercado Pago. Você volta com a conta liberada.',
         ],
-        dicas: [{ tipo: 'dica', texto: 'Transferência entre depósitos, logo e cor da empresa, exportações em PDF/Word e alertas por e-mail começam no Profissional. A lista de compras e os alertas na tela são de todos os planos.' }],
+        dicas: [
+          { tipo: 'dica', texto: 'Transferência entre depósitos, logo e cor da empresa, exportações em PDF/Word e alertas por e-mail começam no Profissional. A lista de compras e os alertas na tela são de todos os planos.' },
+          { tipo: 'dica', texto: 'O anual sai por 10 meses (2 grátis). Cancelar não apaga nada: o plano vale até o fim do período pago, e depois a conta só pede um plano de novo.' },
+          { tipo: 'atencao', texto: 'Cartão recusado: o Mercado Pago tenta de novo e a conta continua por 2 dias com um aviso no topo. Passado isso, a tela pede para regularizar — e tudo volta assim que o pagamento aprova.' },
+        ],
       },
       {
         id: 'estoques',

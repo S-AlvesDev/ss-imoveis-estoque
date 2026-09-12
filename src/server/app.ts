@@ -16,8 +16,10 @@ import { validarRetirada, prazoEm } from './emprestimos';
 import { validarEntrega, validoAte } from './entregas';
 import { alocarSaida, descreverConsumos, validarLote, type LoteBase, type Consumo } from './lotes';
 import { validarItem, validarEvento, transicionar } from './patrimonio';
-import { planoDaOrg, negarRecurso, negarLimite } from './planos';
-import { planoLibera, type PlanoEfetivo } from '../shared/planos';
+import { contaDaOrg, negarRecurso, negarLimite } from './planos';
+import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
+import { mpConfigurado, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId } from './mercadopago';
+import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, cancelarAssinatura, aplicarPreapproval, tratarEvento, registrarEvento, ErroDeAssinatura } from './assinaturas';
 import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
 import {
   gerarToken,
@@ -111,6 +113,8 @@ declare global {
       acessos?: Acessos;
       /** O plano em vigor da organização da sessão (ou avaliação). Ver withTenant. */
       plano?: PlanoEfetivo;
+      /** A situação da conta: assinada, avaliação, carência ou bloqueada. Ver withTenant. */
+      conta?: Conta;
     }
   }
 }
@@ -143,13 +147,23 @@ async function withTenant(req: express.Request, res: express.Response, next: exp
     return res.status(401).json({ error: 'Sessão desatualizada. Entre novamente.' });
   }
   req.db = scopedDb(organizationId);
-  // O plano vem junto: é ele que diz o que esta organização pode. Cache de
+  // A conta vem junto: é ela que diz o que esta organização pode. Cache de
   // um minuto, então não custa uma leitura por requisição.
   try {
-    req.plano = await planoDaOrg(organizationId);
+    req.conta = await contaDaOrg(organizationId);
+    req.plano = req.conta.plano;
   } catch (err: any) {
-    console.error('[withTenant] plano:', err.message);
+    console.error('[withTenant] conta:', err.message);
     return res.status(500).json({ error: 'Erro ao carregar a organização.' });
+  }
+  // Conta bloqueada (avaliação terminou, ou cartão recusado além da carência)
+  // só consegue falar com as rotas de assinatura — o caminho para voltar.
+  if (req.conta.situacao === 'bloqueada' && !req.path.startsWith('/api/assinatura')) {
+    return res.status(402).json({
+      error: ehPlano(req.conta.plano) || req.conta.ate ? 'Sua conta está bloqueada. Assine um plano para continuar.' : 'Sua conta está bloqueada.',
+      bloqueada: true,
+      conta: req.conta,
+    });
   }
   next();
 }
@@ -712,7 +726,7 @@ export function createApp() {
         unidadesDaOrg(db),
         depositosDaOrg(db, { incluirUnidadesInativas: true }),
         saldosDaOrg(db),
-        db.from('organizations').select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate').eq('id', req.user!.organization_id).single(),
+        db.from('organizations').select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate, avaliacao_ate').eq('id', req.user!.organization_id).single(),
         db.from('categories').select('id, nome, ordem').order('ordem', { ascending: true }).order('nome', { ascending: true }),
         // Só o que está na rua: pendentes/atrasados dos estoques de empréstimo e entregas abertas dos de EPI.
         db.from('loans').select('*, materials(nome, unidade_medida)').is('devolvido_em', null).is('encerrado_em', null).order('prazo_em', { ascending: true }),
@@ -772,7 +786,7 @@ export function createApp() {
         // O que ESTA pessoa pode fazer, para o front montar o menu. Admin: null.
         acessos: acessos === null ? null : [...acessos.entries()].map(([warehouse_id, nivel]) => ({ warehouse_id, nivel })),
         // Nome, cor e logo — a identidade que as telas vestem por dentro — e o plano em vigor.
-        organizacao: orgRes.data ? { ...orgRes.data, plano_efetivo: req.plano } : null,
+        organizacao: orgRes.data ? { ...orgRes.data, plano_efetivo: req.plano, conta: req.conta } : null,
       });
     } catch (err: any) {
       console.error('[GET /api/data] erro:', err.message);
@@ -819,7 +833,7 @@ export function createApp() {
       const { data, error } = await req.db!.from('organizations').update(patch)
         .eq('id', req.user!.organization_id).select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate').single();
       if (error || !data) throw error ?? new Error('organização não encontrada');
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err: any) {
       console.error('[PATCH /api/organization] erro:', err.message);
       res.status(500).json({ error: 'Erro ao atualizar a organização.' });
@@ -885,7 +899,7 @@ export function createApp() {
         if (rErr) console.warn('[logo] não apagou o anterior:', rErr.message);
       }
 
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err: any) {
       console.error('[POST /api/organization/logo] erro:', err.message);
       res.status(500).json({ error: 'Erro ao salvar o logo.' });
@@ -903,7 +917,7 @@ export function createApp() {
         const { error: rErr } = await supabaseServer.storage.from('logos').remove([caminho]);
         if (rErr) console.warn('[logo] não apagou o arquivo:', rErr.message);
       }
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano } });
+      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err: any) {
       console.error('[DELETE /api/organization/logo] erro:', err.message);
       res.status(500).json({ error: 'Erro ao remover o logo.' });
@@ -2204,6 +2218,121 @@ export function createApp() {
     } catch (err: any) {
       console.error('[GET /api/patrimonio/:id/eventos] erro:', err.message);
       res.status(500).json({ error: 'Erro ao carregar histórico do item.' });
+    }
+  });
+
+
+  // --------------------------- ASSINATURA (Mercado Pago) ---------------------------
+  // Estas rotas funcionam mesmo com a conta bloqueada: são o caminho de volta.
+  const resumoDaAssinatura = async (organizationId: string) => {
+    const [c, assinatura, pagamentos] = await Promise.all([contaDe(organizationId), assinaturaAtual(organizationId), pagamentosDe(organizationId)]);
+    return {
+      organizacao: c?.organizacao ?? null,
+      conta: c?.conta ?? null,
+      assinatura,
+      pagamentos,
+      // O que dá para assinar agora: por plano e ciclo, se existe caminho (plano no painel ou API configurada).
+      disponivel: Object.fromEntries(CICLOS.map((ciclo: Ciclo) => [ciclo, mpConfigurado() || PLANOS.some((p) => mpPlanId(p, ciclo))])),
+      modo_teste: modoTeste(),
+      avaliacao_dias: AVALIACAO_DIAS,
+    };
+  };
+
+  app.get('/api/assinatura', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      res.json(await resumoDaAssinatura(req.user!.organization_id));
+    } catch (err: any) {
+      console.error('[GET /api/assinatura] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar a assinatura.' });
+    }
+  });
+
+  /** Começa (ou troca, com `trocar: true`) uma assinatura: devolve a URL do checkout do Mercado Pago. */
+  app.post('/api/assinatura', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const plano = req.body?.plano;
+      const ciclo = req.body?.ciclo ?? 'mensal';
+      if (!ehPlano(plano)) return res.status(400).json({ error: 'Escolha o plano.' });
+      if (!CICLOS.includes(ciclo)) return res.status(400).json({ error: 'Ciclo inválido: mensal ou anual.' });
+      if (!mpPlanId(plano, ciclo) && !mpConfigurado()) return res.status(503).json({ error: 'Pagamento ainda não configurado para este ciclo. Fale com a gente.' });
+
+      // O e-mail do pagador: o do administrador que está assinando.
+      const { data: eu } = await req.db!.from(ESTOQUE_USERS).select('email').eq('id', req.user!.id).maybeSingle();
+      const email = String(eu?.email || '').trim().toLowerCase();
+      if (!email) return res.status(400).json({ error: 'Cadastre um e-mail no seu usuário antes de assinar: é para onde vão os recibos.' });
+
+      const r = await iniciarAssinatura({ organizationId: req.user!.organization_id, plano, ciclo, payerEmail: email, trocar: Boolean(req.body?.trocar) });
+      console.info(`[assinatura] ${req.user!.organization_id} → ${plano}/${ciclo} (${r.assinatura.mp_plan_id ? 'plano do painel' : 'API'})`);
+      res.json({ url: r.url, valor: precoDo(plano, ciclo) });
+    } catch (err: any) {
+      if (err instanceof ErroDeAssinatura) return res.status(err.status).json({ error: err.message });
+      console.error('[POST /api/assinatura] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível iniciar a assinatura.' });
+    }
+  });
+
+  app.post('/api/assinatura/cancelar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      await cancelarAssinatura(req.user!.organization_id);
+      res.json(await resumoDaAssinatura(req.user!.organization_id));
+    } catch (err: any) {
+      if (err instanceof ErroDeAssinatura) return res.status(err.status).json({ error: err.message });
+      console.error('[POST /api/assinatura/cancelar] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível cancelar a assinatura.' });
+    }
+  });
+
+  /**
+   * A volta do checkout: o Mercado Pago manda a pessoa para /assinatura/retorno
+   * com `preapproval_id`. Buscamos a assinatura lá e aplicamos — sem esperar o
+   * webhook, que pode chegar depois.
+   */
+  app.post('/api/assinatura/sincronizar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const id = String(req.body?.preapproval_id ?? '').trim();
+      if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return res.status(400).json({ error: 'Assinatura inválida.' });
+      const pre = await buscarAssinatura(id);
+      const r = await aplicarPreapproval(pre, { organizationId: req.user!.organization_id });
+      if (!r.casou) return res.status(409).json({ error: r.motivo ?? 'A assinatura não corresponde a esta conta.' });
+      res.json(await resumoDaAssinatura(req.user!.organization_id));
+    } catch (err: any) {
+      console.error('[POST /api/assinatura/sincronizar] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível confirmar a assinatura. O Mercado Pago ainda vai avisar a gente; tente de novo em instantes.' });
+    }
+  });
+
+  /**
+   * O webhook do Mercado Pago. Nunca confia no corpo: pega o id, busca o
+   * objeto na API com a nossa credencial e aplica. Responde 200 rápido — o MP
+   * reenvia o que não for respondido.
+   */
+  app.post('/api/webhooks/mercadopago', async (req, res) => {
+    const tipo = tipoDoEvento(req.body, req.query as Record<string, unknown>);
+    const id = idDoEvento(req.body, req.query as Record<string, unknown>);
+    if (!id) return res.status(400).json({ error: 'Evento sem id.' });
+
+    const valida = assinaturaDoWebhookValida({
+      xSignature: req.header('x-signature'),
+      xRequestId: req.header('x-request-id'),
+      dataId: id,
+      secret: process.env.MP_WEBHOOK_SECRET,
+    });
+    if (valida === false) {
+      console.warn('[webhook MP] assinatura inválida', { tipo, id });
+      return res.status(401).json({ error: 'Assinatura do webhook inválida.' });
+    }
+    if (valida === null) console.warn('[webhook MP] MP_WEBHOOK_SECRET não configurado — evento aceito sem conferir a assinatura.');
+
+    // O MP quer o 200 logo; o trabalho segue depois.
+    res.status(200).json({ ok: true });
+    try {
+      const r = await tratarEvento(tipo, id);
+      const casou = 'casou' in r ? r.casou : true;
+      await registrarEvento({ tipo, mpId: id, organizationId: 'organizationId' in r ? r.organizationId : null, tratado: casou, erro: 'motivo' in r ? (r.motivo ?? null) : null, payload: req.body });
+      if (!('ignorado' in r)) console.info(`[webhook MP] ${tipo} ${id}: ${casou ? 'aplicado' : `não casou (${r.motivo})`}`);
+    } catch (err: any) {
+      console.error('[webhook MP] erro:', err.message);
+      await registrarEvento({ tipo, mpId: id, organizationId: null, tratado: false, erro: err.message, payload: req.body });
     }
   });
 

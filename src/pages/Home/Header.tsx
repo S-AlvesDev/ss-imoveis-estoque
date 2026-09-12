@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Menu, X } from 'lucide-react';
 import { Link, ROTAS } from '@/app/router';
 import { LogoProduto } from '@/shared/ui/Logo';
+import { track } from '@/lib/analytics';
 import { Botao, BotaoLink, Container } from './ui';
 
 const NAV = [
@@ -58,10 +59,15 @@ export function Header({ onDemo }: { onDemo: () => void }) {
             <BotaoLink href={ROTAS.entrar} variante="fantasma">
               Entrar
             </BotaoLink>
-            <Botao onClick={onDemo}>Solicitar demonstração</Botao>
+            <Botao variante="fantasma" onClick={onDemo}>
+              Demonstração
+            </Botao>
+            <BotaoLink href={ROTAS.criarConta} onClick={() => track('home_hero_cta', { cta: 'header-comecar' })}>
+              Começar grátis
+            </BotaoLink>
           </div>
           <div className="sm:hidden">
-            <Botao onClick={onDemo}>Demonstração</Botao>
+            <BotaoLink href={ROTAS.criarConta}>Começar grátis</BotaoLink>
           </div>
           <button
             type="button"
