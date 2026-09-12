@@ -18,7 +18,7 @@ import { alocarSaida, descreverConsumos, validarLote, type LoteBase, type Consum
 import { validarItem, validarEvento, transicionar } from './patrimonio';
 import { contaDaOrg, negarRecurso, negarLimite } from './planos';
 import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
-import { mpConfigurado, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId } from './mercadopago';
+import { mpConfigurado, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico } from './mercadopago';
 import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura } from './assinaturas';
 import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
 import {
@@ -2268,6 +2268,15 @@ export function createApp() {
       if (err instanceof ErroDeAssinatura) return res.status(err.status).json({ error: err.message });
       console.error('[POST /api/assinatura] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível iniciar a assinatura.' });
+    }
+  });
+
+  /** O que a credencial do Mercado Pago enxerga — para diagnosticar "paguei e não liberou". Só administrador; nunca devolve segredos. */
+  app.get('/api/assinatura/diagnostico', authenticate, withTenant, requireRole(ADMIN_ROLES), async (_req, res) => {
+    try {
+      res.json(await diagnostico());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

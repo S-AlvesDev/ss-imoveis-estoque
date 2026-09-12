@@ -160,10 +160,46 @@ export function buscarPagamentoAutorizado(id: string): Promise<PagamentoAutoriza
 }
 
 /** As assinaturas mais recentes da conta do MP (todas as organizações). Para achar uma que o webhook não trouxe. */
-export async function procurarAssinaturasRecentes(limite = 50): Promise<PreapprovalMp[]> {
-  const q = new URLSearchParams({ sort: 'date_created:desc', limit: String(limite), offset: '0' });
+export async function procurarAssinaturasRecentes(limite = 50, filtro: Record<string, string> = {}): Promise<PreapprovalMp[]> {
+  const q = new URLSearchParams({ sort: 'date_created:desc', limit: String(limite), offset: '0', ...filtro });
   const r = await mp<{ results?: PreapprovalMp[] }>(`/preapproval/search?${q.toString()}`);
   return r.results ?? [];
+}
+
+/**
+ * O que a credencial enxerga — para o suporte descobrir por que uma
+ * assinatura não aparece: token de teste ou de produção, se o plano do
+ * painel é visível com ela (senão é de outra conta), quantas assinaturas
+ * existem. Nunca devolve a credencial.
+ */
+export async function diagnostico(env: AmbienteMp = process.env as AmbienteMp) {
+  const token = env.MP_ACCESS_TOKEN ?? '';
+  const tipoDoToken = !token ? 'ausente' : token.startsWith('APP_USR-') ? 'producao' : token.startsWith('TEST-') ? 'teste' : 'desconhecido';
+  const planos: Record<string, string> = {};
+  const ids = [MP_PLANO_DE_TESTE, ...Object.values(MP_PLANO_ID).flatMap((c) => Object.values(c)).filter((x): x is string => Boolean(x))];
+  for (const id of ids) {
+    try {
+      const p = await mp<{ id: string; status?: string; reason?: string; auto_recurring?: { transaction_amount?: number } }>(`/preapproval_plan/${id}`, {}, env);
+      planos[id] = `${p.status ?? '?'} · ${p.reason ?? ''} · R$ ${p.auto_recurring?.transaction_amount ?? '?'}`;
+    } catch (e: any) {
+      planos[id] = `ERRO: ${String(e.message).slice(0, 120)}`;
+    }
+  }
+  let busca: string;
+  try {
+    const r = await mp<{ paging?: { total?: number }; results?: PreapprovalMp[] }>('/preapproval/search?sort=date_created:desc&limit=10&offset=0', {}, env);
+    busca = `total=${r.paging?.total ?? '?'} results=${r.results?.length ?? 0}: ${(r.results ?? []).map((p) => `${p.status}/${p.preapproval_plan_id ?? 'sem-plano'}/${p.date_created?.slice(0, 10)}`).join('; ')}`;
+  } catch (e: any) {
+    busca = `ERRO: ${String(e.message).slice(0, 160)}`;
+  }
+  let usuario: string;
+  try {
+    const u = await mp<{ id?: number; nickname?: string; site_id?: string }>('/users/me', {}, env);
+    usuario = `${u.nickname ?? '?'} (id ${u.id ?? '?'}, ${u.site_id ?? '?'})`;
+  } catch (e: any) {
+    usuario = `ERRO: ${String(e.message).slice(0, 120)}`;
+  }
+  return { token: tipoDoToken, modo_teste: modoTeste(env), usuario, planos, busca, webhook_secret: Boolean(env.MP_WEBHOOK_SECRET) };
 }
 
 // ---------------------------------------------------------------------------
