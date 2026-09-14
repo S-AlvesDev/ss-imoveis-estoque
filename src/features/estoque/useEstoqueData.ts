@@ -72,7 +72,7 @@ export function useEstoqueData() {
       setOrganizacao(result.organizacao ?? null);
     } catch (err: any) {
       if (err instanceof ApiError && err.status === 402 && err.body?.bloqueada) {
-        setBloqueio(err.body.conta ?? { situacao: 'bloqueada', plano: 'avaliacao', ate: null, dias_restantes: 0 });
+        setBloqueio(err.body.conta ?? { situacao: 'bloqueada', renovacao: null, plano: 'avaliacao', ate: null, dias_restantes: 0 });
         return;
       }
       toast.error(err.message || 'Erro ao carregar dados do estoque.');

@@ -21,11 +21,16 @@ import {
   planoDeTeste,
   procurarAssinaturasRecentes,
   urlDoCheckoutDoPlano,
+  criarPagamentoAvulso,
+  buscarPagamento,
+  dadosParaPagar,
   type PreapprovalMp,
   type PagamentoAutorizadoMp,
+  type PagamentoMp,
+  type PagadorAvulso,
   type StatusMp,
 } from './mercadopago';
-import { ehPlano, planoDoMpPlanId, precoDo, situacaoDaConta, type Ciclo, type Conta, type Plano } from '../shared/planos';
+import { ehPlano, planoDoMpPlanId, precoDo, situacaoDaConta, fimDoPeriodo, DEFINICOES, NOME_DO_CICLO, PIX_VALIDADE_HORAS, BOLETO_VALIDADE_DIAS, type Ciclo, type Conta, type Plano } from '../shared/planos';
 
 export type StatusAssinatura = 'pendente' | 'autorizada' | 'pausada' | 'cancelada';
 export type StatusPagamento = 'agendado' | 'aprovado' | 'recusado' | 'cancelado' | 'reembolsado' | 'pendente';
@@ -57,6 +62,19 @@ export interface Pagamento {
   moeda: string;
   detalhe: string | null;
   data: string;
+  metodo: 'cartao' | 'pix' | 'boleto';
+  plano: Plano | null;
+  ciclo: Ciclo | null;
+  periodo_de: string | null;
+  periodo_ate: string | null;
+  vence_em: string | null;
+  dados: Record<string, string | null> | null;
+  descricao: string | null;
+  pagador: Record<string, unknown> | null;
+  nf_status: 'pendente' | 'emitida' | 'erro' | 'cancelada' | null;
+  nf_ref: string | null;
+  nf_numero: string | null;
+  nf_url: string | null;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -232,6 +250,7 @@ export interface ResultadoDeAplicacao {
   casou: boolean;
   organizationId: string | null;
   assinatura: Assinatura | null;
+  pagamento?: Pagamento;
   motivo?: string;
 }
 
@@ -337,7 +356,7 @@ export async function aplicarPreapproval(pre: PreapprovalMp, opcoes: { organizat
     const { data: org } = await supabaseServer.from('organizations').select('plano_desde').eq('id', dona.organizationId).maybeSingle();
     await supabaseServer
       .from('organizations')
-      .update({ plano, plano_desde: org?.plano_desde ?? agora, plano_ate: planoAteDe(pre, ciclo) })
+      .update({ plano, plano_desde: org?.plano_desde ?? agora, plano_ate: planoAteDe(pre, ciclo), cobranca: 'cartao' })
       .eq('id', dona.organizationId);
   }
   // Cancelada ou pausada: a conta continua até plano_ate — nada a mudar aqui.
@@ -375,6 +394,124 @@ export async function procurarEAplicar(organizationId: string, emails: string[])
   return aplicarPreapproval(pre, { organizationId });
 }
 
+// ---------------------------------------------------------------------------
+//  Pagamento avulso: Pix ou boleto do período inteiro
+// ---------------------------------------------------------------------------
+
+const REF_AVULSO = 'avulso:';
+
+/** De `pending|approved|rejected|...` de um pagamento para o nosso status. */
+export function traduzirStatusDePagamento(s: string | undefined): StatusPagamento {
+  switch (s) {
+    case 'approved':
+    case 'authorized':
+      return 'aprovado';
+    case 'rejected':
+      return 'recusado';
+    case 'cancelled':
+      return 'cancelado';
+    case 'refunded':
+    case 'charged_back':
+      return 'reembolsado';
+    default:
+      return 'pendente';
+  }
+}
+
+/** "Stok Aí — Profissional (mensal)" na fatura, com o período. */
+export function descricaoDoAvulso(plano: Plano, ciclo: Ciclo): string {
+  return `Stok Aí — ${DEFINICOES[plano].nome} (${NOME_DO_CICLO[ciclo].toLowerCase()})`;
+}
+
+/**
+ * Cria o pedido e pede o Pix/boleto ao MP. O registro nasce pendente com o
+ * QR Code / boleto guardado em `dados`; o webhook (ou a consulta da tela)
+ * aprova e aplica o período.
+ */
+export async function criarAvulso(args: { organizationId: string; plano: Plano; ciclo: Ciclo; metodo: 'pix' | 'boleto'; pagador: PagadorAvulso; valor: number }): Promise<Pagamento> {
+  const agora = new Date();
+  const venceEm = args.metodo === 'pix' ? new Date(agora.getTime() + PIX_VALIDADE_HORAS * 3600_000) : new Date(agora.getTime() + BOLETO_VALIDADE_DIAS * 24 * 3600_000);
+  const descricao = descricaoDoAvulso(args.plano, args.ciclo);
+
+  // Um pedido pendente por vez do mesmo método: o anterior sai.
+  await supabaseServer.from('pagamentos').delete().eq('organization_id', args.organizationId).eq('status', 'pendente').neq('metodo', 'cartao').is('mp_payment_id', null);
+
+  const { data: pedido, error } = await supabaseServer
+    .from('pagamentos')
+    .insert({ organization_id: args.organizationId, metodo: args.metodo, plano: args.plano, ciclo: args.ciclo, valor: args.valor, status: 'pendente', descricao, vence_em: venceEm.toISOString(), pagador: args.pagador, data: agora.toISOString() })
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  let pay: PagamentoMp;
+  try {
+    pay = await criarPagamentoAvulso({ metodo: args.metodo, valor: args.valor, descricao, referencia: `${REF_AVULSO}${pedido.id}`, pagador: args.pagador, venceEm, idempotencia: pedido.id });
+  } catch (e) {
+    await supabaseServer.from('pagamentos').delete().eq('id', pedido.id);
+    throw e;
+  }
+  const { data: atualizado, error: e2 } = await supabaseServer
+    .from('pagamentos')
+    .update({ mp_payment_id: String(pay.id), status: traduzirStatusDePagamento(pay.status), detalhe: pay.status_detail ?? null, dados: dadosParaPagar(pay), vence_em: pay.date_of_expiration ?? venceEm.toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', pedido.id)
+    .select('*')
+    .single();
+  if (e2) throw e2;
+  return atualizado as Pagamento;
+}
+
+/**
+ * O que o MP diz de um pagamento avulso: grava o status e, na primeira
+ * aprovação, aplica o período — a partir de hoje, ou do fim do período
+ * atual se a conta ainda está paga e no mesmo plano (renovação antecipada).
+ */
+export async function aplicarPagamentoAvulso(pay: PagamentoMp): Promise<ResultadoDeAplicacao> {
+  const ref = String(pay.external_reference ?? '');
+  let { data: pedido } = await supabaseServer.from('pagamentos').select('*').eq('mp_payment_id', String(pay.id)).maybeSingle();
+  if (!pedido && ref.startsWith(REF_AVULSO)) {
+    const r = await supabaseServer.from('pagamentos').select('*').eq('id', ref.slice(REF_AVULSO.length)).maybeSingle();
+    pedido = r.data;
+  }
+  if (!pedido) return { casou: false, organizationId: null, assinatura: null, motivo: `pagamento ${pay.id} não é de um pedido nosso` };
+  const p = pedido as Pagamento;
+  const agora = new Date();
+  const status = traduzirStatusDePagamento(pay.status);
+  const patch: Record<string, unknown> = { mp_payment_id: String(pay.id), status, detalhe: pay.status_detail ?? null, updated_at: agora.toISOString() };
+
+  if (status === 'aprovado' && !p.periodo_ate && ehPlano(p.plano) && p.ciclo) {
+    const { data: org } = await supabaseServer.from('organizations').select('plano, plano_ate, plano_desde').eq('id', p.organization_id).maybeSingle();
+    const aindaPago = org?.plano === p.plano && org?.plano_ate && new Date(org.plano_ate).getTime() > agora.getTime();
+    const de = aindaPago ? new Date(org!.plano_ate as string) : agora;
+    const ate = fimDoPeriodo(de, p.ciclo);
+    patch.periodo_de = de.toISOString();
+    patch.periodo_ate = ate.toISOString();
+    patch.data = pay.date_approved ?? agora.toISOString();
+    patch.nf_status = 'pendente';
+    await supabaseServer.from('organizations').update({ plano: p.plano, plano_desde: org?.plano_desde ?? agora.toISOString(), plano_ate: ate.toISOString(), cobranca: 'avulso' }).eq('id', p.organization_id);
+    esquecerPlano(p.organization_id);
+  }
+  const { data: atualizado, error } = await supabaseServer.from('pagamentos').update(patch).eq('id', p.id).select('*').single();
+  if (error) throw error;
+  return { casou: true, organizationId: p.organization_id, assinatura: null, pagamento: atualizado as Pagamento };
+}
+
+/** Consulta o MP e aplica — para a tela que fica esperando o Pix cair, sem depender do webhook. */
+export async function atualizarAvulso(pedido: Pagamento): Promise<Pagamento> {
+  if (!pedido.mp_payment_id) return pedido;
+  const pay = await buscarPagamento(pedido.mp_payment_id);
+  const r = await aplicarPagamentoAvulso(pay);
+  return r.casou && 'pagamento' in r && r.pagamento ? r.pagamento : pedido;
+}
+
+/** O pedido avulso pendente mais recente da organização, se houver e ainda valer. */
+export async function avulsoPendente(organizationId: string): Promise<Pagamento | null> {
+  const { data } = await supabaseServer.from('pagamentos').select('*').eq('organization_id', organizationId).eq('status', 'pendente').neq('metodo', 'cartao').not('mp_payment_id', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (!data) return null;
+  const p = data as Pagamento;
+  if (p.vence_em && new Date(p.vence_em).getTime() < Date.now()) return null;
+  return p;
+}
+
 /** Grava uma cobrança e, se aprovada, estende o plano até a próxima. */
 export async function aplicarPagamentoAutorizado(ap: PagamentoAutorizadoMp): Promise<ResultadoDeAplicacao> {
   let { data: assinatura } = await supabaseServer.from('assinaturas').select('*').eq('mp_preapproval_id', ap.preapproval_id).maybeSingle();
@@ -391,6 +528,9 @@ export async function aplicarPagamentoAutorizado(ap: PagamentoAutorizadoMp): Pro
   const campos = {
     organization_id: a.organization_id,
     assinatura_id: a.id,
+    metodo: 'cartao',
+    plano: a.plano,
+    ciclo: a.ciclo,
     mp_authorized_payment_id: String(ap.id),
     mp_payment_id: ap.payment?.id != null ? String(ap.payment.id) : null,
     status,
@@ -400,24 +540,34 @@ export async function aplicarPagamentoAutorizado(ap: PagamentoAutorizadoMp): Pro
     data: ap.debit_date ?? ap.date_created ?? agora,
     updated_at: agora,
   };
-  const { error } = await supabaseServer.from('pagamentos').upsert(campos, { onConflict: 'mp_authorized_payment_id' });
+  const { data: gravado, error } = await supabaseServer
+    .from('pagamentos')
+    .upsert({ ...campos, ...(status === 'aprovado' ? { nf_status: 'pendente' } : {}), pagador: { nome: a.payer_email ?? '', email: a.payer_email ?? '' } }, { onConflict: 'mp_authorized_payment_id' })
+    .select('*')
+    .maybeSingle();
   if (error) throw error;
 
   if (status === 'aprovado') {
     // Pagou: o plano vale até a próxima cobrança que o MP agendou.
     const pre = await buscarAssinatura(ap.preapproval_id);
     await supabaseServer.from('assinaturas').update({ proxima_cobranca: pre.next_payment_date ?? null, status: traduzirStatus(pre.status), updated_at: agora }).eq('id', a.id);
-    await supabaseServer.from('organizations').update({ plano: a.plano, plano_ate: planoAteDe(pre, a.ciclo) }).eq('id', a.organization_id);
+    await supabaseServer.from('organizations').update({ plano: a.plano, plano_ate: planoAteDe(pre, a.ciclo), cobranca: 'cartao' }).eq('id', a.organization_id);
     esquecerPlano(a.organization_id);
   }
-  return { casou: true, organizationId: a.organization_id, assinatura: a };
+  return { casou: true, organizationId: a.organization_id, assinatura: a, pagamento: (gravado as Pagamento) ?? undefined };
 }
 
 /** Um evento do webhook, do jeito que chega: busca no MP e aplica. Devolve o que aconteceu, para o diário. */
 export async function tratarEvento(tipo: string, id: string): Promise<ResultadoDeAplicacao | { ignorado: true }> {
   if (tipo === 'subscription_preapproval') return aplicarPreapproval(await buscarAssinatura(id));
   if (tipo === 'subscription_authorized_payment') return aplicarPagamentoAutorizado(await buscarPagamentoAutorizado(id));
-  // `payment`, `subscription_preapproval_plan` e o resto: nada a fazer — o que importa chega pelos dois acima.
+  if (tipo === 'payment') {
+    // Pix e boleto avulsos chegam aqui; os pagamentos das assinaturas também, mas esses o de cima já trata.
+    const pay = await buscarPagamento(id);
+    if (String(pay.external_reference ?? '').startsWith(REF_AVULSO)) return aplicarPagamentoAvulso(pay);
+    return { ignorado: true };
+  }
+  // `subscription_preapproval_plan` e o resto: nada a fazer.
   return { ignorado: true };
 }
 

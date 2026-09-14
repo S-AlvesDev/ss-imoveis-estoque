@@ -104,6 +104,23 @@ export const AVALIACAO_DIAS = 7;
 export const CARENCIA_DIAS = 2;
 /** No anual, paga-se 12 meses menos estes. */
 export const MESES_GRATIS_NO_ANUAL = 2;
+/** Quem paga por Pix/boleto recebe o aviso de renovação com esta antecedência. */
+export const LEMBRETE_DIAS = 5;
+/** Quanto tempo um Pix gerado fica válido, e um boleto. */
+export const PIX_VALIDADE_HORAS = 24;
+export const BOLETO_VALIDADE_DIAS = 3;
+
+/** Como se paga: cartão (assinatura automática) ou avulso por Pix/boleto (renova à mão). */
+export type Metodo = 'cartao' | 'pix' | 'boleto';
+export const METODOS: readonly Metodo[] = ['cartao', 'pix', 'boleto'];
+export const NOME_DO_METODO: Record<Metodo, string> = { cartao: 'Cartão de crédito', pix: 'Pix', boleto: 'Boleto' };
+
+/** O fim de um período pago que começa em `de`. */
+export function fimDoPeriodo(de: Date, ciclo: Ciclo): Date {
+  const d = new Date(de);
+  d.setMonth(d.getMonth() + (ciclo === 'anual' ? 12 : 1));
+  return d;
+}
 
 /** O que se paga por ciclo: mensal é o preço; anual é 12 meses menos os grátis. */
 export function precoDo(plano: Plano, ciclo: Ciclo): number {
@@ -144,6 +161,8 @@ export type SituacaoDaConta = 'assinada' | 'avaliacao' | 'carencia' | 'bloqueada
 
 export interface Conta {
   situacao: SituacaoDaConta;
+  /** Automática (cartão) ou manual (Pix/boleto, paga de novo a cada período); nulo sem cobrança. */
+  renovacao: 'automatica' | 'manual' | null;
   /** O plano que vale hoje (na avaliação e na carência ainda vale; bloqueada não vale nenhum). */
   plano: PlanoEfetivo;
   /** Quando a situação atual termina (fim da avaliação, próxima cobrança, fim da carência). Nulo = sem prazo. */
@@ -156,6 +175,7 @@ export interface CamposDaConta {
   plano: string | null;
   plano_ate: string | null;
   avaliacao_ate: string | null;
+  cobranca?: string | null;
 }
 
 const DIA_MS = 24 * 60 * 60 * 1000;
@@ -172,21 +192,22 @@ function dias(ate: Date, agora: Date): number {
  *  - o resto → bloqueada.
  */
 export function situacaoDaConta(c: CamposDaConta, agora: Date = new Date()): Conta {
+  const renovacao = c.cobranca === 'cartao' ? 'automatica' : c.cobranca === 'avulso' ? 'manual' : null;
   if (ehPlano(c.plano)) {
-    if (!c.plano_ate) return { situacao: 'assinada', plano: c.plano, ate: null, dias_restantes: null };
+    if (!c.plano_ate) return { situacao: 'assinada', renovacao, plano: c.plano, ate: null, dias_restantes: null };
     const vence = new Date(c.plano_ate);
-    if (vence.getTime() >= agora.getTime()) return { situacao: 'assinada', plano: c.plano, ate: vence.toISOString(), dias_restantes: dias(vence, agora) };
+    if (vence.getTime() >= agora.getTime()) return { situacao: 'assinada', renovacao, plano: c.plano, ate: vence.toISOString(), dias_restantes: dias(vence, agora) };
     const fimDaCarencia = new Date(vence.getTime() + CARENCIA_DIAS * DIA_MS);
-    if (fimDaCarencia.getTime() >= agora.getTime()) return { situacao: 'carencia', plano: c.plano, ate: fimDaCarencia.toISOString(), dias_restantes: dias(fimDaCarencia, agora) };
-    return { situacao: 'bloqueada', plano: 'avaliacao', ate: fimDaCarencia.toISOString(), dias_restantes: 0 };
+    if (fimDaCarencia.getTime() >= agora.getTime()) return { situacao: 'carencia', renovacao, plano: c.plano, ate: fimDaCarencia.toISOString(), dias_restantes: dias(fimDaCarencia, agora) };
+    return { situacao: 'bloqueada', renovacao, plano: 'avaliacao', ate: fimDaCarencia.toISOString(), dias_restantes: 0 };
   }
   if (c.avaliacao_ate) {
     const fim = new Date(c.avaliacao_ate);
-    if (fim.getTime() >= agora.getTime()) return { situacao: 'avaliacao', plano: 'avaliacao', ate: fim.toISOString(), dias_restantes: dias(fim, agora) };
-    return { situacao: 'bloqueada', plano: 'avaliacao', ate: fim.toISOString(), dias_restantes: 0 };
+    if (fim.getTime() >= agora.getTime()) return { situacao: 'avaliacao', renovacao: null, plano: 'avaliacao', ate: fim.toISOString(), dias_restantes: dias(fim, agora) };
+    return { situacao: 'bloqueada', renovacao: null, plano: 'avaliacao', ate: fim.toISOString(), dias_restantes: 0 };
   }
   // Sem plano e sem data de avaliação: conta de antes da cobrança existir. Não trava.
-  return { situacao: 'avaliacao', plano: 'avaliacao', ate: null, dias_restantes: null };
+  return { situacao: 'avaliacao', renovacao: null, plano: 'avaliacao', ate: null, dias_restantes: null };
 }
 
 /** A nota de rodapé dos "ilimitados". */

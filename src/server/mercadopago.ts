@@ -229,6 +229,83 @@ export function buscarPagamentoAutorizado(id: string): Promise<PagamentoAutoriza
   return mp<PagamentoAutorizadoMp>(`/authorized_payments/${encodeURIComponent(id)}`);
 }
 
+// ---------------------------------------------------------------------------
+//  Pagamento avulso (Pix / boleto) — API de pagamentos
+// ---------------------------------------------------------------------------
+
+export interface PagadorAvulso {
+  nome: string;
+  email: string;
+  /** 'CPF' | 'CNPJ' */
+  tipoDoc: 'CPF' | 'CNPJ';
+  doc: string;
+  /** Obrigatório no boleto. */
+  endereco?: { cep: string; rua: string; numero: string; bairro: string; cidade: string; uf: string } | null;
+}
+
+export interface PagamentoMp {
+  id: number | string;
+  status: 'pending' | 'approved' | 'authorized' | 'in_process' | 'in_mediation' | 'rejected' | 'cancelled' | 'refunded' | 'charged_back' | string;
+  status_detail?: string;
+  external_reference?: string | null;
+  transaction_amount?: number;
+  date_of_expiration?: string | null;
+  date_approved?: string | null;
+  payment_method_id?: string;
+  point_of_interaction?: { transaction_data?: { qr_code?: string; qr_code_base64?: string; ticket_url?: string } };
+  transaction_details?: { external_resource_url?: string };
+  barcode?: { content?: string };
+}
+
+/** Nome e sobrenome do que a pessoa digitou (o MP pede os dois). */
+function partesDoNome(nome: string): { first_name: string; last_name: string } {
+  const partes = nome.trim().split(/\s+/);
+  if (partes.length === 1) return { first_name: partes[0], last_name: partes[0] };
+  return { first_name: partes[0], last_name: partes.slice(1).join(' ') };
+}
+
+/** O corpo de POST /v1/payments para um Pix ou boleto do valor do período. */
+export function corpoDoPagamentoAvulso(args: { metodo: 'pix' | 'boleto'; valor: number; descricao: string; referencia: string; pagador: PagadorAvulso; venceEm: Date; env?: AmbienteMp }) {
+  const env = args.env ?? (process.env as AmbienteMp);
+  const payer: Record<string, unknown> = {
+    email: args.pagador.email,
+    ...partesDoNome(args.pagador.nome),
+    identification: { type: args.pagador.tipoDoc, number: args.pagador.doc.replace(/\D/g, '') },
+  };
+  if (args.metodo === 'boleto' && args.pagador.endereco) {
+    const e = args.pagador.endereco;
+    payer.address = { zip_code: e.cep.replace(/\D/g, ''), street_name: e.rua, street_number: e.numero, neighborhood: e.bairro, city: e.cidade, federal_unit: e.uf.toUpperCase() };
+  }
+  return {
+    transaction_amount: Math.round(args.valor * 100) / 100,
+    description: args.descricao,
+    payment_method_id: args.metodo === 'pix' ? 'pix' : 'bolbradesco',
+    external_reference: args.referencia,
+    notification_url: `${siteUrl(env)}/api/webhooks/mercadopago`,
+    date_of_expiration: args.venceEm.toISOString(),
+    payer,
+  };
+}
+
+export function criarPagamentoAvulso(args: Parameters<typeof corpoDoPagamentoAvulso>[0] & { idempotencia: string }): Promise<PagamentoMp> {
+  return mp<PagamentoMp>('/v1/payments', { method: 'POST', headers: { 'X-Idempotency-Key': args.idempotencia }, body: JSON.stringify(corpoDoPagamentoAvulso(args)) });
+}
+
+export function buscarPagamento(id: string): Promise<PagamentoMp> {
+  return mp<PagamentoMp>(`/v1/payments/${encodeURIComponent(id)}`);
+}
+
+/** O que a tela precisa mostrar de um Pix ou boleto recém-criado. */
+export function dadosParaPagar(p: PagamentoMp): Record<string, string | null> {
+  const t = p.point_of_interaction?.transaction_data;
+  return {
+    qr_code: t?.qr_code ?? null,
+    qr_code_base64: t?.qr_code_base64 ?? null,
+    ticket_url: t?.ticket_url ?? p.transaction_details?.external_resource_url ?? null,
+    linha_digitavel: p.barcode?.content ?? null,
+  };
+}
+
 /** As assinaturas mais recentes da conta do MP (todas as organizações). Para achar uma que o webhook não trouxe. */
 export async function procurarAssinaturasRecentes(limite = 50, filtro: Record<string, string> = {}): Promise<PreapprovalMp[]> {
   const q = new URLSearchParams({ sort: 'date_created:desc', limit: String(limite), offset: '0', ...filtro });

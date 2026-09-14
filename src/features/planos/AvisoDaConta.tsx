@@ -1,5 +1,6 @@
 import { AlertTriangle, Sparkles } from 'lucide-react';
 import { usePlano } from './usePlano';
+import { LEMBRETE_DIAS } from '@/shared/planos';
 
 /**
  * A faixa no topo do sistema enquanto a conta está em avaliação ou em
@@ -7,7 +8,10 @@ import { usePlano } from './usePlano';
  */
 export function AvisoDaConta({ onIrParaPlano, admin }: { onIrParaPlano: () => void; admin: boolean }) {
   const { conta } = usePlano();
-  if (conta.situacao === 'assinada' || conta.situacao === 'bloqueada' || conta.dias_restantes === null) return null;
+  if (conta.situacao === 'bloqueada' || conta.dias_restantes === null) return null;
+  // Assinada com cartão: nada a avisar. Paga por Pix/boleto: avisa nos últimos dias.
+  const renovar = conta.situacao === 'assinada' && conta.renovacao === 'manual' && conta.dias_restantes <= LEMBRETE_DIAS;
+  if (conta.situacao === 'assinada' && !renovar) return null;
 
   const dias = conta.dias_restantes;
   const rotuloDias = dias === 0 ? 'hoje' : dias === 1 ? 'amanhã' : `em ${dias} dias`;
@@ -19,7 +23,11 @@ export function AvisoDaConta({ onIrParaPlano, admin }: { onIrParaPlano: () => vo
         {carencia ? <AlertTriangle size={14} className="text-[var(--vermelho)]" /> : <Sparkles size={14} className="text-[var(--brand)]" />}
         {carencia ? (
           <>
-            O pagamento da assinatura não foi aprovado. A conta trava <strong>{rotuloDias}</strong> — atualize o cartão ou assine de novo.
+            O pagamento não foi confirmado. A conta trava <strong>{rotuloDias}</strong> — {conta.renovacao === 'manual' ? 'gere um novo Pix ou boleto' : 'atualize o cartão ou assine de novo'}.
+          </>
+        ) : renovar ? (
+          <>
+            Seu plano vence <strong>{rotuloDias}</strong>. Pague o próximo período por Pix ou boleto para não travar.
           </>
         ) : (
           <>
@@ -29,7 +37,7 @@ export function AvisoDaConta({ onIrParaPlano, admin }: { onIrParaPlano: () => vo
       </span>
       {admin && (
         <button type="button" onClick={onIrParaPlano} className="font-bold text-[var(--brand)] hover:underline">
-          {carencia ? 'Resolver' : 'Ver planos'} →
+          {carencia ? 'Resolver' : renovar ? 'Renovar' : 'Ver planos'} →
         </button>
       )}
     </div>

@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, CreditCard, Lock, MessageCircle, Receipt, RefreshCw, XCircle } from 'lucide-react';
+import { Check, CreditCard, FileText, Lock, MessageCircle, Receipt, RefreshCw, XCircle } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
 import { Modal } from '@/shared/ui/Modal';
 import { usePlano } from '@/features/planos/usePlano';
 import { EscolherPlano } from '@/features/planos/EscolherPlano';
+import { PagamentoPendente, type PedidoAvulso } from '@/features/planos/PagamentoAvulso';
 import { api } from '@/lib/api';
 import { formatDateTime } from '@/features/estoque/utils';
-import { DEFINICOES, NOME_DO_CICLO, NOME_DO_PLANO, formatarPreco, descreverLimite, type Ciclo, type Conta, type Limite, type Plano, type Recurso } from '@/shared/planos';
+import { DEFINICOES, NOME_DO_CICLO, NOME_DO_METODO, NOME_DO_PLANO, formatarPreco, descreverLimite, type Ciclo, type Conta, type Limite, type Plano, type Recurso } from '@/shared/planos';
 import { linkWhatsApp } from '@/shared/produto';
 import type { Deposito, Unidade } from '@/shared/types';
 
@@ -34,9 +35,14 @@ interface Assinatura {
 interface Pagamento {
   id: string;
   status: 'agendado' | 'aprovado' | 'recusado' | 'cancelado' | 'reembolsado' | 'pendente';
+  metodo: 'cartao' | 'pix' | 'boleto';
   valor: number;
   data: string;
   detalhe: string | null;
+  periodo_ate: string | null;
+  nf_status: 'pendente' | 'emitida' | 'erro' | 'cancelada' | null;
+  nf_numero: string | null;
+  nf_url: string | null;
 }
 
 interface Resumo {
@@ -48,6 +54,8 @@ interface Resumo {
   avaliacao_dias: number;
   mp_public_key: string | null;
   meu_email: string | null;
+  pendente_avulso: PedidoAvulso | null;
+  avulso_disponivel: boolean;
 }
 
 const RECURSOS_VISIVEIS: Array<{ id: Recurso; nome: string }> = [
@@ -113,6 +121,13 @@ function Situacao({ conta, assinatura }: { conta: Conta; assinatura: Assinatura 
   if (assinatura?.status === 'cancelada' && conta.ate) {
     return <p className="text-xs text-[var(--text-muted)]">Assinatura cancelada. O plano continua até <strong className="text-[var(--text)]">{ate}</strong>; depois a conta trava até assinar de novo.</p>;
   }
+  if (conta.renovacao === 'manual' && ate) {
+    return (
+      <p className="text-xs text-[var(--text-muted)]">
+        Pago por Pix/boleto até <strong className="text-[var(--text)]">{ate}</strong> ({conta.dias_restantes} {conta.dias_restantes === 1 ? 'dia' : 'dias'}). A renovação é manual: pague o próximo período antes de vencer e ele começa onde este termina.
+      </p>
+    );
+  }
   return <p className="text-xs text-[var(--text-muted)]">{ate ? <>Plano válido até <strong className="text-[var(--text)]">{ate}</strong>.</> : 'Plano sem vencimento — cortesia.'}</p>;
 }
 
@@ -130,6 +145,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   const [cancelando, setCancelando] = useState(false);
   const [confirmarCancelar, setConfirmarCancelar] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
+  const [verPendente, setVerPendente] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -211,7 +227,12 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
             <div className="mt-4 flex flex-wrap gap-2">
               {!cortesia && (
                 <Button size="sm" onClick={() => setEscolhendo(true)} icon={<CreditCard size={14} />}>
-                  {emVigor ? 'Trocar de plano' : conta.situacao === 'avaliacao' ? 'Assinar um plano' : 'Assinar'}
+                  {emVigor ? 'Trocar de plano' : conta.situacao === 'avaliacao' ? 'Assinar um plano' : conta.renovacao === 'manual' ? 'Renovar / mudar' : 'Assinar'}
+                </Button>
+              )}
+              {resumo?.pendente_avulso && (
+                <Button size="sm" variant="outline" onClick={() => setVerPendente(true)} icon={<Receipt size={14} />}>
+                  {resumo.pendente_avulso.metodo === 'pix' ? 'Ver Pix pendente' : 'Ver boleto pendente'}
                 </Button>
               )}
               {emVigor && (
@@ -267,9 +288,19 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
                 <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
                   <span className="text-[var(--text)]">
                     {formatDateTime(p.data)} · <strong>{formatarPreco(Number(p.valor))}</strong>
-                    {p.detalhe && <span className="text-[var(--text-muted)]"> · {p.detalhe}</span>}
+                    <span className="text-[var(--text-muted)]"> · {NOME_DO_METODO[p.metodo] ?? p.metodo}</span>
+                    {p.periodo_ate && p.status === 'aprovado' && <span className="text-[var(--text-muted)]"> · até {fmtData.format(new Date(p.periodo_ate))}</span>}
+                    {p.detalhe && p.status !== 'aprovado' && <span className="text-[var(--text-muted)]"> · {p.detalhe}</span>}
                   </span>
-                  <Badge variant={BADGE_PAGAMENTO[p.status].variant}>{BADGE_PAGAMENTO[p.status].texto}</Badge>
+                  <span className="inline-flex items-center gap-2">
+                    {p.nf_status === 'emitida' && p.nf_url && (
+                      <a href={p.nf_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-[var(--brand)] hover:underline">
+                        <FileText size={12} /> Nota fiscal{p.nf_numero ? ` ${p.nf_numero}` : ''}
+                      </a>
+                    )}
+                    {p.status === 'aprovado' && p.nf_status !== 'emitida' && <span className="text-[11px] text-[var(--text-muted)]">nota fiscal a caminho</span>}
+                    <Badge variant={BADGE_PAGAMENTO[p.status].variant}>{BADGE_PAGAMENTO[p.status].texto}</Badge>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -285,12 +316,31 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
           modoTeste={resumo?.modo_teste ?? false}
           publicKey={resumo?.mp_public_key ?? null}
           emailInicial={resumo?.meu_email ?? ''}
+          avulsoDisponivel={resumo?.avulso_disponivel ?? false}
           onAssinou={async () => {
             setEscolhendo(false);
             await carregar();
             await refetch();
           }}
         />
+      </Modal>
+
+      <Modal open={verPendente && Boolean(resumo?.pendente_avulso)} onClose={() => setVerPendente(false)} title="Pagamento pendente" subtitle="O mesmo Pix/boleto de antes — ainda vale.">
+        {resumo?.pendente_avulso && (
+          <PagamentoPendente
+            pedido={resumo.pendente_avulso}
+            onAprovado={async () => {
+              toast.success('Pagamento confirmado. Plano liberado.');
+              setVerPendente(false);
+              await carregar();
+              await refetch();
+            }}
+            onGerarOutro={() => {
+              setVerPendente(false);
+              setEscolhendo(true);
+            }}
+          />
+        )}
       </Modal>
 
       <Modal open={confirmarCancelar} onClose={() => setConfirmarCancelar(false)} title="Cancelar a assinatura?" subtitle="Não há cobrança nova. O plano continua até o fim do período já pago; depois a conta trava até assinar de novo. Nada é apagado.">

@@ -7,7 +7,7 @@ import { definicaoDe, planoLibera, limiteDo, cabeMaisUm, mensagemDeRecurso, mens
  * não chegou, assume avaliação (tudo liberado): melhor mostrar o botão e o
  * servidor recusar do que esconder por um instante o que a pessoa pode.
  */
-const SEM_PRAZO: Conta = { situacao: 'avaliacao', plano: 'avaliacao', ate: null, dias_restantes: null };
+const SEM_PRAZO: Conta = { situacao: 'avaliacao', renovacao: null, plano: 'avaliacao', ate: null, dias_restantes: null };
 
 export function usePlano() {
   const organizacao = useMarca((s) => s.organizacao);

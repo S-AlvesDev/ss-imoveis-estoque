@@ -20,9 +20,9 @@ const cache = new Map<string, { conta: Conta; ate: number }>();
 export async function contaDaOrg(organizationId: string, agora: number = Date.now()): Promise<Conta> {
   const c = cache.get(organizationId);
   if (c && c.ate > agora) return c.conta;
-  const { data, error } = await supabaseServer.from('organizations').select('plano, plano_ate, avaliacao_ate').eq('id', organizationId).maybeSingle();
+  const { data, error } = await supabaseServer.from('organizations').select('plano, plano_ate, avaliacao_ate, cobranca').eq('id', organizationId).maybeSingle();
   if (error) throw error;
-  const conta = situacaoDaConta({ plano: data?.plano ?? null, plano_ate: data?.plano_ate ?? null, avaliacao_ate: data?.avaliacao_ate ?? null }, new Date(agora));
+  const conta = situacaoDaConta({ plano: data?.plano ?? null, plano_ate: data?.plano_ate ?? null, avaliacao_ate: data?.avaliacao_ate ?? null, cobranca: data?.cobranca ?? null }, new Date(agora));
   cache.set(organizationId, { conta, ate: agora + CACHE_MS });
   return conta;
 }

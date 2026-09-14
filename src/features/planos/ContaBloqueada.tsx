@@ -17,6 +17,7 @@ interface ResumoDaAssinatura {
   modo_teste: boolean;
   mp_public_key: string | null;
   meu_email: string | null;
+  avulso_disponivel: boolean;
 }
 
 /**
@@ -82,7 +83,7 @@ export function ContaBloqueada({ conta }: { conta: Conta }) {
 
           {admin && (
             <div className="mt-6">
-              <EscolherPlano disponivel={resumo?.disponivel ?? { mensal: true, anual: true }} modoTeste={resumo?.modo_teste ?? false} publicKey={resumo?.mp_public_key ?? null} emailInicial={resumo?.meu_email ?? ''} onAssinou={() => window.location.reload()} />
+              <EscolherPlano disponivel={resumo?.disponivel ?? { mensal: true, anual: true }} modoTeste={resumo?.modo_teste ?? false} publicKey={resumo?.mp_public_key ?? null} emailInicial={resumo?.meu_email ?? ''} avulsoDisponivel={resumo?.avulso_disponivel ?? false} onAssinou={() => window.location.reload()} />
               <div className="mt-4 text-center">
                 <Button variant="ghost" size="sm" loading={confirmando} onClick={jaPaguei} icon={confirmando ? undefined : <RefreshCw size={14} />}>
                   Já paguei — confirmar

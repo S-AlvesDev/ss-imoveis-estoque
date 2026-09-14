@@ -16,7 +16,7 @@ const em = (dias: number) => new Date(agora.getTime() + dias * DIA).toISOString(
 
 describe('situacaoDaConta', () => {
   it('plano sem vencimento é cortesia: assinada, sem prazo', () => {
-    expect(situacaoDaConta({ plano: 'empresarial', plano_ate: null, avaliacao_ate: null }, agora)).toEqual({ situacao: 'assinada', plano: 'empresarial', ate: null, dias_restantes: null });
+    expect(situacaoDaConta({ plano: 'empresarial', plano_ate: null, avaliacao_ate: null }, agora)).toEqual({ situacao: 'assinada', renovacao: null, plano: 'empresarial', ate: null, dias_restantes: null });
   });
 
   it('plano com vencimento no futuro é assinada; vencido há pouco é carência; vencido além da carência bloqueia', () => {
@@ -31,7 +31,7 @@ describe('situacaoDaConta', () => {
   });
 
   it('conta de antes da cobrança (sem plano e sem avaliação) não trava', () => {
-    expect(situacaoDaConta({ plano: null, plano_ate: null, avaliacao_ate: null }, agora)).toEqual({ situacao: 'avaliacao', plano: 'avaliacao', ate: null, dias_restantes: null });
+    expect(situacaoDaConta({ plano: null, plano_ate: null, avaliacao_ate: null }, agora)).toEqual({ situacao: 'avaliacao', renovacao: null, plano: 'avaliacao', ate: null, dias_restantes: null });
   });
 
   it('a avaliação só conta sem plano: com plano vencido, o que vale é a carência', () => {

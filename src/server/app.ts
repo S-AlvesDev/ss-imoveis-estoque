@@ -19,7 +19,10 @@ import { validarItem, validarEvento, transicionar } from './patrimonio';
 import { contaDaOrg, negarRecurso, negarLimite } from './planos';
 import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
 import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico, ErroDoMercadoPago, mensagemParaOPagador } from './mercadopago';
-import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura } from './assinaturas';
+import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, type Pagamento } from './assinaturas';
+import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes';
+import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
+import { validarPagador } from './pagador';
 import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
 import {
   gerarToken,
@@ -2225,12 +2228,16 @@ export function createApp() {
   // --------------------------- ASSINATURA (Mercado Pago) ---------------------------
   // Estas rotas funcionam mesmo com a conta bloqueada: são o caminho de volta.
   const resumoDaAssinatura = async (organizationId: string) => {
-    const [c, assinatura, pagamentos] = await Promise.all([contaDe(organizationId), assinaturaAtual(organizationId), pagamentosDe(organizationId)]);
+    const [c, assinatura, pagamentos, pendente] = await Promise.all([contaDe(organizationId), assinaturaAtual(organizationId), pagamentosDe(organizationId), avulsoPendente(organizationId)]);
     return {
       organizacao: c?.organizacao ?? null,
       conta: c?.conta ?? null,
       assinatura,
       pagamentos,
+      // Um Pix/boleto gerado e ainda válido: a tela reabre o QR Code em vez de gerar outro.
+      pendente_avulso: pendente,
+      // Pix e boleto exigem o access token (é a API de pagamentos).
+      avulso_disponivel: mpConfigurado(),
       // O que dá para assinar agora: por plano e ciclo, se existe caminho (plano no painel ou API configurada).
       disponivel: Object.fromEntries(CICLOS.map((ciclo: Ciclo) => [ciclo, mpConfigurado() || PLANOS.some((p) => mpPlanId(p, ciclo))])),
       modo_teste: modoTeste(),
@@ -2289,6 +2296,116 @@ export function createApp() {
       }
       console.error('[POST /api/assinatura] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível iniciar a assinatura.' });
+    }
+  });
+
+  /**
+   * Nota fiscal de um pagamento aprovado: envia ao provedor (ou consulta o
+   * que já foi enviado) e, quando sai, manda o link para quem pagou. Erros
+   * ficam em `nf_erro` para tratar à mão; nunca derrubam o pagamento.
+   */
+  async function cuidarDaNota(pg: Pagamento | undefined | null) {
+    if (!pg || pg.status !== 'aprovado' || pg.nf_status === 'emitida' || !nfseConfigurada()) return;
+    try {
+      const r = await emitirNota(pg);
+      if (r?.situacao === 'emitida') {
+        const { data: atual } = await supabaseServer.from('pagamentos').select('*').eq('id', pg.id).maybeSingle();
+        const { data: org } = await supabaseServer.from('organizations').select('nome').eq('id', pg.organization_id).maybeSingle();
+        const email = atual ? emailDaNota(atual as Pagamento, org?.nome ?? 'sua empresa') : null;
+        const t = await getTransporter();
+        if (t && email) await t.sendMail({ from: remetente(), to: String((atual as any).pagador?.email), subject: email.subject, html: email.html });
+      }
+    } catch (e: any) {
+      console.error(`[nota fiscal] pagamento ${pg.id}:`, e.message);
+    }
+  }
+
+  /**
+   * Pix ou boleto do período inteiro (mês ou ano). Devolve o pedido com o
+   * QR Code / boleto; a tela fica consultando GET .../avulso/:id até aprovar.
+   */
+  app.post('/api/assinatura/avulso', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      if (!mpConfigurado()) return res.status(503).json({ error: 'Pagamento ainda não configurado no servidor.' });
+      const plano = req.body?.plano;
+      const ciclo = req.body?.ciclo ?? 'mensal';
+      const metodo = req.body?.metodo;
+      if (!ehPlano(plano)) return res.status(400).json({ error: 'Escolha o plano.' });
+      if (!CICLOS.includes(ciclo)) return res.status(400).json({ error: 'Ciclo inválido: mensal ou anual.' });
+      if (metodo !== 'pix' && metodo !== 'boleto') return res.status(400).json({ error: 'Meio de pagamento inválido: pix ou boleto.' });
+      const v = validarPagador(req.body?.pagador, metodo);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+
+      // Em modo teste (plano barato no painel), o Pix do Essencial mensal também sai barato — para testar sem pagar o plano.
+      const valor = modoTeste() && plano === 'essencial' && ciclo === 'mensal' ? 0.5 : precoDo(plano, ciclo);
+      const pedido = await criarAvulso({ organizationId: req.user!.organization_id, plano, ciclo, metodo, pagador: v.pagador, valor });
+      console.info(`[avulso] ${req.user!.organization_id} → ${plano}/${ciclo} por ${metodo}: pedido ${pedido.id} (MP ${pedido.mp_payment_id})`);
+      res.status(201).json({ pagamento: pedido });
+    } catch (err: any) {
+      if (err instanceof ErroDoMercadoPago) {
+        console.warn('[POST /api/assinatura/avulso] MP recusou:', err.message);
+        return res.status(402).json({ error: `O Mercado Pago não gerou o pagamento: ${err.corpo?.message ?? 'tente de novo.'}` });
+      }
+      console.error('[POST /api/assinatura/avulso] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível gerar o pagamento.' });
+    }
+  });
+
+  /** O pedido avulso — consultando o MP se ainda está pendente, para a tela não depender do webhook. */
+  app.get('/api/assinatura/avulso/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data } = await req.db!.from('pagamentos').select('*').eq('id', req.params.id).maybeSingle();
+      if (!data) return res.status(404).json({ error: 'Pagamento não encontrado.' });
+      let pedido = data as Pagamento;
+      if (pedido.status === 'pendente' && pedido.mp_payment_id && mpConfigurado()) {
+        pedido = await atualizarAvulso(pedido);
+        if (pedido.status === 'aprovado') await cuidarDaNota(pedido);
+      }
+      res.json({ pagamento: pedido, conta: (await contaDe(req.user!.organization_id))?.conta ?? null });
+    } catch (err: any) {
+      console.error('[GET /api/assinatura/avulso/:id] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível consultar o pagamento.' });
+    }
+  });
+
+  /**
+   * Lembretes de vencimento — chamado uma vez por dia pelo cron da Vercel
+   * (que manda `Authorization: Bearer CRON_SECRET`). Sem o segredo
+   * configurado, a rota não existe na prática.
+   */
+  app.get('/api/cron/lembretes', async (req, res) => {
+    const segredo = process.env.CRON_SECRET;
+    if (!segredo || req.header('authorization') !== `Bearer ${segredo}`) return res.status(401).json({ error: 'Não autorizado.' });
+    try {
+      const t = await getTransporter();
+      const contas = await contasParaLembrar();
+      let enviados = 0;
+      for (const c of contas) {
+        if (t) {
+          const { subject, html } = emailDeLembrete(c);
+          try {
+            await t.sendMail({ from: remetente(), to: c.emails.join(', '), subject, html });
+            enviados++;
+          } catch (e: any) {
+            console.error(`[lembretes] ${c.nome}: falha ao enviar:`, e.message);
+            continue;
+          }
+        }
+        await marcarLembrete(c.organizationId);
+      }
+      // Notas fiscais que ficaram para trás (provedor fora do ar, prefeitura processando).
+      let notas = 0;
+      if (nfseConfigurada()) {
+        for (const pg of await pagamentosSemNota()) {
+          await cuidarDaNota(pg);
+          notas++;
+        }
+      }
+      console.info(`[lembretes] ${contas.length} conta(s) para lembrar, ${enviados} e-mail(s) enviado(s), ${notas} nota(s) verificada(s).`);
+      res.json({ contas: contas.length, enviados, notas });
+    } catch (err: any) {
+      console.error('[GET /api/cron/lembretes] erro:', err.message);
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -2367,6 +2484,7 @@ export function createApp() {
       const r = await tratarEvento(tipo, id);
       const casou = 'casou' in r ? r.casou : true;
       await registrarEvento({ tipo, mpId: id, organizationId: 'organizationId' in r ? r.organizationId : null, tratado: casou, erro: 'motivo' in r ? (r.motivo ?? null) : null, payload: req.body });
+      if ('pagamento' in r) await cuidarDaNota(r.pagamento);
       if (!('ignorado' in r)) console.info(`[webhook MP] ${tipo} ${id}: ${casou ? 'aplicado' : `não casou (${r.motivo})`}`);
       // Não casou = fica no diário para resolver à mão; repetir não ajudaria.
       res.status(200).json({ ok: true, aplicado: casou });
