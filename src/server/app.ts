@@ -17,7 +17,7 @@ import { validarEntrega, validoAte } from './entregas';
 import { alocarSaida, descreverConsumos, validarLote, type LoteBase, type Consumo } from './lotes';
 import { validarItem, validarEvento, transicionar } from './patrimonio';
 import { contaDaOrg, negarRecurso, negarLimite } from './planos';
-import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
+import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, detalheDoPagamento, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
 import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico, ErroDoMercadoPago, mensagemParaOPagador } from './mercadopago';
 import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, avulsosPendentes, type Pagamento } from './assinaturas';
 import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes';
@@ -2516,6 +2516,29 @@ export function createApp() {
     }
   });
 
+  /** Manda (ou remanda) o recibo de um pagamento aprovado por e-mail — para o pagador, ou para o e-mail informado. */
+  app.post('/api/assinatura/pagamentos/:id/recibo', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data } = await req.db!.from('pagamentos').select('*').eq('id', req.params.id).maybeSingle();
+      if (!data) return res.status(404).json({ error: 'Pagamento não encontrado.' });
+      const pg = data as Pagamento;
+      if (pg.status !== 'aprovado') return res.status(409).json({ error: 'Só pagamentos aprovados têm recibo.' });
+      const t = await getTransporter();
+      if (!t) return res.status(503).json({ error: 'O envio de e-mail não está configurado no servidor.' });
+      const para = String(req.body?.email ?? '').trim().toLowerCase();
+      if (para && !EMAIL_SIMPLES.test(para)) return res.status(400).json({ error: 'E-mail inválido.' });
+      const { data: org } = await supabaseServer.from('organizations').select('nome').eq('id', pg.organization_id).maybeSingle();
+      const email = emailDeRecibo(pg, org?.nome ?? 'sua empresa', undefined, para || null);
+      if (!email) return res.status(400).json({ error: 'Este pagamento não tem e-mail de pagador. Informe para quem enviar.' });
+      await t.sendMail({ from: remetente(), to: email.to, subject: email.subject, html: email.html });
+      await supabaseServer.from('pagamentos').update({ recibo_enviado_em: new Date().toISOString() }).eq('id', pg.id);
+      res.json({ ok: true, para: email.to });
+    } catch (err: any) {
+      console.error('[POST /api/assinatura/pagamentos/:id/recibo] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível enviar o recibo.' });
+    }
+  });
+
   /** O que a credencial do Mercado Pago enxerga — para diagnosticar "paguei e não liberou". Só administrador; nunca devolve segredos. */
   app.get('/api/assinatura/diagnostico', authenticate, withTenant, requireRole(ADMIN_ROLES), async (_req, res) => {
     try {
@@ -2550,9 +2573,23 @@ export function createApp() {
         if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return res.status(400).json({ error: 'Assinatura inválida.' });
         r = await aplicarPreapproval(await buscarAssinatura(id), { organizationId: req.user!.organization_id });
       } else {
-        // Sem id: procura no MP uma assinatura desta conta (pagou pelo link, webhook não chegou...).
+        // Sem id: primeiro um Pix/boleto pendente desta conta; depois uma assinatura de cartão no MP.
+        const pendente = await avulsoPendente(req.user!.organization_id);
+        if (pendente) {
+          const atualizado = await atualizarAvulso(pendente);
+          if (atualizado.status === 'aprovado') {
+            await cuidarDaNota(atualizado);
+            return res.json(await resumoDaAssinatura(req.user!.organization_id));
+          }
+        }
         const { data: admins } = await req.db!.from(ESTOQUE_USERS).select('email').in('role', ADMIN_ROLES);
         r = await procurarEAplicar(req.user!.organization_id, (admins || []).map((a: any) => String(a.email || '')));
+        if (!r.casou) {
+          const nada = pendente
+            ? `O ${pendente.metodo === 'pix' ? 'Pix' : 'boleto'} gerado ainda não foi confirmado pelo banco (${detalheDoPagamento(pendente.detalhe) ?? 'aguardando pagamento'}). Assim que entrar, a conta libera sozinha.`
+            : 'Não encontramos pagamento novo: nenhuma assinatura de cartão ativa no Mercado Pago e nenhum Pix/boleto pendente.';
+          return res.status(409).json({ error: `${nada} Detalhe: ${r.motivo ?? ''}`.trim() });
+        }
       }
       if (!r.casou) return res.status(409).json({ error: r.motivo ?? 'A assinatura não corresponde a esta conta.' });
       res.json(await resumoDaAssinatura(req.user!.organization_id));

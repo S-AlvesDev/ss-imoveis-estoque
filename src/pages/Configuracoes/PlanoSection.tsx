@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, CreditCard, Crown, FileText, Lock, MessageCircle, Receipt, RefreshCw, XCircle } from 'lucide-react';
+import { Check, CreditCard, Crown, FileText, Lock, Mail, MessageCircle, Receipt, RefreshCw, XCircle } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
 import { Modal } from '@/shared/ui/Modal';
-import { Select } from '@/shared/ui/Field';
+import { Input, Select } from '@/shared/ui/Field';
 import { useAuth } from '@/store/auth';
 import { usePlano } from '@/features/planos/usePlano';
 import { EscolherPlano } from '@/features/planos/EscolherPlano';
@@ -166,6 +166,28 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   const [salvandoTransferencia, setSalvandoTransferencia] = useState(false);
   const logout = useAuth((s) => s.logout);
   const organizacao = useMarca((s) => s.organizacao);
+  const [enviandoRecibo, setEnviandoRecibo] = useState<Pagamento | null>(null);
+  const [emailDoRecibo, setEmailDoRecibo] = useState('');
+  const [mandando, setMandando] = useState(false);
+
+  function abrirEnvio(p: Pagamento) {
+    setEnviandoRecibo(p);
+    setEmailDoRecibo(String((p.pagador as any)?.email ?? resumo?.meu_email ?? ''));
+  }
+
+  async function mandarRecibo() {
+    if (!enviandoRecibo) return;
+    setMandando(true);
+    try {
+      const r = await api.post<{ para: string }>(`/api/assinatura/pagamentos/${enviandoRecibo.id}/recibo`, { email: emailDoRecibo });
+      toast.success(`Recibo enviado para ${r.para}.`);
+      setEnviandoRecibo(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível enviar.');
+    } finally {
+      setMandando(false);
+    }
+  }
 
   const carregar = useCallback(async () => {
     try {
@@ -352,6 +374,11 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
                         <Receipt size={12} /> Recibo
                       </button>
                     )}
+                    {p.status === 'aprovado' && (
+                      <button type="button" onClick={() => abrirEnvio(p)} className="inline-flex items-center gap-1 font-semibold text-[var(--brand)] hover:underline" title="Enviar o recibo por e-mail">
+                        <Mail size={12} /> Enviar
+                      </button>
+                    )}
                     {p.nf_status === 'emitida' && p.nf_url && (
                       <a href={p.nf_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-[var(--brand)] hover:underline">
                         <FileText size={12} /> Nota fiscal{p.nf_numero ? ` ${p.nf_numero}` : ''}
@@ -400,6 +427,20 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
             }}
           />
         )}
+      </Modal>
+
+      <Modal open={enviandoRecibo !== null} onClose={() => setEnviandoRecibo(null)} title="Enviar recibo por e-mail" subtitle={enviandoRecibo ? `${formatarPreco(Number(enviandoRecibo.valor))} · ${formatDateTime(enviandoRecibo.data)}` : undefined}>
+        <div className="space-y-4">
+          <Input label="Para" required type="email" value={emailDoRecibo} onChange={(e) => setEmailDoRecibo(e.target.value)} placeholder="quem recebe o recibo" autoFocus />
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setEnviandoRecibo(null)}>
+              Cancelar
+            </Button>
+            <Button loading={mandando} onClick={mandarRecibo} icon={mandando ? undefined : <Mail size={14} />}>
+              Enviar
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal open={transferindo} onClose={() => setTransferindo(false)} title="Transferir a titularidade" subtitle="Quem receber vira o CEO: passa a assinar, trocar e cancelar o plano e a receber recibos e notas. Você continua como administrador.">

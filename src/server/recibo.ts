@@ -26,12 +26,13 @@ export function dadosDoRecibo(pg: Pagamento, empresa: string, env?: Record<strin
   return montar(pg, empresa, emitente(env));
 }
 
-/** O e-mail com o recibo. Nulo se não há para quem mandar. */
-export function emailDeRecibo(pg: Pagamento, empresa: string, env?: Record<string, string | undefined>): { to: string; subject: string; html: string } | null {
+/** O e-mail com o recibo — para o pagador, ou para quem for pedido. Nulo se não há para quem mandar. */
+export function emailDeRecibo(pg: Pagamento, empresa: string, env?: Record<string, string | undefined>, para?: string | null): { to: string; subject: string; html: string } | null {
   const r = dadosDoRecibo(pg, empresa, env);
-  if (!r.pagador.email) return null;
+  const to = (para ?? '').trim().toLowerCase() || r.pagador.email;
+  if (!to) return null;
   return {
-    to: r.pagador.email,
+    to,
     subject: `Recibo ${r.numero} — ${PRODUTO.nome}`,
     html: layoutEmail({
       titulo: `Recibo ${r.numero}`,
