@@ -4,7 +4,9 @@ import { createHmac } from 'node:crypto';
 // Os módulos do servidor importam o cliente do Supabase, que exige URL no import. Aqui só as regras puras.
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
-import { situacaoDaConta, precoDo, planoDoMpPlanId, MP_PLANO_DE_TESTE, MP_PLANO_ID, AVALIACAO_DIAS, CARENCIA_DIAS } from '../shared/planos';
+import { situacaoDaConta, precoDo, planoDoMpPlanId, MP_PLANO_ID, AVALIACAO_DIAS, CARENCIA_DIAS } from '../shared/planos';
+
+const MP_PLANO_DE_TESTE = 'd498ce9708594fec89331933d452b488';
 import { assinaturaDoWebhookValida, corpoDaAssinatura, corpoDaAssinaturaComCartao, mpPublicKey, mensagemParaOPagador, ErroDoMercadoPago, urlDoCheckoutDoPlano, idDoEvento, tipoDoEvento, mpPlanId, motivo } from './mercadopago';
 import { traduzirStatus, traduzirPagamento, planoAteDe } from './assinaturas';
 
@@ -47,15 +49,16 @@ describe('preços e planos do painel', () => {
   it('traduz o id do plano do MP; o de teste só em modo teste', () => {
     expect(planoDoMpPlanId(MP_PLANO_ID.profissional.mensal)).toEqual({ plano: 'profissional', ciclo: 'mensal' });
     expect(planoDoMpPlanId(MP_PLANO_DE_TESTE)).toBeNull();
-    expect(planoDoMpPlanId(MP_PLANO_DE_TESTE, true)).toEqual({ plano: 'essencial', ciclo: 'mensal' });
+    expect(planoDoMpPlanId(MP_PLANO_DE_TESTE, MP_PLANO_DE_TESTE)).toEqual({ plano: 'essencial', ciclo: 'mensal' });
     expect(planoDoMpPlanId('nada')).toBeNull();
   });
 
-  it('mpPlanId troca o Essencial mensal pelo de teste só com MP_MODO_TESTE=1', () => {
+  it('mpPlanId troca o Essencial mensal pelo de teste só com MP_PLANO_DE_TESTE configurado (e válido)', () => {
     expect(mpPlanId('essencial', 'mensal', {})).toBe(MP_PLANO_ID.essencial.mensal);
-    expect(mpPlanId('essencial', 'mensal', { MP_MODO_TESTE: '1' })).toBe(MP_PLANO_DE_TESTE);
-    expect(mpPlanId('profissional', 'mensal', { MP_MODO_TESTE: '1' })).toBe(MP_PLANO_ID.profissional.mensal);
-    expect(mpPlanId('essencial', 'anual', { MP_MODO_TESTE: '1' })).toBeNull();
+    expect(mpPlanId('essencial', 'mensal', { MP_PLANO_DE_TESTE })).toBe(MP_PLANO_DE_TESTE);
+    expect(mpPlanId('essencial', 'mensal', { MP_PLANO_DE_TESTE: '1' })).toBe(MP_PLANO_ID.essencial.mensal);
+    expect(mpPlanId('profissional', 'mensal', { MP_PLANO_DE_TESTE })).toBe(MP_PLANO_ID.profissional.mensal);
+    expect(mpPlanId('essencial', 'anual', { MP_PLANO_DE_TESTE })).toBeNull();
   });
 });
 

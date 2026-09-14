@@ -12,7 +12,7 @@
  * Aqui é só falar com a API e validar o que chega do webhook.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { MP_PLANO_DE_TESTE, MP_PLANO_ID, precoDo, DEFINICOES, NOME_DO_CICLO, type Plano, type Ciclo } from '../shared/planos';
+import { MP_PLANO_ID, precoDo, DEFINICOES, NOME_DO_CICLO, type Plano, type Ciclo } from '../shared/planos';
 
 const API = 'https://api.mercadopago.com';
 const CHECKOUT_DE_PLANO = 'https://www.mercadopago.com.br/subscriptions/checkout';
@@ -22,14 +22,20 @@ export interface AmbienteMp {
   /** Chave pública: vai ao navegador para tokenizar o cartão (Checkout Transparente). */
   MP_PUBLIC_KEY?: string;
   MP_WEBHOOK_SECRET?: string;
-  /** '1' troca o Essencial mensal pelo plano de R$ 0,50 do painel. */
-  MP_MODO_TESTE?: string;
+  /** Id de um plano barato do painel que entra no lugar do Essencial mensal, só para testar o fluxo. Vazio em produção. */
+  MP_PLANO_DE_TESTE?: string;
   SITE_URL?: string;
   VITE_SITE_URL?: string;
 }
 
+/** O id do plano de teste, se configurado. */
+export function planoDeTeste(env: AmbienteMp = process.env as AmbienteMp): string | null {
+  const v = (env.MP_PLANO_DE_TESTE ?? '').trim();
+  return /^[a-f0-9]{32}$/i.test(v) ? v : null;
+}
+
 export function modoTeste(env: AmbienteMp = process.env as AmbienteMp): boolean {
-  return env.MP_MODO_TESTE === '1';
+  return planoDeTeste(env) !== null;
 }
 
 export function mpConfigurado(env: AmbienteMp = process.env as AmbienteMp): boolean {
@@ -52,7 +58,8 @@ export function urlDeRetorno(env: AmbienteMp = process.env as AmbienteMp): strin
 
 /** O id do plano do painel para este plano e ciclo — com o de teste no lugar do Essencial mensal quando pedido. */
 export function mpPlanId(plano: Plano, ciclo: Ciclo, env: AmbienteMp = process.env as AmbienteMp): string | null {
-  if (modoTeste(env) && plano === 'essencial' && ciclo === 'mensal') return MP_PLANO_DE_TESTE;
+  const teste = planoDeTeste(env);
+  if (teste && plano === 'essencial' && ciclo === 'mensal') return teste;
   return MP_PLANO_ID[plano][ciclo];
 }
 
@@ -237,7 +244,7 @@ export async function diagnostico(env: AmbienteMp = process.env as AmbienteMp) {
   const token = env.MP_ACCESS_TOKEN ?? '';
   const tipoDoToken = !token ? 'ausente' : token.startsWith('APP_USR-') ? 'producao' : token.startsWith('TEST-') ? 'teste' : 'desconhecido';
   const planos: Record<string, string> = {};
-  const ids = [MP_PLANO_DE_TESTE, ...Object.values(MP_PLANO_ID).flatMap((c) => Object.values(c)).filter((x): x is string => Boolean(x))];
+  const ids = [planoDeTeste(env), ...Object.values(MP_PLANO_ID).flatMap((c) => Object.values(c))].filter((x): x is string => Boolean(x));
   for (const id of ids) {
     try {
       const p = await mp<{ id: string; status?: string; reason?: string; auto_recurring?: { transaction_amount?: number } }>(`/preapproval_plan/${id}`, {}, env);

@@ -18,14 +18,14 @@ import {
   criarAssinaturaSemPlano,
   criarAssinaturaComCartao,
   mpPlanId,
-  modoTeste,
+  planoDeTeste,
   procurarAssinaturasRecentes,
   urlDoCheckoutDoPlano,
   type PreapprovalMp,
   type PagamentoAutorizadoMp,
   type StatusMp,
 } from './mercadopago';
-import { ehPlano, planoDoMpPlanId, precoDo, situacaoDaConta, MP_PLANO_DE_TESTE, type Ciclo, type Conta, type Plano } from '../shared/planos';
+import { ehPlano, planoDoMpPlanId, precoDo, situacaoDaConta, type Ciclo, type Conta, type Plano } from '../shared/planos';
 
 export type StatusAssinatura = 'pendente' | 'autorizada' | 'pausada' | 'cancelada';
 export type StatusPagamento = 'agendado' | 'aprovado' | 'recusado' | 'cancelado' | 'reembolsado' | 'pendente';
@@ -297,7 +297,7 @@ export async function aplicarPreapproval(pre: PreapprovalMp, opcoes: { organizat
   }
 
   // Plano e ciclo: do plano do painel, senão da intenção, senão não dá.
-  const doPainel = planoDoMpPlanId(pre.preapproval_plan_id, modoTeste());
+  const doPainel = planoDoMpPlanId(pre.preapproval_plan_id, planoDeTeste());
   const plano = doPainel?.plano ?? dona.intencao?.plano ?? null;
   const ciclo = doPainel?.ciclo ?? dona.intencao?.ciclo ?? (pre.auto_recurring?.frequency === 12 ? 'anual' : 'mensal');
   if (!ehPlano(plano)) return { casou: false, organizationId: dona.organizationId, assinatura: null, motivo: `plano do MP desconhecido (${pre.preapproval_plan_id ?? 'sem plano'})` };
@@ -363,7 +363,8 @@ export async function procurarEAplicar(organizationId: string, emails: string[])
     if (pre.status !== 'authorized' && pre.status !== 'paused') return false;
     if (pre.external_reference === organizationId) return true;
     if (pre.payer_email && meus.has(pre.payer_email.toLowerCase())) return true;
-    return modoTeste() && pre.preapproval_plan_id === MP_PLANO_DE_TESTE;
+    const teste = planoDeTeste();
+    return Boolean(teste) && pre.preapproval_plan_id === teste;
   });
   if (!candidata) {
     // Diz o que viu, para o suporte entender sem abrir o painel do MP (sem e-mails de terceiros).

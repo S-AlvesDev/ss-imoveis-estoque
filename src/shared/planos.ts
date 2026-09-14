@@ -124,13 +124,14 @@ export const MP_PLANO_ID: Record<Plano, Record<Ciclo, string | null>> = {
   empresarial: { mensal: '2aa62da2af554e63806660ac1aa7c145', anual: null },
 };
 
-/** Plano de R$ 0,50 no painel, para testar o fluxo inteiro sem pagar o Essencial. Entra no lugar do Essencial mensal com MP_MODO_TESTE=1. */
-export const MP_PLANO_DE_TESTE = 'd498ce9708594fec89331933d452b488';
-
-/** De um id de plano do Mercado Pago para o nosso plano e ciclo. */
-export function planoDoMpPlanId(planId: string | null | undefined, modoTeste = false): { plano: Plano; ciclo: Ciclo } | null {
+/**
+ * De um id de plano do Mercado Pago para o nosso plano e ciclo. `planoDeTeste`
+ * é o id de um plano barato do painel que, quando configurado (variável
+ * MP_PLANO_DE_TESTE), entra no lugar do Essencial mensal para testar o fluxo.
+ */
+export function planoDoMpPlanId(planId: string | null | undefined, planoDeTeste: string | null = null): { plano: Plano; ciclo: Ciclo } | null {
   if (!planId) return null;
-  if (modoTeste && planId === MP_PLANO_DE_TESTE) return { plano: 'essencial', ciclo: 'mensal' };
+  if (planoDeTeste && planId === planoDeTeste) return { plano: 'essencial', ciclo: 'mensal' };
   for (const plano of PLANOS) for (const ciclo of CICLOS) if (MP_PLANO_ID[plano][ciclo] === planId) return { plano, ciclo };
   return null;
 }
