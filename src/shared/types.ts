@@ -262,4 +262,10 @@ export interface ManagedUser {
   senha_em_texto_puro: boolean;
   /** Depósitos que a pessoa vê/opera. Vazio para administrador (acesso implícito e total). */
   acessos: Acesso[];
+  /** O WhatsApp da pessoa (só dígitos, com DDI) — é por ele que o assistente a reconhece. */
+  whatsapp: string | null;
+  /** Operações liberadas pelo WhatsApp; null = padrão do cargo. */
+  whatsapp_operacoes: string[] | null;
+  /** Tem PIN para confirmar gravações pelo WhatsApp. */
+  whatsapp_pin_definido: boolean;
 }

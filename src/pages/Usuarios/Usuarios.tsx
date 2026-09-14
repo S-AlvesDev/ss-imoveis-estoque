@@ -11,6 +11,7 @@ import type { ManagedUser } from '@/shared/types';
 import { formatDateTime } from '@/features/estoque/utils';
 import { ROLE_LABELS } from '@/features/usuarios/constants';
 import { CEO } from '@/shared/constants';
+import { formatarWhatsapp } from '@/shared/whatsapp';
 import { UserModal } from './UserModal';
 import { usePlano } from '@/features/planos/usePlano';
 import { Cadeado } from '@/features/planos/Cadeado';
@@ -116,6 +117,7 @@ export function Usuarios() {
                           {isSelf && <span className="ml-2 text-[10px] font-bold text-[var(--brand)]">VOCÊ</span>}
                         </p>
                         {u.email && <p className="text-[11px] text-[var(--text-muted)]">{u.email}</p>}
+                        {u.whatsapp && <p className="text-[11px] text-[var(--text-muted)]">WhatsApp {formatarWhatsapp(u.whatsapp)}</p>}
                       </td>
                       <td className="px-3 py-3 font-mono text-[12px] text-[var(--text-muted)]">{u.matricula}</td>
                       <td className="px-3 py-3">

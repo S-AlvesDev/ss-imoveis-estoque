@@ -99,3 +99,16 @@ export const ESTADO_DO_ITEM: Record<string, { nome: string; cls: string }> = {
   manutencao: { nome: 'Manutenção', cls: 'bg-[var(--amarelo)]/15 text-[var(--amarelo)]' },
   baixado: { nome: 'Baixado', cls: 'bg-[var(--vermelho)]/15 text-[var(--vermelho)]' },
 };
+
+/** O que dá para registrar pelo WhatsApp, e o padrão de cada cargo (ajuste, recontagem e cadastro ficam no painel). */
+export const OPERACOES_WHATSAPP: Array<{ value: string; label: string }> = [
+  { value: 'SAIDA', label: 'Saída' },
+  { value: 'CONSUMO', label: 'Consumo' },
+  { value: 'TRANSFERENCIA', label: 'Transferência' },
+  { value: 'ENTRADA', label: 'Entrada' },
+  { value: 'DEVOLUCAO', label: 'Devolução de empréstimo' },
+];
+export function operacoesWhatsappPadrao(role: string): string[] {
+  return ADMIN_ROLES.includes(role) ? ['SAIDA', 'CONSUMO', 'TRANSFERENCIA', 'ENTRADA', 'DEVOLUCAO'] : ['SAIDA', 'CONSUMO', 'TRANSFERENCIA', 'DEVOLUCAO'];
+}
+

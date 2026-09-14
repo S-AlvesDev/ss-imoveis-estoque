@@ -387,6 +387,42 @@ export const GUIA: Section[] = [
   },
 
   {
+    id: 'whatsapp',
+    titulo: 'Stok Aí no WhatsApp',
+    descricao: 'Consultar e registrar pelo celular, conversando com o número do Stok Aí.',
+    topicos: [
+      {
+        id: 'whatsapp-usar',
+        titulo: 'Falar com o Stok Aí pelo WhatsApp',
+        audiencia: ['todos'],
+        resumo: 'Com o seu WhatsApp cadastrado pelo administrador, você manda mensagem para o número do Stok Aí e ele responde com os dados da sua empresa — só o que você já enxerga no painel.',
+        passos: [
+          'Salve o número do Stok Aí (está em Configurações → Stok Aí no WhatsApp) e mande uma mensagem: "quanto tem de cimento?", "o que está faltando?", "quem está com a furadeira?".',
+          'Para registrar: "saiu 10 sacos de cimento pra obra", "consumimos 5 litros de tinta", "o João devolveu a furadeira". O assistente mostra o que entendeu e pede SIM.',
+          'Responda SIM (ou "SIM 1234", se você tem PIN) para gravar; NÃO cancela. Sem resposta em 10 minutos, a proposta some.',
+        ],
+        dicas: [
+          { tipo: 'dica', texto: 'O assistente usa o nome dos materiais como está no cadastro. Se dois se parecem, ele pergunta qual — nunca chuta.' },
+          { tipo: 'atencao', texto: 'Ajuste, recontagem e cadastro só pelo painel. E o que você não opera no painel, também não opera pelo WhatsApp.' },
+        ],
+      },
+      {
+        id: 'whatsapp-config',
+        titulo: 'Liberar o WhatsApp para a equipe',
+        audiencia: ['admin'],
+        resumo: 'Cada pessoa precisa do WhatsApp cadastrado no usuário dela; o administrador decide o que ela pode registrar por lá e pode exigir um PIN.',
+        passos: [
+          'Em Usuários → editar, preencha o WhatsApp da pessoa (com DDD). O número identifica a pessoa, então não pode repetir.',
+          'Deixe o padrão do cargo (operador: saída, consumo, transferência, devolução; administrador: mais entrada) ou marque "Personalizar" e escolha.',
+          'Opcional: defina um PIN de 4 a 6 dígitos — a pessoa confirma gravações com "SIM 1234".',
+          'Em Configurações → Stok Aí no WhatsApp, use o simulador para testar como aquela pessoa antes de avisar a equipe.',
+        ],
+        dicas: [{ tipo: 'dica', texto: 'Faz parte do plano Empresarial, com 1.000 mensagens por mês por empresa.' }],
+      },
+    ],
+  },
+
+  {
     id: 'materiais',
     titulo: 'Materiais',
     descricao: 'Cadastro e manutenção da lista de materiais.',

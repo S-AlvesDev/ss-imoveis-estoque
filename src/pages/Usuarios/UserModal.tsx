@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { Eye, EyeOff, MessageCircle, RefreshCw } from 'lucide-react';
 import { Modal } from '@/shared/ui/Modal';
 import { Button } from '@/shared/ui/Button';
 import { Input, Select } from '@/shared/ui/Field';
 import { api } from '@/lib/api';
 import type { ManagedUser } from '@/shared/types';
 import { ASSIGNABLE_ROLES, MIN_PASSWORD_LENGTH, ROLE_HINTS, ROLE_LABELS } from '@/features/usuarios/constants';
+import { OPERACOES_WHATSAPP, operacoesWhatsappPadrao } from '@/shared/constants';
+import { formatarWhatsapp } from '@/shared/whatsapp';
 
 interface UserModalProps {
   open: boolean;
@@ -32,6 +34,11 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
   const [senha, setSenha] = useState('');
   const [showSenha, setShowSenha] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [whatsapp, setWhatsapp] = useState('');
+  const [waPersonalizado, setWaPersonalizado] = useState(false);
+  const [waOperacoes, setWaOperacoes] = useState<string[]>([]);
+  const [waPin, setWaPin] = useState('');
+  const [limparPin, setLimparPin] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -41,7 +48,19 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
     setRole(user?.role ?? ASSIGNABLE_ROLES[0]);
     setSenha('');
     setShowSenha(false);
+    setWhatsapp(user?.whatsapp ? formatarWhatsapp(user.whatsapp) : '');
+    setWaPersonalizado(Array.isArray(user?.whatsapp_operacoes));
+    setWaOperacoes(Array.isArray(user?.whatsapp_operacoes) ? user!.whatsapp_operacoes! : operacoesWhatsappPadrao(user?.role ?? ASSIGNABLE_ROLES[0]));
+    setWaPin('');
+    setLimparPin(false);
   }, [open, user]);
+
+  function camposWhatsapp() {
+    const c: Record<string, unknown> = { whatsapp: whatsapp.trim() || null, whatsapp_operacoes: waPersonalizado ? waOperacoes : null };
+    if (waPin.trim()) c.whatsapp_pin = waPin.trim();
+    else if (limparPin) c.whatsapp_pin = '';
+    return c;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -53,6 +72,7 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
     if (isEdit && senha && senha.length < MIN_PASSWORD_LENGTH) {
       return toast.error(`A nova senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.`);
     }
+    if (waPin.trim() && !/^\d{4,6}$/.test(waPin.trim())) return toast.error('O PIN do WhatsApp tem de 4 a 6 dígitos.');
 
     setSaving(true);
     try {
@@ -62,6 +82,7 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
           email: email.trim() || null,
           role,
           ...(senha ? { senha } : {}),
+          ...camposWhatsapp(),
         });
         toast.success(senha ? 'Usuário atualizado e senha redefinida.' : 'Usuário atualizado.');
       } else {
@@ -71,6 +92,7 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
           email: email.trim() || null,
           role,
           senha,
+          ...camposWhatsapp(),
         });
         toast.success('Usuário criado.');
       }
@@ -130,6 +152,46 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
             <p className="-mt-2 text-[11px] text-[var(--text-muted)]">{ROLE_HINTS[role]}</p>
           </>
         )}
+
+        <div className="space-y-3 rounded-lg border border-[var(--border)] p-3">
+          <p className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">
+            <MessageCircle size={12} /> Stok Aí no WhatsApp
+          </p>
+          <Input label="WhatsApp da pessoa" value={whatsapp} onChange={(e) => setWhatsapp(formatarWhatsapp(e.target.value))} inputMode="tel" placeholder="(84) 99999-9999" />
+          <p className="-mt-1 text-[11px] text-[var(--text-muted)]">Com o número cadastrado, a pessoa conversa com o assistente: consulta saldo e registra o que estiver liberado abaixo, sempre com confirmação.</p>
+          <div>
+            <label className="mb-1.5 flex items-center gap-2 text-xs text-[var(--text)]">
+              <input type="checkbox" checked={waPersonalizado} onChange={(e) => { setWaPersonalizado(e.target.checked); if (!e.target.checked) setWaOperacoes(operacoesWhatsappPadrao(role)); }} />
+              Personalizar o que pode registrar pelo WhatsApp
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {OPERACOES_WHATSAPP.map((o) => {
+                const ligada = (waPersonalizado ? waOperacoes : operacoesWhatsappPadrao(role)).includes(o.value);
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    disabled={!waPersonalizado}
+                    onClick={() => setWaOperacoes((l) => (l.includes(o.value) ? l.filter((x) => x !== o.value) : [...l, o.value]))}
+                    className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wide transition-colors disabled:cursor-default ${ligada ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-2)] text-[var(--text-muted)]'} ${!waPersonalizado ? 'opacity-70' : ''}`}
+                  >
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-[var(--text-muted)]">Consulta é sempre liberada. {waPersonalizado ? 'Só o que está laranja pode ser registrado.' : 'Padrão do cargo — marque acima para mudar.'}</p>
+          </div>
+          <div>
+            <Input label={user?.whatsapp_pin_definido ? 'Trocar PIN (opcional)' : 'PIN para confirmar (opcional)'} value={waPin} onChange={(e) => setWaPin(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" placeholder="4 a 6 dígitos" />
+            <p className="-mt-1 text-[11px] text-[var(--text-muted)]">Com PIN, a pessoa confirma gravações respondendo "SIM 1234". Protege se o celular for perdido.</p>
+            {user?.whatsapp_pin_definido && (
+              <label className="mt-1 flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
+                <input type="checkbox" checked={limparPin} onChange={(e) => setLimparPin(e.target.checked)} /> Remover o PIN atual
+              </label>
+            )}
+          </div>
+        </div>
 
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">

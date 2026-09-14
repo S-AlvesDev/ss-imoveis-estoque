@@ -24,6 +24,18 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '3.7',
+    data: '2026-09-14',
+    titulo: 'Stok Aí no WhatsApp',
+    resumo:
+      'Quem tem o WhatsApp cadastrado no usuário conversa com o sistema pelo número do Stok Aí: pergunta saldo e pendências, registra saída, consumo, transferência e devolução — sempre com confirmação, e só no que o cargo permite. Plano Empresarial.',
+    mudancas: [
+      { tipo: 'novo', titulo: 'WhatsApp no usuário', descricao: 'Em Usuários, cada pessoa ganha o campo WhatsApp, a lista do que pode registrar por lá (padrão: operador não dá entrada) e um PIN opcional para confirmar gravações.' },
+      { tipo: 'novo', titulo: 'Assistente com confirmação', descricao: '"saiu 10 sacos de cimento pra obra" vira "Transferir 10 sacos de Cimento CP-II do Central para Obra? Responda SIM". Quem registra é o sistema, no SIM — nunca a IA; fica no histórico como "via WhatsApp".' },
+      { tipo: 'novo', titulo: 'Simulador em Configurações', descricao: 'Teste o assistente como qualquer usuário, sem celular, e veja o uso do mês.' },
+    ],
+  },
+  {
     versao: '3.6',
     data: '2026-09-14',
     titulo: 'CEO: quem criou a conta é o dono dela — e recibo a cada pagamento',

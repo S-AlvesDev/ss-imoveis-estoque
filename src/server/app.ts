@@ -21,6 +21,9 @@ import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, detalheD
 import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico, ErroDoMercadoPago, mensagemParaOPagador } from './mercadopago';
 import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, avulsosPendentes, type Pagamento } from './assinaturas';
 import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes';
+import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone } from './evolution';
+import { claudeConfigurado } from './claude';
+import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
 import { emailDeRecibo, emitente as emitenteDoRecibo } from './recibo';
 import { validarPagador } from './pagador';
@@ -2936,7 +2939,7 @@ export function createApp() {
 
   const MANAGEABLE_ROLES = ALL_INVENTORY_ROLES;
   const MIN_PASSWORD_LENGTH = 8;
-  const USER_COLUMNS = 'id, nome, email, matricula, role, created_at';
+  const USER_COLUMNS = 'id, nome, email, matricula, role, created_at, whatsapp, whatsapp_operacoes';
 
   function assertManageable(role: string | null | undefined): boolean {
     return !!role && MANAGEABLE_ROLES.includes(role);
@@ -2946,7 +2949,7 @@ export function createApp() {
     try {
       const { data, error } = await req.db!
         .from(ESTOQUE_USERS)
-        .select(`${USER_COLUMNS}, senha`)
+        .select(`${USER_COLUMNS}, senha, whatsapp_pin`)
         .in('role', MANAGEABLE_ROLES)
         .order('nome', { ascending: true });
       if (error) throw error;
@@ -2964,15 +2967,101 @@ export function createApp() {
       }
 
       // A senha nunca sai daqui — só o indicador de que ainda está em texto puro.
-      const users = (data || []).map(({ senha, ...u }: any) => ({
+      const users = (data || []).map(({ senha, whatsapp_pin, ...u }: any) => ({
         ...u,
         senha_em_texto_puro: !/^\$2[aby]\$/.test(String(senha || '')),
+        whatsapp_pin_definido: Boolean(whatsapp_pin),
         acessos: porUsuario.get(u.id) || [],
       }));
       res.json({ users });
     } catch (err: any) {
       console.error('[GET /api/users] erro:', err.message);
       res.status(500).json({ error: 'Erro ao carregar usuários.' });
+    }
+  });
+
+  /** Os campos do WhatsApp num corpo de criar/editar usuário: número normalizado, operações válidas, PIN (bcrypt) ou limpeza. */
+  function camposDoWhatsapp(body: any): { ok: true; campos: Record<string, unknown> } | { ok: false; erro: string } {
+    const campos: Record<string, unknown> = {};
+    if (body?.whatsapp !== undefined) {
+      if (body.whatsapp === null || String(body.whatsapp).trim() === '') campos.whatsapp = null;
+      else {
+        const n = normalizarTelefone(body.whatsapp);
+        if (!n) return { ok: false, erro: 'WhatsApp inválido: use DDD + número, ex.: (84) 99999-9999.' };
+        campos.whatsapp = n;
+      }
+    }
+    if (body?.whatsapp_operacoes !== undefined) {
+      if (body.whatsapp_operacoes === null) campos.whatsapp_operacoes = null;
+      else if (!Array.isArray(body.whatsapp_operacoes) || !body.whatsapp_operacoes.every(ehOperacaoWhatsapp)) return { ok: false, erro: 'Operações do WhatsApp inválidas.' };
+      else campos.whatsapp_operacoes = body.whatsapp_operacoes;
+    }
+    if (body?.whatsapp_pin !== undefined) {
+      const pin = String(body.whatsapp_pin ?? '').trim();
+      if (pin === '') campos.whatsapp_pin = null;
+      else if (!/^\d{4,6}$/.test(pin)) return { ok: false, erro: 'O PIN do WhatsApp tem de 4 a 6 dígitos.' };
+      else campos.whatsapp_pin = bcrypt.hashSync(pin, 10);
+    }
+    return { ok: true, campos };
+  }
+
+  // --------------------------- WHATSAPP (assistente) ---------------------------
+
+  /** O webhook da Evolution: cada mensagem recebida vira uma resposta do assistente. Trabalha antes de responder (Vercel). */
+  app.post('/api/webhooks/whatsapp', async (req, res) => {
+    const esperado = process.env.EVOLUTION_WEBHOOK_TOKEN;
+    if (esperado && req.query.token !== esperado) return res.status(401).json({ error: 'Token inválido.' });
+    const msg = lerEvento(req.body);
+    if (!msg) return res.json({ ok: true, ignorado: true });
+    try {
+      const r = await responder(msg.telefone, msg.texto, msg.tipo);
+      try {
+        await enviarTexto(msg.telefone, r.texto, msg.instancia || null);
+      } catch (e: any) {
+        console.error('[whatsapp] não enviou a resposta:', e.message);
+      }
+      res.json({ ok: true, respondido: true });
+    } catch (err: any) {
+      console.error('[webhook whatsapp] erro:', err.message);
+      res.status(500).json({ error: 'Falha ao processar.' });
+    }
+  });
+
+  /** Simula uma mensagem de um usuário (pelo WhatsApp cadastrado nele) — para testar sem a Evolution. Só administrador. */
+  app.post('/api/whatsapp/simular', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const userId = Number(req.body?.user_id);
+      const texto = String(req.body?.texto ?? '').trim();
+      if (!Number.isInteger(userId) || !texto) return res.status(400).json({ error: 'Informe o usuário e o texto.' });
+      const { data: u } = await req.db!.from(ESTOQUE_USERS).select('id, whatsapp').eq('id', userId).maybeSingle();
+      if (!u) return res.status(404).json({ error: 'Usuário não encontrado.' });
+      if (!u.whatsapp) return res.status(400).json({ error: 'Este usuário não tem WhatsApp cadastrado — coloque um em Usuários para simular.' });
+      const r = await responder(u.whatsapp, texto, 'texto');
+      res.json({ resposta: r.texto, uso: r.uso ?? null });
+    } catch (err: any) {
+      console.error('[POST /api/whatsapp/simular] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível simular.' });
+    }
+  });
+
+  /** Estado do WhatsApp para a tela: o que está configurado, a instância conectada, o uso do mês. */
+  app.get('/api/whatsapp/status', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const inicio = new Date();
+      inicio.setDate(1);
+      inicio.setHours(0, 0, 0, 0);
+      const { count } = await supabaseServer.from('whatsapp_mensagens').select('*', { count: 'exact', head: true }).eq('organization_id', req.user!.organization_id).eq('direcao', 'entrada').gte('criado_em', inicio.toISOString());
+      let instancia: string | null = null;
+      if (evolutionConfigurada()) {
+        try {
+          instancia = await estadoDaInstancia();
+        } catch (e: any) {
+          instancia = `erro: ${String(e.message).slice(0, 80)}`;
+        }
+      }
+      res.json({ evolution: evolutionConfigurada(), instancia, ia: claudeConfigurado(), liberado: planoLibera(req.plano!, 'whatsapp'), mensagens_no_mes: count ?? 0, limite_mes: LIMITE_MENSAGENS_MES, numero: process.env.EVOLUTION_NUMERO ?? null });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -2993,6 +3082,9 @@ export function createApp() {
       const negada = negarLimite(req.plano!, 'usuarios', pessoas ?? 0);
       if (negada) return res.status(negada.status).json(negada.body);
 
+      const wa = camposDoWhatsapp(req.body);
+      if (!wa.ok) return res.status(400).json({ error: wa.erro });
+
       const { data, error } = await req.db!
         .from(ESTOQUE_USERS)
         .insert({
@@ -3001,10 +3093,14 @@ export function createApp() {
           email: email ? String(email).trim().toLowerCase() : null,
           role,
           senha: await bcrypt.hash(String(senha), 10),
+          ...wa.campos,
         })
         .select(USER_COLUMNS)
         .single();
-      if (error) throw error;
+      if (error) {
+        if (/whatsapp/i.test(error.message) && /duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'Este WhatsApp já está em outro usuário.' });
+        throw error;
+      }
 
       res.status(201).json({ user: data });
     } catch (err: any) {
@@ -3045,10 +3141,16 @@ export function createApp() {
         patch.senha = await bcrypt.hash(String(senha), 10);
       }
 
+      const wa = camposDoWhatsapp(req.body);
+      if (!wa.ok) return res.status(400).json({ error: wa.erro });
+      Object.assign(patch, wa.campos);
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nada para atualizar.' });
 
       const { data, error } = await req.db!.from(ESTOQUE_USERS).update(patch).eq('id', id).select(USER_COLUMNS).single();
-      if (error) throw error;
+      if (error) {
+        if (/whatsapp/i.test(error.message) && /duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'Este WhatsApp já está em outro usuário.' });
+        throw error;
+      }
       res.json({ user: data });
     } catch (err: any) {
       console.error('[PATCH /api/users/:id] erro:', err.message);
