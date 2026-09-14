@@ -24,6 +24,8 @@ interface Status {
 interface Fala {
   de: 'eu' | 'bot';
   texto: string;
+  /** Só no simulador: o motivo técnico quando a IA falhou. */
+  erro?: string | null;
 }
 
 /**
@@ -75,8 +77,8 @@ export function WhatsappSection() {
     setTexto('');
     setEnviando(true);
     try {
-      const r = await api.post<{ resposta: string }>('/api/whatsapp/simular', { user_id: Number(userId), texto: t });
-      setFalas((f) => [...f, { de: 'bot', texto: r.resposta }]);
+      const r = await api.post<{ resposta: string; erro: string | null }>('/api/whatsapp/simular', { user_id: Number(userId), texto: t });
+      setFalas((f) => [...f, { de: 'bot', texto: r.resposta, erro: r.erro }]);
       carregar();
     } catch (err: any) {
       toast.error(err.message || 'Não foi possível simular.');
@@ -145,8 +147,9 @@ export function WhatsappSection() {
             <div className="flex-1 space-y-2 overflow-y-auto p-3">
               {falas.length === 0 && <p className="text-xs text-[var(--text-muted)]">Escolha quem está falando e mande uma mensagem como se fosse pelo WhatsApp: "quanto tem de cimento?", "saiu 10 sacos de cimento pra obra", "o que está faltando?".</p>}
               {falas.map((f, i) => (
-                <div key={i} className={`flex ${f.de === 'eu' ? 'justify-end' : 'justify-start'}`}>
+                <div key={i} className={`flex flex-col ${f.de === 'eu' ? 'items-end' : 'items-start'}`}>
                   <p className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm ${f.de === 'eu' ? 'rounded-br-sm bg-[var(--brand)] text-white' : 'rounded-bl-sm bg-[var(--surface)] text-[var(--text)]'}`}>{f.texto}</p>
+                  {f.erro && <p className="mt-1 max-w-[85%] text-[11px] text-rose-500">Motivo (só o administrador vê): {f.erro}</p>}
                 </div>
               ))}
               <div ref={fim} />

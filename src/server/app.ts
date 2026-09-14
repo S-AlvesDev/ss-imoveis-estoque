@@ -3037,7 +3037,7 @@ export function createApp() {
       if (!u) return res.status(404).json({ error: 'Usuário não encontrado.' });
       if (!u.whatsapp) return res.status(400).json({ error: 'Este usuário não tem WhatsApp cadastrado — coloque um em Usuários para simular.' });
       const r = await responder(u.whatsapp, texto, 'texto');
-      res.json({ resposta: r.texto, uso: r.uso ?? null });
+      res.json({ resposta: r.texto, uso: r.uso ?? null, erro: r.erro ?? null });
     } catch (err: any) {
       console.error('[POST /api/whatsapp/simular] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível simular.' });

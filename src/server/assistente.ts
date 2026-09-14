@@ -390,7 +390,8 @@ export const LIMITE_MENSAGENS_MES = 1000;
 
 interface Conversa {
   id?: string;
-  mensagens: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /** `erro` fica só no registro (a IA não o vê): por que uma resposta falhou. */
+  mensagens: Array<{ role: 'user' | 'assistant'; content: string; erro?: string }>;
   pendente: Proposta | null;
 }
 
@@ -426,6 +427,8 @@ export interface Resposta {
   texto: string;
   falante: Falante | null;
   uso?: Uso;
+  /** Motivo técnico quando a IA falhou — para o administrador no simulador, nunca para o WhatsApp. */
+  erro?: string;
 }
 
 /**
@@ -490,6 +493,7 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
   const historico: MensagemDoChat[] = [...conversa.mensagens.map((m) => ({ role: m.role, content: m.content })), { role: 'user', content: texto }];
   let resposta: string;
   let uso: Uso | undefined;
+  let erro: string | undefined;
   try {
     const r = await conversar({
       system: systemPrompt(ctx, conversa.pendente),
@@ -504,6 +508,7 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
     uso = r.uso;
   } catch (e: any) {
     console.error('[whatsapp] IA:', e.message);
+    erro = String(e.message).slice(0, 300);
     resposta = 'Tive um problema para responder agora. Tente de novo em instantes ou use o painel.';
   }
 
@@ -511,8 +516,8 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
     conversa.pendente = novaProposta;
     if (!/\bsim\b/i.test(resposta)) resposta += `\n\nResponda SIM para confirmar${falante.temPin ? ' (com o PIN: "SIM 1234")' : ''}.`;
   }
-  conversa.mensagens.push({ role: 'user', content: texto }, { role: 'assistant', content: resposta });
+  conversa.mensagens.push({ role: 'user', content: texto }, { role: 'assistant', content: resposta, ...(erro ? { erro } : {}) });
   await salvarConversa(falante, telefone, conversa);
   await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'saida', texto: resposta, uso });
-  return { texto: resposta, falante, uso };
+  return { texto: resposta, falante, uso, erro };
 }
