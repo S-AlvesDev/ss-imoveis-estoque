@@ -40,7 +40,7 @@ describe('pagamento avulso no MP', () => {
   const pagador = { nome: 'Ana Souza', email: 'ana@x.com', tipoDoc: 'CPF' as const, doc: '52998224725', endereco: null };
   it('monta o Pix com valor, referência, vencimento e pagador', () => {
     const c = corpoDoPagamentoAvulso({ metodo: 'pix', valor: 199.9, descricao: 'Stok Aí — Essencial (mensal)', referencia: 'avulso:abc', pagador, venceEm: new Date('2026-09-15T12:00:00Z'), env: { SITE_URL: 'https://stokai.app' } });
-    expect(c).toMatchObject({ transaction_amount: 199.9, payment_method_id: 'pix', external_reference: 'avulso:abc', notification_url: 'https://stokai.app/api/webhooks/mercadopago', date_of_expiration: '2026-09-15T12:00:00.000Z' });
+    expect(c).toMatchObject({ transaction_amount: 199.9, payment_method_id: 'pix', statement_descriptor: 'STOK AI', external_reference: 'avulso:abc', notification_url: 'https://stokai.app/api/webhooks/mercadopago', date_of_expiration: '2026-09-15T12:00:00.000Z' });
     expect(c.payer).toEqual({ email: 'ana@x.com', first_name: 'Ana', last_name: 'Souza', identification: { type: 'CPF', number: '52998224725' } });
   });
   it('boleto leva o endereço', () => {

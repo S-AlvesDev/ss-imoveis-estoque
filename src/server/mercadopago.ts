@@ -15,6 +15,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { MP_PLANO_ID, precoDo, DEFINICOES, NOME_DO_CICLO, type Plano, type Ciclo } from '../shared/planos';
 
 const API = 'https://api.mercadopago.com';
+/** O nome do Stok Aí na fatura do cartão. Nas assinaturas vale o descritor configurado na conta do MP. */
+export const DESCRITOR = 'STOK AI';
 const CHECKOUT_DE_PLANO = 'https://www.mercadopago.com.br/subscriptions/checkout';
 
 export interface AmbienteMp {
@@ -280,6 +282,8 @@ export function corpoDoPagamentoAvulso(args: { metodo: 'pix' | 'boleto'; valor: 
     transaction_amount: Math.round(args.valor * 100) / 100,
     description: args.descricao,
     payment_method_id: args.metodo === 'pix' ? 'pix' : 'bolbradesco',
+    // O que aparece na fatura do cartão e nos avisos do MP (até 22 caracteres, sem acento).
+    statement_descriptor: DESCRITOR,
     external_reference: args.referencia,
     notification_url: `${siteUrl(env)}/api/webhooks/mercadopago`,
     date_of_expiration: args.venceEm.toISOString(),
