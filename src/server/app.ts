@@ -3010,7 +3010,8 @@ export function createApp() {
   /** O webhook da Evolution: cada mensagem recebida vira uma resposta do assistente. Trabalha antes de responder (Vercel). */
   app.post('/api/webhooks/whatsapp', async (req, res) => {
     const esperado = process.env.EVOLUTION_WEBHOOK_TOKEN;
-    if (esperado && req.query.token !== esperado) return res.status(401).json({ error: 'Token inválido.' });
+    if (!esperado) return res.status(503).json({ error: 'Webhook do WhatsApp não configurado (EVOLUTION_WEBHOOK_TOKEN).' });
+    if (req.query.token !== esperado) return res.status(401).json({ error: 'Token inválido.' });
     const msg = lerEvento(req.body);
     if (!msg) return res.json({ ok: true, ignorado: true });
     try {
