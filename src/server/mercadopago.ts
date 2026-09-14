@@ -147,6 +147,8 @@ export class ErroDoMercadoPago extends Error {
 export function mensagemParaOPagador(e: unknown): string {
   if (!(e instanceof ErroDoMercadoPago)) return 'Não foi possível concluir o pagamento. Tente de novo.';
   const m = String(e.corpo?.message ?? '').toLowerCase();
+  // A validação do cartão (autorização simbólica antes da primeira cobrança) foi recusada pelo emissor.
+  if (m.includes('cc_val') || m.includes('validation has failed')) return 'O banco do cartão não autorizou a validação. Use um cartão de crédito (não débito ou virtual), confira o CPF do titular ou tente outro cartão.';
   if (m.includes('card_token') || m.includes('token')) return 'O cartão não foi aceito. Confira os dados e tente de novo.';
   if (m.includes('payer') && m.includes('collector')) return 'Não é possível pagar com a conta que recebe. Use outro cartão/e-mail.';
   if (e.status === 400 || e.status === 402) return `O Mercado Pago recusou: ${e.corpo?.message ?? 'confira os dados do cartão.'}`;

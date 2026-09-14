@@ -104,6 +104,7 @@ describe('Mercado Pago — corpo, URL e webhook', () => {
   });
 
   it('a frase para o pagador vem do que o MP respondeu', () => {
+    expect(mensagemParaOPagador(new ErroDoMercadoPago(400, 'x', { message: 'CC_VAL_433 Credit card validation has failed' }))).toContain('não autorizou a validação');
     expect(mensagemParaOPagador(new ErroDoMercadoPago(400, 'x', { message: 'Invalid card_token_id' }))).toContain('cartão não foi aceito');
     expect(mensagemParaOPagador(new ErroDoMercadoPago(400, 'x', { message: 'Payer and collector cannot be the same user' }))).toContain('conta que recebe');
     expect(mensagemParaOPagador(new ErroDoMercadoPago(400, 'x', { message: 'cc_rejected_insufficient_amount' }))).toContain('recusou');
