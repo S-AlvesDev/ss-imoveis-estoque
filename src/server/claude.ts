@@ -12,8 +12,13 @@ export interface AmbienteClaude {
 
 export const MODELO_PADRAO = 'claude-sonnet-5';
 
+/** A chave como vai no cabeçalho: sem espaço ou quebra de linha que veio junto no colar. */
+function chave(env: AmbienteClaude): string {
+  return String(env.ANTHROPIC_API_KEY ?? '').trim();
+}
+
 export function claudeConfigurado(env: AmbienteClaude = process.env as AmbienteClaude): boolean {
-  return Boolean(env.ANTHROPIC_API_KEY);
+  return chave(env) !== '';
 }
 
 export interface Ferramenta {
@@ -49,7 +54,7 @@ async function chamar(args: { system: string; messages: MensagemDoChat[]; tools:
   const modelo = args.env.ASSISTENTE_MODELO || MODELO_PADRAO;
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'x-api-key': args.env.ANTHROPIC_API_KEY as string, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    headers: { 'x-api-key': chave(args.env), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({ model: modelo, max_tokens: args.maxTokens, system: args.system, messages: args.messages, tools: args.tools.length ? args.tools : undefined }),
   });
   const corpo: any = await r.json().catch(() => null);
