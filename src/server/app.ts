@@ -18,8 +18,8 @@ import { alocarSaida, descreverConsumos, validarLote, type LoteBase, type Consum
 import { validarItem, validarEvento, transicionar } from './patrimonio';
 import { contaDaOrg, negarRecurso, negarLimite } from './planos';
 import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
-import { mpConfigurado, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico } from './mercadopago';
-import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura } from './assinaturas';
+import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico, ErroDoMercadoPago, mensagemParaOPagador } from './mercadopago';
+import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura } from './assinaturas';
 import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
 import {
   gerarToken,
@@ -2235,19 +2235,24 @@ export function createApp() {
       disponivel: Object.fromEntries(CICLOS.map((ciclo: Ciclo) => [ciclo, mpConfigurado() || PLANOS.some((p) => mpPlanId(p, ciclo))])),
       modo_teste: modoTeste(),
       avaliacao_dias: AVALIACAO_DIAS,
+      // Com a chave pública, o cartão é digitado dentro do site (Checkout Transparente).
+      mp_public_key: mpPublicKey(),
     };
   };
 
   app.get('/api/assinatura', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      res.json(await resumoDaAssinatura(req.user!.organization_id));
+      const { data: eu } = await req.db!.from(ESTOQUE_USERS).select('email').eq('id', req.user!.id).maybeSingle();
+      res.json({ ...(await resumoDaAssinatura(req.user!.organization_id)), meu_email: eu?.email ?? null });
     } catch (err: any) {
       console.error('[GET /api/assinatura] erro:', err.message);
       res.status(500).json({ error: 'Erro ao carregar a assinatura.' });
     }
   });
 
-  /** Começa (ou troca, com `trocar: true`) uma assinatura: devolve a URL do checkout do Mercado Pago. */
+  const EMAIL_SIMPLES = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  /** Começa (ou troca, com `trocar: true`) uma assinatura: com `card_token_id`, assina aqui mesmo; sem, devolve a URL do checkout do Mercado Pago. */
   app.post('/api/assinatura', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const plano = req.body?.plano;
@@ -2256,16 +2261,32 @@ export function createApp() {
       if (!CICLOS.includes(ciclo)) return res.status(400).json({ error: 'Ciclo inválido: mensal ou anual.' });
       if (!mpPlanId(plano, ciclo) && !mpConfigurado()) return res.status(503).json({ error: 'Pagamento ainda não configurado para este ciclo. Fale com a gente.' });
 
-      // O e-mail do pagador: o do administrador que está assinando.
+      // O e-mail do pagador: o informado no cartão, senão o do administrador que está assinando.
       const { data: eu } = await req.db!.from(ESTOQUE_USERS).select('email').eq('id', req.user!.id).maybeSingle();
-      const email = String(eu?.email || '').trim().toLowerCase();
+      const informado = String(req.body?.payer_email || '').trim().toLowerCase();
+      const email = EMAIL_SIMPLES.test(informado) ? informado : String(eu?.email || '').trim().toLowerCase();
       if (!email) return res.status(400).json({ error: 'Cadastre um e-mail no seu usuário antes de assinar: é para onde vão os recibos.' });
+
+      // Checkout Transparente: veio o token do cartão, a assinatura nasce autorizada aqui.
+      const cardTokenId = String(req.body?.card_token_id || '').trim();
+      if (cardTokenId) {
+        if (!mpConfigurado()) return res.status(503).json({ error: 'Pagamento ainda não configurado no servidor.' });
+        if (!/^[A-Za-z0-9_-]{8,120}$/.test(cardTokenId)) return res.status(400).json({ error: 'Cartão inválido. Tente de novo.' });
+        const r = await assinarComCartao({ organizationId: req.user!.organization_id, plano, ciclo, payerEmail: email, cardTokenId, trocar: Boolean(req.body?.trocar) });
+        const autorizada = r.assinatura?.status === 'autorizada';
+        console.info(`[assinatura] ${req.user!.organization_id} → ${plano}/${ciclo} pelo cartão no site: ${autorizada ? 'autorizada' : (r.assinatura?.status ?? r.motivo)}`);
+        return res.json({ autorizada, ...(await resumoDaAssinatura(req.user!.organization_id)) });
+      }
 
       const r = await iniciarAssinatura({ organizationId: req.user!.organization_id, plano, ciclo, payerEmail: email, trocar: Boolean(req.body?.trocar) });
       console.info(`[assinatura] ${req.user!.organization_id} → ${plano}/${ciclo} (${r.assinatura.mp_plan_id ? 'plano do painel' : 'API'})`);
       res.json({ url: r.url, valor: precoDo(plano, ciclo) });
     } catch (err: any) {
       if (err instanceof ErroDeAssinatura) return res.status(err.status).json({ error: err.message });
+      if (err instanceof ErroDoMercadoPago) {
+        console.warn('[POST /api/assinatura] MP recusou:', err.message);
+        return res.status(402).json({ error: mensagemParaOPagador(err) });
+      }
       console.error('[POST /api/assinatura] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível iniciar a assinatura.' });
     }

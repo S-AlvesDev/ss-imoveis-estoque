@@ -46,6 +46,8 @@ interface Resumo {
   disponivel: Partial<Record<Ciclo, boolean>>;
   modo_teste: boolean;
   avaliacao_dias: number;
+  mp_public_key: string | null;
+  meu_email: string | null;
 }
 
 const RECURSOS_VISIVEIS: Array<{ id: Recurso; nome: string }> = [
@@ -275,8 +277,20 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
         )}
       </Card>
 
-      <Modal open={escolhendo} onClose={() => setEscolhendo(false)} title={emVigor ? 'Trocar de plano' : 'Assinar o Stok Aí'} subtitle={emVigor ? 'A assinatura atual é cancelada e a nova começa no checkout do Mercado Pago. O que já foi pago vale até o fim do período.' : 'Você conclui o pagamento no Mercado Pago e volta para cá com a conta liberada.'} maxWidth="max-w-3xl">
-        <EscolherPlano atual={emVigor ? assinatura?.plano : null} trocar={emVigor} disponivel={resumo?.disponivel ?? { mensal: true, anual: true }} modoTeste={resumo?.modo_teste ?? false} />
+      <Modal open={escolhendo} onClose={() => setEscolhendo(false)} title={emVigor ? 'Trocar de plano' : 'Assinar o Stok Aí'} subtitle={emVigor ? 'A nova assinatura substitui a atual; o que já foi pago vale até o fim do período.' : resumo?.mp_public_key ? 'Escolha o plano e pague com cartão aqui mesmo. A conta libera na hora.' : 'Você conclui o pagamento no Mercado Pago e volta para cá com a conta liberada.'} maxWidth="max-w-3xl">
+        <EscolherPlano
+          atual={emVigor ? assinatura?.plano : null}
+          trocar={emVigor}
+          disponivel={resumo?.disponivel ?? { mensal: true, anual: true }}
+          modoTeste={resumo?.modo_teste ?? false}
+          publicKey={resumo?.mp_public_key ?? null}
+          emailInicial={resumo?.meu_email ?? ''}
+          onAssinou={async () => {
+            setEscolhendo(false);
+            await carregar();
+            await refetch();
+          }}
+        />
       </Modal>
 
       <Modal open={confirmarCancelar} onClose={() => setConfirmarCancelar(false)} title="Cancelar a assinatura?" subtitle="Não há cobrança nova. O plano continua até o fim do período já pago; depois a conta trava até assinar de novo. Nada é apagado.">

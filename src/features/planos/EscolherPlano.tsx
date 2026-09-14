@@ -5,6 +5,7 @@ import { Button } from '@/shared/ui/Button';
 import { api } from '@/lib/api';
 import { track } from '@/lib/analytics';
 import { DEFINICOES, PLANOS, CICLOS, NOME_DO_CICLO, MESES_GRATIS_NO_ANUAL, formatarPreco, precoDo, type Ciclo, type Plano } from '@/shared/planos';
+import { FormularioCartao } from './FormularioCartao';
 
 interface EscolherPlanoProps {
   /** O plano em vigor, para marcar "atual" e desabilitar. */
@@ -15,27 +16,85 @@ interface EscolherPlanoProps {
   disponivel?: Partial<Record<Ciclo, boolean>>;
   /** Plano de R$ 0,50 no lugar do Essencial mensal (só em teste). */
   modoTeste?: boolean;
+  /** Chave pública do Mercado Pago: com ela o cartão é digitado aqui; sem, vai ao checkout do MP. */
+  publicKey?: string | null;
+  /** E-mail do administrador, sugerido para o recibo. */
+  emailInicial?: string;
   compacto?: boolean;
+  /** Assinou aqui mesmo (cartão dentro do site) — quem chama recarrega. */
+  onAssinou?: () => void;
 }
 
 /**
- * Os três planos com o ciclo (mensal/anual) e o botão que leva ao checkout
- * do Mercado Pago. O servidor decide a URL; aqui só se escolhe e se vai.
+ * Os três planos com o ciclo (mensal/anual). Com a chave pública do MP, o
+ * segundo passo é o cartão dentro do site; sem ela, o servidor devolve a
+ * URL do checkout do MP e a pessoa vai para lá.
  */
-export function EscolherPlano({ atual = null, trocar = false, disponivel = { mensal: true, anual: true }, modoTeste = false, compacto = false }: EscolherPlanoProps) {
+export function EscolherPlano({ atual = null, trocar = false, disponivel = { mensal: true, anual: true }, modoTeste = false, publicKey = null, emailInicial = '', compacto = false, onAssinou }: EscolherPlanoProps) {
   const [ciclo, setCiclo] = useState<Ciclo>('mensal');
   const [indo, setIndo] = useState<Plano | null>(null);
+  const [escolhido, setEscolhido] = useState<Plano | null>(null);
 
-  async function assinar(plano: Plano) {
+  const valorDe = (p: Plano) => (modoTeste && p === 'essencial' && ciclo === 'mensal' ? 0.5 : precoDo(p, ciclo));
+
+  /** Sem chave pública: o checkout hospedado do MP. */
+  async function irAoCheckout(plano: Plano) {
     setIndo(plano);
     try {
-      track('assinatura_iniciar', { plano, ciclo, trocar });
+      track('assinatura_iniciar', { plano, ciclo, trocar, onde: 'mp' });
       const r = await api.post<{ url: string }>('/api/assinatura', { plano, ciclo, trocar });
       window.location.href = r.url;
     } catch (err: any) {
       toast.error(err.message || 'Não foi possível abrir o pagamento.');
       setIndo(null);
     }
+  }
+
+  function escolher(plano: Plano) {
+    if (!publicKey) return irAoCheckout(plano);
+    track('assinatura_iniciar', { plano, ciclo, trocar, onde: 'site' });
+    setEscolhido(plano);
+  }
+
+  /** Com chave pública: o token do cartão vai ao servidor e a assinatura nasce autorizada. */
+  async function assinarComCartao(plano: Plano, dados: { cardTokenId: string; email: string }) {
+    const r = await api.post<{ autorizada?: boolean; url?: string }>('/api/assinatura', { plano, ciclo, trocar, card_token_id: dados.cardTokenId, payer_email: dados.email });
+    if (r.autorizada) {
+      track('assinatura_confirmada', { plano, onde: 'site' });
+      toast.success(`Assinatura do ${DEFINICOES[plano].nome} ativa.`);
+      onAssinou?.();
+      return;
+    }
+    // O MP aceitou mas ainda não autorizou (raro): segue para o checkout dele, se houver.
+    if (r.url) window.location.href = r.url;
+    else throw new Error('O Mercado Pago ainda não autorizou o pagamento. Tente de novo em instantes.');
+  }
+
+  if (escolhido) {
+    const d = DEFINICOES[escolhido];
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 rounded-xl border border-[var(--brand)]/40 bg-[var(--brand)]/5 px-4 py-3">
+          <div>
+            <p className="text-sm font-bold text-[var(--text)]">
+              {trocar ? 'Mudar para' : 'Assinar'} {d.nome} · {NOME_DO_CICLO[ciclo].toLowerCase()}
+            </p>
+            <p className="text-[11px] text-[var(--text-muted)]">{d.publico}</p>
+          </div>
+          <p className="text-lg font-extrabold text-[var(--text)]">
+            {formatarPreco(valorDe(escolhido))}
+            <span className="text-xs font-normal text-[var(--text-muted)]">/{ciclo === 'anual' ? 'ano' : 'mês'}</span>
+          </p>
+        </div>
+        <FormularioCartao
+          publicKey={publicKey as string}
+          emailInicial={emailInicial}
+          rotuloDoBotao={`Assinar por ${formatarPreco(valorDe(escolhido))}`}
+          onToken={(dados) => assinarComCartao(escolhido, dados)}
+          onCancelar={() => setEscolhido(null)}
+        />
+      </div>
+    );
   }
 
   return (
@@ -56,7 +115,7 @@ export function EscolherPlano({ atual = null, trocar = false, disponivel = { men
           ))}
         </div>
         <p className="inline-flex items-center gap-1.5 text-[11px] text-[var(--text-muted)]">
-          <CreditCard size={12} /> Cartão de crédito, pelo Mercado Pago. Cancele quando quiser.
+          <CreditCard size={12} /> Cartão de crédito{publicKey ? ', aqui mesmo' : ', pelo Mercado Pago'}. Cancele quando quiser.
         </p>
       </div>
 
@@ -71,7 +130,7 @@ export function EscolherPlano({ atual = null, trocar = false, disponivel = { men
               <p className="text-sm font-bold text-[var(--text)]">{d.nome}</p>
               <p className="text-[11px] text-[var(--text-muted)]">{d.publico}</p>
               <p className="mt-3 flex items-baseline gap-1 text-[var(--text)]">
-                <span className="text-2xl font-extrabold tracking-tight">{formatarPreco(teste ? 0.5 : precoDo(p, ciclo))}</span>
+                <span className="text-2xl font-extrabold tracking-tight">{formatarPreco(valorDe(p))}</span>
                 <span className="text-xs text-[var(--text-muted)]">/{ciclo === 'anual' ? 'ano' : 'mês'}</span>
               </p>
               {teste && <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--brand)]">plano de teste</p>}
@@ -85,7 +144,15 @@ export function EscolherPlano({ atual = null, trocar = false, disponivel = { men
                 </ul>
               )}
               <div className="mt-auto pt-4">
-                <Button fullWidth size="sm" variant={destaque ? 'primary' : 'outline'} disabled={eAtual || disponivel[ciclo] === false} loading={indo === p} onClick={() => assinar(p)} icon={indo === p ? undefined : <ExternalLink size={13} />}>
+                <Button
+                  fullWidth
+                  size="sm"
+                  variant={destaque ? 'primary' : 'outline'}
+                  disabled={eAtual || disponivel[ciclo] === false}
+                  loading={indo === p}
+                  onClick={() => escolher(p)}
+                  icon={indo === p ? undefined : publicKey ? <CreditCard size={13} /> : <ExternalLink size={13} />}
+                >
                   {eAtual ? 'Plano atual' : trocar ? `Mudar para ${d.nome}` : `Assinar ${d.nome}`}
                 </Button>
               </div>

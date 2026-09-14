@@ -16,6 +16,7 @@ import {
   buscarPagamentoAutorizado,
   cancelarAssinatura as cancelarNoMp,
   criarAssinaturaSemPlano,
+  criarAssinaturaComCartao,
   mpPlanId,
   modoTeste,
   procurarAssinaturasRecentes,
@@ -170,6 +171,32 @@ export async function iniciarAssinatura(args: { organizationId: string; plano: P
   const { data, error } = await supabaseServer.from('assinaturas').insert({ ...base, mp_preapproval_id: pre.id }).select('*').single();
   if (error) throw error;
   return { url: pre.init_point, assinatura: data as Assinatura };
+}
+
+/**
+ * Checkout Transparente: com o token do cartão, a assinatura é criada já
+ * autorizada e aplicada na hora. A troca cancela a anterior depois — só
+ * quando o MP aceitou a nova, para um cartão recusado não derrubar ninguém.
+ */
+export async function assinarComCartao(args: { organizationId: string; plano: Plano; ciclo: Ciclo; payerEmail: string; cardTokenId: string; trocar?: boolean }): Promise<ResultadoDeAplicacao> {
+  const atual = await assinaturaAtual(args.organizationId);
+  const emVigor = atual && (atual.status === 'autorizada' || atual.status === 'pausada');
+  if (emVigor && !args.trocar) throw new ErroDeAssinatura(409, 'Esta conta já tem uma assinatura em vigor. Para mudar de plano, use a troca.');
+
+  const planId = mpPlanId(args.plano, args.ciclo);
+  const pre = await criarAssinaturaComCartao({ plano: args.plano, ciclo: args.ciclo, organizationId: args.organizationId, payerEmail: args.payerEmail, cardTokenId: args.cardTokenId, planId });
+
+  if (emVigor && atual?.mp_preapproval_id && pre.status === 'authorized') {
+    try {
+      await cancelarNoMp(atual.mp_preapproval_id);
+    } catch (e: any) {
+      console.error('[assinatura] não cancelou a anterior no MP:', e.message);
+    }
+  }
+  // Intenções pendentes antigas saem; a nova entra e é aplicada como o webhook faria.
+  await supabaseServer.from('assinaturas').delete().eq('organization_id', args.organizationId).eq('status', 'pendente').is('mp_preapproval_id', null);
+  await supabaseServer.from('assinaturas').insert({ organization_id: args.organizationId, plano: args.plano, ciclo: args.ciclo, valor: precoDo(args.plano, args.ciclo), payer_email: args.payerEmail, mp_plan_id: planId, mp_preapproval_id: pre.id, status: 'pendente' });
+  return aplicarPreapproval(pre, { organizationId: args.organizationId });
 }
 
 /** Cancela no MP e aqui. A conta continua até `plano_ate`; depois trava. */

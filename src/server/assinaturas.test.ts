@@ -5,7 +5,7 @@ import { createHmac } from 'node:crypto';
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
 import { situacaoDaConta, precoDo, planoDoMpPlanId, MP_PLANO_DE_TESTE, MP_PLANO_ID, AVALIACAO_DIAS, CARENCIA_DIAS } from '../shared/planos';
-import { assinaturaDoWebhookValida, corpoDaAssinatura, urlDoCheckoutDoPlano, idDoEvento, tipoDoEvento, mpPlanId, motivo } from './mercadopago';
+import { assinaturaDoWebhookValida, corpoDaAssinatura, corpoDaAssinaturaComCartao, mpPublicKey, mensagemParaOPagador, ErroDoMercadoPago, urlDoCheckoutDoPlano, idDoEvento, tipoDoEvento, mpPlanId, motivo } from './mercadopago';
 import { traduzirStatus, traduzirPagamento, planoAteDe } from './assinaturas';
 
 const DIA = 24 * 60 * 60 * 1000;
@@ -75,6 +75,36 @@ describe('Mercado Pago — corpo, URL e webhook', () => {
       status: 'pending',
     });
     expect(motivo('essencial', 'mensal')).toBe('Stok Aí — Essencial (mensal)');
+  });
+
+  it('corpo com cartão: com plano do painel copia a recorrência do plano; sem plano usa o catálogo; nasce autorizada', () => {
+    const comum = { plano: 'essencial' as const, ciclo: 'mensal' as const, organizationId: 'org-1', payerEmail: 'a@b.com', cardTokenId: 'tok_1', env: { SITE_URL: 'https://stokai.app' } };
+    const rec = { frequency: 1, frequency_type: 'weeks', transaction_amount: 0.5, currency_id: 'BRL' };
+    expect(corpoDaAssinaturaComCartao({ ...comum, planId: 'plano-x', recorrenciaDoPlano: rec })).toEqual({
+      reason: 'Stok Aí — Essencial (mensal)',
+      external_reference: 'org-1',
+      payer_email: 'a@b.com',
+      card_token_id: 'tok_1',
+      back_url: 'https://stokai.app/assinatura/retorno',
+      status: 'authorized',
+      preapproval_plan_id: 'plano-x',
+      auto_recurring: rec,
+    });
+    const semPlano = corpoDaAssinaturaComCartao({ ...comum, ciclo: 'anual', planId: null });
+    expect(semPlano).not.toHaveProperty('preapproval_plan_id');
+    expect(semPlano.auto_recurring).toEqual({ frequency: 12, frequency_type: 'months', transaction_amount: 1999, currency_id: 'BRL' });
+  });
+
+  it('chave pública só vale junto com o access token', () => {
+    expect(mpPublicKey({ MP_PUBLIC_KEY: 'APP_USR-pk' })).toBeNull();
+    expect(mpPublicKey({ MP_ACCESS_TOKEN: 'APP_USR-at', MP_PUBLIC_KEY: 'APP_USR-pk' })).toBe('APP_USR-pk');
+  });
+
+  it('a frase para o pagador vem do que o MP respondeu', () => {
+    expect(mensagemParaOPagador(new ErroDoMercadoPago(400, 'x', { message: 'Invalid card_token_id' }))).toContain('cartão não foi aceito');
+    expect(mensagemParaOPagador(new ErroDoMercadoPago(400, 'x', { message: 'Payer and collector cannot be the same user' }))).toContain('conta que recebe');
+    expect(mensagemParaOPagador(new ErroDoMercadoPago(400, 'x', { message: 'cc_rejected_insufficient_amount' }))).toContain('recusou');
+    expect(mensagemParaOPagador(new Error('rede'))).toContain('Tente de novo');
   });
 
   it('valida a assinatura do webhook com o manifesto do MP', () => {

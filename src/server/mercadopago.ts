@@ -19,6 +19,8 @@ const CHECKOUT_DE_PLANO = 'https://www.mercadopago.com.br/subscriptions/checkout
 
 export interface AmbienteMp {
   MP_ACCESS_TOKEN?: string;
+  /** Chave pública: vai ao navegador para tokenizar o cartão (Checkout Transparente). */
+  MP_PUBLIC_KEY?: string;
   MP_WEBHOOK_SECRET?: string;
   /** '1' troca o Essencial mensal pelo plano de R$ 0,50 do painel. */
   MP_MODO_TESTE?: string;
@@ -32,6 +34,11 @@ export function modoTeste(env: AmbienteMp = process.env as AmbienteMp): boolean 
 
 export function mpConfigurado(env: AmbienteMp = process.env as AmbienteMp): boolean {
   return Boolean(env.MP_ACCESS_TOKEN);
+}
+
+/** A chave pública, se o cartão pode ser digitado dentro do site. Só faz sentido junto com o access token. */
+export function mpPublicKey(env: AmbienteMp = process.env as AmbienteMp): string | null {
+  return env.MP_ACCESS_TOKEN && env.MP_PUBLIC_KEY ? env.MP_PUBLIC_KEY : null;
 }
 
 function siteUrl(env: AmbienteMp): string {
@@ -118,6 +125,27 @@ export interface PagamentoAutorizadoMp {
 //  Chamadas
 // ---------------------------------------------------------------------------
 
+/** Um erro que a API do MP devolveu, com o status e o corpo — a rota decide o que dizer. */
+export class ErroDoMercadoPago extends Error {
+  constructor(
+    public status: number,
+    mensagem: string,
+    public corpo: any = null,
+  ) {
+    super(mensagem);
+  }
+}
+
+/** A frase para quem está pagando, a partir do que o MP respondeu. */
+export function mensagemParaOPagador(e: unknown): string {
+  if (!(e instanceof ErroDoMercadoPago)) return 'Não foi possível concluir o pagamento. Tente de novo.';
+  const m = String(e.corpo?.message ?? '').toLowerCase();
+  if (m.includes('card_token') || m.includes('token')) return 'O cartão não foi aceito. Confira os dados e tente de novo.';
+  if (m.includes('payer') && m.includes('collector')) return 'Não é possível pagar com a conta que recebe. Use outro cartão/e-mail.';
+  if (e.status === 400 || e.status === 402) return `O Mercado Pago recusou: ${e.corpo?.message ?? 'confira os dados do cartão.'}`;
+  return 'O Mercado Pago não respondeu como esperado. Tente de novo em instantes.';
+}
+
 async function mp<T>(caminho: string, init: RequestInit = {}, env: AmbienteMp = process.env as AmbienteMp): Promise<T> {
   if (!env.MP_ACCESS_TOKEN) throw new Error('MP_ACCESS_TOKEN não configurado.');
   const r = await fetch(`${API}${caminho}`, {
@@ -133,13 +161,46 @@ async function mp<T>(caminho: string, init: RequestInit = {}, env: AmbienteMp = 
   }
   if (!r.ok) {
     const msg = corpo?.message || corpo?.error || `HTTP ${r.status}`;
-    throw new Error(`Mercado Pago ${init.method ?? 'GET'} ${caminho}: ${msg}`);
+    throw new ErroDoMercadoPago(r.status, `Mercado Pago ${init.method ?? 'GET'} ${caminho}: ${msg}`, corpo);
   }
   return corpo as T;
 }
 
 export function criarAssinaturaSemPlano(args: Parameters<typeof corpoDaAssinatura>[0]): Promise<PreapprovalMp> {
   return mp<PreapprovalMp>('/preapproval', { method: 'POST', body: JSON.stringify(corpoDaAssinatura(args)) });
+}
+
+/**
+ * Checkout Transparente: o cartão foi tokenizado no navegador e a assinatura
+ * nasce autorizada aqui, sem ir ao site do MP. Com plano do painel, o valor é
+ * o do plano; sem, vai o do catálogo.
+ */
+export interface RecorrenciaMp {
+  frequency: number;
+  frequency_type: string;
+  transaction_amount: number;
+  currency_id: string;
+}
+
+export function corpoDaAssinaturaComCartao(args: { plano: Plano; ciclo: Ciclo; organizationId: string; payerEmail: string; cardTokenId: string; planId: string | null; recorrenciaDoPlano?: RecorrenciaMp | null; env?: AmbienteMp }) {
+  const env = args.env ?? (process.env as AmbienteMp);
+  const base = { reason: motivo(args.plano, args.ciclo), external_reference: args.organizationId, payer_email: args.payerEmail, card_token_id: args.cardTokenId, back_url: urlDeRetorno(env), status: 'authorized' };
+  // Com plano do painel, a recorrência é a do plano (valor, período) — copiada dele para não divergir.
+  if (args.planId) return { ...base, preapproval_plan_id: args.planId, ...(args.recorrenciaDoPlano ? { auto_recurring: args.recorrenciaDoPlano } : {}) };
+  return { ...base, auto_recurring: corpoDaAssinatura(args).auto_recurring };
+}
+
+/** A recorrência de um plano do painel (frequência, período, valor, moeda). */
+export async function recorrenciaDoPlano(planId: string): Promise<RecorrenciaMp | null> {
+  const p = await mp<{ auto_recurring?: Partial<RecorrenciaMp> }>(`/preapproval_plan/${encodeURIComponent(planId)}`);
+  const r = p.auto_recurring;
+  if (!r || r.frequency == null || !r.frequency_type || r.transaction_amount == null) return null;
+  return { frequency: r.frequency, frequency_type: r.frequency_type, transaction_amount: r.transaction_amount, currency_id: r.currency_id ?? 'BRL' };
+}
+
+export async function criarAssinaturaComCartao(args: Parameters<typeof corpoDaAssinaturaComCartao>[0]): Promise<PreapprovalMp> {
+  const recorrencia = args.planId && !args.recorrenciaDoPlano ? await recorrenciaDoPlano(args.planId) : args.recorrenciaDoPlano;
+  return mp<PreapprovalMp>('/preapproval', { method: 'POST', body: JSON.stringify(corpoDaAssinaturaComCartao({ ...args, recorrenciaDoPlano: recorrencia })) });
 }
 
 export function buscarAssinatura(id: string): Promise<PreapprovalMp> {
