@@ -374,7 +374,7 @@ function systemPrompt(ctx: Contexto, pendente: Proposta | null): string {
     'Responda curto, em português do Brasil, como uma mensagem de WhatsApp: sem markdown pesado, no máximo umas 6 linhas, números claros. Use as ferramentas para tudo que é dado — nunca invente saldo, nome de material ou estoque.',
     `Estoques que a pessoa vê: ${ctx.depositos.map((d) => `${d.nome} [${d.modo}${podeOperar(ctx.acessos, d.id) ? ', opera' : ', consulta'}]`).join('; ') || 'nenhum'}.`,
     `Operações que ela pode registrar pelo WhatsApp: ${ctx.falante.operacoes.map((o) => NOME_DA_OPERACAO_WHATSAPP[o]).join(', ') || 'nenhuma (só consulta)'}. Fora disso, diga que é só pelo painel ou com o administrador.`,
-    'Gravação (saída, consumo, transferência, entrada, devolução): use propor_* e depois PEÇA a confirmação com SIM. Você nunca registra nada; quem registra é o sistema quando a pessoa responde SIM. Se a ferramenta devolver dúvida (material ambíguo, estoque), pergunte à pessoa.',
+    'Gravação (saída, consumo, transferência, entrada, devolução): você NÃO tem como registrar nem preparar nada sozinha — só a ferramenta propor_movimentacao/propor_devolucao prepara. Chame-a sempre que a pessoa disser uma movimentação; só depois de ela devolver PROPOSTA PRONTA apresente o resumo e peça SIM. Nunca escreva "confirma", "SIM" ou "registrado" sem isso. Quem grava é o sistema, quando a pessoa responde SIM; quem avisa que gravou também é o sistema — nunca você. Se a ferramenta devolver dúvida (material ambíguo, estoque), pergunte à pessoa.',
     pendente ? `Há uma ação esperando confirmação: "${pendente.resumo}". Se a pessoa mudar de assunto, atenda; se quiser cancelar, diga que pode responder NÃO.` : '',
     'Nunca revele dados de outros estoques ou empresas. Se perguntarem algo fora de estoque, responda em uma linha e volte ao assunto.',
     'Se perguntarem o que você faz: consulta saldo, onde está cada material e o que está faltando; registra o que estiver liberado acima, sempre pedindo SIM. Só isso — cadastro, ajuste e relatórios são no painel.',
@@ -391,6 +391,18 @@ function systemPrompt(ctx: Contexto, pendente: Proposta | null): string {
 /** Quantas mensagens por mês a organização pode mandar ao assistente. */
 export const LIMITE_MENSAGENS_MES = 1000;
 
+export const SEM_PENDENCIA_PARA_CONFIRMAR = 'Não há nada esperando confirmação (ou já passaram os 10 minutos). Diga de novo o que quer registrar — ex.: "saiu 2 sacos de cimento do Central".';
+
+/**
+ * A IA escreveu pedindo SIM (ou anunciando registro) sem que uma proposta
+ * exista — nem nova, nem pendente. É o contrato quebrado: só a ferramenta
+ * prepara, só o código grava.
+ */
+export function pediuConfirmacaoSemProposta(texto: string, nova: Proposta | null, pendente: Proposta | null): boolean {
+  if (nova || pendente) return false;
+  return /\bSIM\b/.test(texto) || /\bconfirma\b/i.test(texto) || /registrad[ao]\b/i.test(texto);
+}
+
 /**
  * Número sem cadastro: pode ser alguém da equipe de um cliente, ou um
  * interessado que veio do botão da Home — o número do assistente é o mesmo
@@ -404,8 +416,8 @@ export const MENSAGEM_PARA_DESCONHECIDO = [
 
 interface Conversa {
   id?: string;
-  /** `erro` fica só no registro (a IA não o vê): por que uma resposta falhou. */
-  mensagens: Array<{ role: 'user' | 'assistant'; content: string; erro?: string }>;
+  /** `erro` e `ferramentas` ficam só no registro (a IA não os vê): por que uma resposta falhou, o que ela chamou. */
+  mensagens: Array<{ role: 'user' | 'assistant'; content: string; erro?: string; ferramentas?: string[] }>;
   pendente: Proposta | null;
 }
 
@@ -498,6 +510,17 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
       await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'saida', texto: r });
       return { texto: r, falante };
     }
+  } else {
+    // Um "SIM" solto nunca chega à IA: sem proposta preparada pelo código, não há o que confirmar —
+    // e a IA não pode ter a chance de "encenar" um registro.
+    const c = lerConfirmacao(texto);
+    if (c.confirma || c.nega) {
+      const r = c.confirma ? SEM_PENDENCIA_PARA_CONFIRMAR : 'Não havia nada pendente. Se quiser, diga o que precisa.';
+      conversa.mensagens.push({ role: 'user', content: texto }, { role: 'assistant', content: r });
+      await salvarConversa(falante, telefone, conversa);
+      await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'saida', texto: r });
+      return { texto: r, falante };
+    }
   }
 
   if (!claudeConfigurado()) return { texto: 'O assistente ainda não está ligado neste servidor. Use o painel por enquanto.', falante };
@@ -508,18 +531,30 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
   let resposta: string;
   let uso: Uso | undefined;
   let erro: string | undefined;
+  let ferramentas: string[] = [];
   try {
-    const r = await conversar({
-      system: systemPrompt(ctx, conversa.pendente),
-      historico,
-      tools: FERRAMENTAS,
-      executar: (name, input) =>
-        executarFerramenta(ctx, name, input, (p) => {
-          novaProposta = p;
-        }),
-    });
+    const executar = (name: string, input: Record<string, unknown>) =>
+      executarFerramenta(ctx, name, input, (p) => {
+        novaProposta = p;
+      });
+    let r = await conversar({ system: systemPrompt(ctx, conversa.pendente), historico, tools: FERRAMENTAS, executar });
+    if (pediuConfirmacaoSemProposta(r.texto, novaProposta, conversa.pendente)) {
+      // Pediu SIM sem chamar propor_*: repete a rodada mandando usar a ferramenta. Se insistir, o código responde.
+      const segunda = await conversar({
+        system: systemPrompt(ctx, conversa.pendente),
+        historico: [...historico, { role: 'assistant', content: r.texto }, { role: 'user', content: '[sistema] Você pediu confirmação sem chamar propor_movimentacao/propor_devolucao. Chame a ferramenta agora com o que a pessoa disse; se faltar dado, pergunte.' }],
+        tools: FERRAMENTAS,
+        executar,
+      });
+      segunda.uso.tokens_entrada += r.uso.tokens_entrada;
+      segunda.uso.tokens_saida += r.uso.tokens_saida;
+      segunda.chamadas.unshift(...r.chamadas);
+      r = segunda;
+      if (pediuConfirmacaoSemProposta(r.texto, novaProposta, conversa.pendente)) r = { ...r, texto: 'Não consegui preparar essa movimentação. Me diga o material, a quantidade e o estoque — ex.: "saiu 2 sacos de cimento do Central".' };
+    }
     resposta = r.texto || 'Não entendi. Pode dizer de outro jeito?';
     uso = r.uso;
+    ferramentas = r.chamadas.map((c) => c.name);
   } catch (e: any) {
     console.error('[whatsapp] IA:', e.message);
     erro = String(e.message).slice(0, 300);
@@ -530,7 +565,7 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
     conversa.pendente = novaProposta;
     if (!/\bsim\b/i.test(resposta)) resposta += `\n\nResponda SIM para confirmar${falante.temPin ? ' (com o PIN: "SIM 1234")' : ''}.`;
   }
-  conversa.mensagens.push({ role: 'user', content: texto }, { role: 'assistant', content: resposta, ...(erro ? { erro } : {}) });
+  conversa.mensagens.push({ role: 'user', content: texto }, { role: 'assistant', content: resposta, ...(erro ? { erro } : {}), ...(ferramentas.length ? { ferramentas } : {}) });
   await salvarConversa(falante, telefone, conversa);
   await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'saida', texto: resposta, uso });
   return { texto: resposta, falante, uso, erro };

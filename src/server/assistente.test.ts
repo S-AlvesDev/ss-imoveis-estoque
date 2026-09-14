@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
 import { normalizarTelefone, lerEvento, evolutionConfigurada, variantesDoTelefone } from './evolution';
-import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO } from './assistente';
+import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO, pediuConfirmacaoSemProposta } from './assistente';
 import { formatarWhatsapp } from '../shared/whatsapp';
 import { claudeConfigurado } from './claude';
 
@@ -85,6 +85,19 @@ describe('confirmação', () => {
     expect(lerConfirmacao('cancela')).toEqual({ confirma: false, nega: true, pin: null });
     expect(lerConfirmacao('quanto tem de cimento?')).toEqual({ confirma: false, nega: false, pin: null });
     expect(lerConfirmacao('simples assim')).toEqual({ confirma: false, nega: false, pin: null });
+  });
+});
+
+describe('contrato da IA: só a ferramenta prepara, só o código grava', () => {
+  const proposta = { tipo: 'movimentacao', resumo: 'x', dados: {}, expira_em: new Date(Date.now() + 60_000).toISOString() } as any;
+  it('pega a IA pedindo SIM ou anunciando registro sem proposta', () => {
+    expect(pediuConfirmacaoSemProposta('Certo, confirma aí: Transferência de 1. SIM pra registrar?', null, null)).toBe(true);
+    expect(pediuConfirmacaoSemProposta('✅ Transferência registrada!', null, null)).toBe(true);
+    expect(pediuConfirmacaoSemProposta('Tem 6 UN de Teste. Precisa registrar alguma movimentação?', null, null)).toBe(false);
+  });
+  it('deixa passar quando há proposta nova ou pendente', () => {
+    expect(pediuConfirmacaoSemProposta('Transferir 1 Teste do Central para Obra? Responda SIM', proposta, null)).toBe(false);
+    expect(pediuConfirmacaoSemProposta('Ainda espero o SIM da transferência.', null, proposta)).toBe(false);
   });
 });
 
