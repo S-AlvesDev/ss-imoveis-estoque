@@ -2253,6 +2253,8 @@ export function createApp() {
       pendente_avulso: pendente,
       // Pix e boleto exigem o access token (é a API de pagamentos).
       avulso_disponivel: mpConfigurado(),
+      // Só se promete nota fiscal quando há emissor configurado (exige CNPJ e inscrição municipal).
+      nf_configurada: nfseConfigurada(),
       // O que dá para assinar agora: por plano e ciclo, se existe caminho (plano no painel ou API configurada).
       disponivel: Object.fromEntries(CICLOS.map((ciclo: Ciclo) => [ciclo, mpConfigurado() || PLANOS.some((p) => mpPlanId(p, ciclo))])),
       modo_teste: modoTeste(),

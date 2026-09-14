@@ -71,10 +71,10 @@ export function FormularioPagador({ metodo, plano, ciclo, valor, emailInicial = 
 
   return (
     <form onSubmit={gerar} className="space-y-4">
-      <Input label="Nome ou razão social" required value={nome} onChange={(e) => setNome(e.target.value)} maxLength={120} placeholder="Como vai na nota fiscal" />
+      <Input label="Nome ou razão social" required value={nome} onChange={(e) => setNome(e.target.value)} maxLength={120} placeholder="Quem está pagando" />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Input label="CPF ou CNPJ" required value={doc} onChange={(e) => setDoc(formatarDoc(e.target.value))} inputMode="numeric" placeholder="000.000.000-00" />
-        <Input label="E-mail para o recibo e a nota" required type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+        <Input label="E-mail para o recibo" required type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
       </div>
       {metodo === 'boleto' && (
         <div className="space-y-3 rounded-lg bg-[var(--bg-2)] p-3">

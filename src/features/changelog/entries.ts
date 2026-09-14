@@ -38,13 +38,12 @@ export const RELEASES: Release[] = [
   {
     versao: '3.5',
     data: '2026-09-14',
-    titulo: 'Cartão dentro do site, Pix e boleto, nota fiscal',
+    titulo: 'Cartão dentro do site, Pix e boleto',
     resumo:
-      'Assinar ficou mais direto: o cartão é digitado na própria página, sem ir ao site do Mercado Pago. Quem prefere Pix ou boleto paga o período inteiro (mês ou ano) e recebe aviso antes de vencer. Cada pagamento aprovado gera nota fiscal de serviço, enviada por e-mail.',
+      'Assinar ficou mais direto: o cartão é digitado na própria página, sem ir ao site do Mercado Pago. Quem prefere Pix ou boleto paga o período inteiro (mês ou ano) e recebe aviso antes de vencer.',
     mudancas: [
       { tipo: 'novo', titulo: 'Cartão na própria página', descricao: 'Número, validade e CVV em campos protegidos do Mercado Pago; a assinatura nasce autorizada na hora. Cartão recusado vira uma frase clara do que tentar.' },
       { tipo: 'novo', titulo: 'Pix e boleto', descricao: 'Pague o mês ou o ano de uma vez: QR Code do Pix na tela (libera em segundos) ou boleto para imprimir. A renovação é manual — 5 dias antes de vencer, um aviso no painel e um e-mail; pagando antes, o período novo começa onde o atual termina.' },
-      { tipo: 'novo', titulo: 'Nota fiscal', descricao: 'Cada pagamento aprovado gera a NFS-e em nome de quem pagou (CPF ou CNPJ). O link vai por e-mail e fica na lista de cobranças.' },
     ],
   },
   {

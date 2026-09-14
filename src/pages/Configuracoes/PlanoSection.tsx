@@ -58,6 +58,7 @@ interface Resumo {
   meu_email: string | null;
   pendente_avulso: PedidoAvulso | null;
   avulso_disponivel: boolean;
+  nf_configurada: boolean;
   ceo: { id: number; nome: string; email: string | null } | null;
   sou_ceo: boolean;
   administradores: Array<{ id: number; nome: string; email: string | null; role: string }>;
@@ -337,7 +338,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
                         <FileText size={12} /> Nota fiscal{p.nf_numero ? ` ${p.nf_numero}` : ''}
                       </a>
                     )}
-                    {p.status === 'aprovado' && p.nf_status !== 'emitida' && <span className="text-[11px] text-[var(--text-muted)]">nota fiscal a caminho</span>}
+                    {p.status === 'aprovado' && p.nf_status !== 'emitida' && resumo?.nf_configurada && <span className="text-[11px] text-[var(--text-muted)]">nota fiscal a caminho</span>}
                     <Badge variant={BADGE_PAGAMENTO[p.status].variant}>{BADGE_PAGAMENTO[p.status].texto}</Badge>
                   </span>
                 </li>
