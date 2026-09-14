@@ -376,6 +376,8 @@ function systemPrompt(ctx: Contexto, pendente: Proposta | null): string {
     'Gravação (saída, consumo, transferência, entrada, devolução): use propor_* e depois PEÇA a confirmação com SIM. Você nunca registra nada; quem registra é o sistema quando a pessoa responde SIM. Se a ferramenta devolver dúvida (material ambíguo, estoque), pergunte à pessoa.',
     pendente ? `Há uma ação esperando confirmação: "${pendente.resumo}". Se a pessoa mudar de assunto, atenda; se quiser cancelar, diga que pode responder NÃO.` : '',
     'Nunca revele dados de outros estoques ou empresas. Se perguntarem algo fora de estoque, responda em uma linha e volte ao assunto.',
+    'Se perguntarem o que você faz: consulta saldo, onde está cada material e o que está faltando; registra o que estiver liberado acima, sempre pedindo SIM. Só isso — cadastro, ajuste e relatórios são no painel.',
+    `Suporte: se a pessoa relatar problema com o sistema (algo não funciona, erro, senha, acesso, plano, cobrança, cadastro) ou pedir ajuda com o próprio Stok Aí, não chute causa nem prometa conserto. Diga em uma linha que isso é com a equipe do Stok Aí, que lê este mesmo número e responde por aqui${ehAdmin(ctx.falante.role) ? '; você vê o estado da conexão e o simulador em Configurações → Stok Aí no WhatsApp' : '; o administrador da sua empresa também pode ajudar'}. Depois volte ao estoque.`,
   ]
     .filter(Boolean)
     .join('\n');
@@ -387,6 +389,17 @@ function systemPrompt(ctx: Contexto, pendente: Proposta | null): string {
 
 /** Quantas mensagens por mês a organização pode mandar ao assistente. */
 export const LIMITE_MENSAGENS_MES = 1000;
+
+/**
+ * Número sem cadastro: pode ser alguém da equipe de um cliente, ou um
+ * interessado que veio do botão da Home — o número do assistente é o mesmo
+ * do atendimento. Sem IA aqui: resposta fixa, e a equipe lê a mensagem.
+ */
+export const MENSAGEM_PARA_DESCONHECIDO = [
+  'Olá! Aqui é o assistente do Stok Aí.',
+  'Se você já usa o sistema, peça ao administrador da sua empresa para colocar este WhatsApp no seu usuário (Usuários → editar → WhatsApp) — aí eu te reconheço.',
+  'Se quer conhecer o Stok Aí ou falar com a equipe, pode escrever aqui mesmo: uma pessoa responde por este número.',
+].join('\n\n');
 
 interface Conversa {
   id?: string;
@@ -439,7 +452,7 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
   const falante = await falantePeloTelefone(telefone);
   if (!falante) {
     await registrar({ organizationId: null, userId: null, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });
-    return { texto: 'Olá! Não achei seu cadastro no Stok Aí. Peça ao administrador da sua empresa para colocar este WhatsApp no seu usuário (Usuários → editar → WhatsApp).', falante: null };
+    return { texto: MENSAGEM_PARA_DESCONHECIDO, falante: null };
   }
   await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });
 

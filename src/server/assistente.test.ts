@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
 import { normalizarTelefone, lerEvento, evolutionConfigurada } from './evolution';
-import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome } from './assistente';
+import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO } from './assistente';
 import { formatarWhatsapp } from '../shared/whatsapp';
 import { claudeConfigurado } from './claude';
 
@@ -58,6 +58,14 @@ describe('permissões pelo WhatsApp', () => {
     expect(operacoesDoUsuario('OPERADOR', null)).toEqual(operacoesPadrao('OPERADOR'));
     expect(operacoesDoUsuario('OPERADOR', [])).toEqual([]);
     expect(operacoesDoUsuario('OPERADOR', ['SAIDA', 'AJUSTE', 'x'])).toEqual(['SAIDA']);
+  });
+});
+
+describe('número sem cadastro', () => {
+  it('acolhe tanto funcionário sem cadastro quanto interessado vindo da Home', () => {
+    expect(MENSAGEM_PARA_DESCONHECIDO).toMatch(/administrador/);
+    expect(MENSAGEM_PARA_DESCONHECIDO).toMatch(/equipe/);
+    expect(MENSAGEM_PARA_DESCONHECIDO.length).toBeLessThan(400);
   });
 });
 
