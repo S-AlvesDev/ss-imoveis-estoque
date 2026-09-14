@@ -387,6 +387,41 @@ export const GUIA: Section[] = [
   },
 
   {
+    id: 'compras',
+    titulo: 'Compras e cotações',
+    descricao: 'Pedir preço aos fornecedores pelo WhatsApp e comparar sem sair do sistema.',
+    topicos: [
+      {
+        id: 'compras-cotar',
+        titulo: 'Fazer uma cotação',
+        audiencia: ['admin'],
+        resumo: 'Você monta a lista, escolhe os fornecedores e o sistema manda a mesma mensagem para cada um, em nome da sua empresa. As respostas aparecem lado a lado.',
+        passos: [
+          'Em Compras → Fornecedores, cadastre as lojas: nome e WhatsApp bastam (o nome de quem atende deixa a mensagem mais simpática).',
+          'Em Compras → Cotações → Nova cotação: título, os itens (puxe do catálogo ou escreva), quantidade, os fornecedores e onde entregar.',
+          'Enviar. Cada fornecedor recebe a lista numerada e responde por ali mesmo. Quando responde, você recebe um aviso no seu WhatsApp e a tabela se atualiza.',
+          'Abra a cotação: o mais barato de cada item fica marcado, com o total de cada fornecedor. "Lembrar quem não respondeu" manda a pergunta de novo.',
+        ],
+        dicas: [
+          { tipo: 'dica', texto: 'A IA só lê a resposta do fornecedor e registra preço e prazo por item. Ela não negocia nem compra — isso é com você.' },
+          { tipo: 'atencao', texto: 'A mensagem sai do número do Stok Aí, apresentando-se como assistente de compras da sua empresa. Se o fornecedor quiser falar com uma pessoa, ele responde ali e você vê na conversa.' },
+        ],
+      },
+      {
+        id: 'compras-pedido',
+        titulo: 'Fechar o pedido',
+        audiencia: ['admin'],
+        resumo: 'Escolhido o fornecedor, um clique manda o pedido pelo WhatsApp: itens, preços, total, entrega e o pedido da nota fiscal em nome da empresa.',
+        passos: [
+          'Na cotação, clique em "fechar pedido" no fornecedor escolhido. Dá para mandar um recado extra ("entregar de manhã").',
+          'A cotação encerra. O que o fornecedor disser depois sobre o pedido chega no WhatsApp de quem criou a cotação.',
+          'Quando o material chegar, dê a entrada no estoque normalmente — pelo painel ou pelo WhatsApp.',
+        ],
+        dicas: [{ tipo: 'dica', texto: 'Faz parte do plano Empresarial, junto com o Stok Aí no WhatsApp.' }],
+      },
+    ],
+  },
+  {
     id: 'whatsapp',
     titulo: 'Stok Aí no WhatsApp',
     descricao: 'Consultar e registrar pelo celular, conversando com o número do Stok Aí.',

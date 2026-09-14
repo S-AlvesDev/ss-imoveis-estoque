@@ -19,6 +19,7 @@ import { RetornoAssinatura } from '@/features/planos/RetornoAssinatura';
 import { Admin } from '@/pages/Admin/Admin';
 import { Alertas } from '@/pages/Alertas/Alertas';
 import { Suporte } from '@/pages/Suporte/Suporte';
+import { Compras } from '@/pages/Compras/Compras';
 import { Usuarios } from '@/pages/Usuarios/Usuarios';
 import { Ajuda } from '@/pages/Ajuda/Ajuda';
 import { Configuracoes } from '@/pages/Configuracoes/Configuracoes';
@@ -68,6 +69,7 @@ const VIEW_TITLES: Record<string, string> = {
   dashboard: 'Painel',
   materiais: 'Materiais',
   alertas: 'Alertas de Estoque',
+  compras: 'Compras',
   suporte: 'Suporte',
   ajuda: 'Ajuda',
   usuarios: 'Usuários',
@@ -197,6 +199,7 @@ function InventoryApp({ role }: { role: string }) {
             )}
             {viewAtual === 'suporte' && <Suporte materials={catalogo} />}
             {viewAtual === 'ajuda' && <Ajuda />}
+            {viewAtual === 'compras' && isAdmin && <Compras catalogo={catalogo} unidade={unidade} />}
             {viewAtual === 'usuarios' && isAdmin && <Usuarios />}
             {viewAtual === 'configuracoes' && isAdmin && (
               <Configuracoes unidades={unidades} depositos={depositos} catalogo={catalogo} categorias={categorias} refetch={refetch} onSelecionarUnidade={setUnidade} />

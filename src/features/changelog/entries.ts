@@ -24,6 +24,18 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '3.8',
+    data: '2026-09-14',
+    titulo: 'Compras: cotação pelo WhatsApp',
+    resumo:
+      'Cadastre os fornecedores, monte a lista do que precisa e o sistema pergunta o preço a cada um pelo WhatsApp, em nome da sua empresa. As respostas viram uma tabela item × fornecedor com o mais barato marcado; o pedido fecha com um clique e já pede a nota fiscal. Plano Empresarial.',
+    mudancas: [
+      { tipo: 'novo', titulo: 'Aba Compras', descricao: 'Fornecedores (nome, WhatsApp, quem atende) e Cotações, com o histórico de cada uma e a conversa com cada fornecedor.' },
+      { tipo: 'novo', titulo: 'A IA só lê', descricao: 'A pergunta ao fornecedor é texto fixo. Quando ele responde "cimento tá 32, tinta não tenho", a IA registra preço e prazo por item — não negocia, não compra. Quem pediu recebe um aviso no WhatsApp.' },
+      { tipo: 'novo', titulo: 'Fechar pedido', descricao: 'Escolha o fornecedor e o sistema manda os itens, o total, o endereço de entrega e o pedido da nota fiscal em nome da empresa.' },
+    ],
+  },
+  {
     versao: '3.7',
     data: '2026-09-14',
     titulo: 'Stok Aí no WhatsApp',

@@ -32,8 +32,10 @@ export type Recurso =
   | 'alertas-por-email'
   /** Relatórios enviados sozinhos por e-mail (ainda não existe). */
   | 'relatorios-automaticos'
-  /** Avisos por WhatsApp (ainda não existe). */
-  | 'whatsapp';
+  /** O assistente no WhatsApp: a equipe consulta e registra pelo celular. */
+  | 'whatsapp'
+  /** Cotações e pedidos a fornecedores pelo WhatsApp. */
+  | 'cotacoes';
 
 /** Os limites numéricos. `null` = ilimitado (sujeito a uso justo). */
 export type Limite = 'unidades' | 'depositosPorUnidade' | 'usuarios';
@@ -84,7 +86,7 @@ export const DEFINICOES: Record<Plano, DefinicaoDoPlano> = {
     preco: 1200,
     publico: 'Operações maiores',
     limites: { unidades: 4, depositosPorUnidade: null, usuarios: null },
-    recursos: ['transferencia', 'identidade-visual', 'exportacoes', 'alertas-por-email', 'relatorios-automaticos', 'whatsapp'],
+    recursos: ['transferencia', 'identidade-visual', 'exportacoes', 'alertas-por-email', 'relatorios-automaticos', 'whatsapp', 'cotacoes'],
     niveis: { auditoria: 'Avançada', alertas: 'Automáticos', dashboard: 'Avançado', relatorios: 'Avançados', permissoes: 'Avançadas', suporte: 'Prioridade máxima' },
     destaques: ['4 unidades, depósitos ilimitados*', 'Usuários ilimitados*', 'Tudo do Profissional', 'WhatsApp incluído', 'Relatórios automáticos', 'Personalização completa', 'Acesso antecipado a novos módulos'],
     servicos: ['Implantação e treinamento da equipe', 'Acompanhamento dedicado', 'Prioridade máxima no suporte'],
@@ -288,7 +290,8 @@ export function mensagemDeRecurso(recurso: Recurso): string {
     exportacoes: 'Exportação de relatórios',
     'alertas-por-email': 'Alertas por e-mail',
     'relatorios-automaticos': 'Relatórios automáticos',
-    whatsapp: 'Avisos por WhatsApp',
+    whatsapp: 'Stok Aí no WhatsApp',
+    cotacoes: 'Cotações pelo WhatsApp',
   };
   return `${oque[recurso]}: disponível a partir do plano ${nome}.`;
 }

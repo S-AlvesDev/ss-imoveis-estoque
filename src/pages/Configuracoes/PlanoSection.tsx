@@ -78,7 +78,8 @@ const RECURSOS_VISIVEIS: Array<{ id: Recurso; nome: string }> = [
   { id: 'identidade-visual', nome: 'Logo e cor da empresa' },
   { id: 'exportacoes', nome: 'Auditoria em PDF e exportações' },
   { id: 'alertas-por-email', nome: 'Alertas por e-mail' },
-  { id: 'whatsapp', nome: 'Avisos por WhatsApp (em breve)' },
+  { id: 'whatsapp', nome: 'Stok Aí no WhatsApp' },
+  { id: 'cotacoes', nome: 'Cotações a fornecedores pelo WhatsApp' },
   { id: 'relatorios-automaticos', nome: 'Relatórios automáticos (em breve)' },
 ];
 

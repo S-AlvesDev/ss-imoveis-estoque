@@ -24,6 +24,7 @@ import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes'
 import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone } from './evolution';
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
+import { enviarCotacao, fecharPedido } from './cotacoes';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
 import { emailDeRecibo, emitente as emitenteDoRecibo } from './recibo';
 import { validarPagador } from './pagador';
@@ -3015,7 +3016,7 @@ export function createApp() {
     const msg = lerEvento(req.body);
     if (!msg) return res.json({ ok: true, ignorado: true });
     try {
-      const r = await responder(msg.telefone, msg.texto, msg.tipo);
+      const r = await responder(msg.telefone, msg.texto, msg.tipo, msg.instancia || null);
       try {
         await enviarTexto(msg.telefone, r.texto, msg.instancia || null);
       } catch (e: any) {
@@ -3063,6 +3064,234 @@ export function createApp() {
       res.json({ evolution: evolutionConfigurada(), instancia, ia: claudeConfigurado(), liberado: planoLibera(req.plano!, 'whatsapp'), mensagens_no_mes: count ?? 0, limite_mes: LIMITE_MENSAGENS_MES, numero: process.env.EVOLUTION_NUMERO ?? null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --------------------------- FORNECEDORES E COTAÇÕES ---------------------------
+
+  const FORNECEDOR_COLUMNS = 'id, nome, whatsapp, contato, observacoes, ativo, created_at';
+
+  /** Nome, WhatsApp, contato e observações de um fornecedor, validados. `parcial` deixa faltar campo (PATCH). */
+  function camposDoFornecedor(body: any, parcial: boolean): { ok: true; campos: Record<string, unknown> } | { ok: false; erro: string } {
+    const campos: Record<string, unknown> = {};
+    if (!parcial || body?.nome !== undefined) {
+      const nome = String(body?.nome ?? '').trim();
+      if (nome.length < 2 || nome.length > 80) return { ok: false, erro: 'Informe o nome do fornecedor (2 a 80 caracteres).' };
+      campos.nome = nome;
+    }
+    if (!parcial || body?.whatsapp !== undefined) {
+      const n = normalizarTelefone(body?.whatsapp);
+      if (!n) return { ok: false, erro: 'WhatsApp inválido: use DDD + número, ex.: (84) 99999-9999.' };
+      campos.whatsapp = n;
+    }
+    if (body?.contato !== undefined) campos.contato = String(body.contato ?? '').trim().slice(0, 80) || null;
+    if (body?.observacoes !== undefined) campos.observacoes = String(body.observacoes ?? '').trim().slice(0, 500) || null;
+    if (body?.ativo !== undefined) campos.ativo = Boolean(body.ativo);
+    return { ok: true, campos };
+  }
+
+  app.get('/api/fornecedores', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data, error } = await req.db!.from('fornecedores').select(FORNECEDOR_COLUMNS).order('nome');
+      if (error) throw error;
+      res.json({ fornecedores: data ?? [] });
+    } catch (err: any) {
+      console.error('[GET /api/fornecedores] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar fornecedores.' });
+    }
+  });
+
+  app.post('/api/fornecedores', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const v = camposDoFornecedor(req.body, false);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { data, error } = await req.db!.from('fornecedores').insert(v.campos).select(FORNECEDOR_COLUMNS).single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'Já existe um fornecedor com este WhatsApp.' });
+        throw error;
+      }
+      res.status(201).json({ fornecedor: data });
+    } catch (err: any) {
+      console.error('[POST /api/fornecedores] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao cadastrar fornecedor.' });
+    }
+  });
+
+  app.patch('/api/fornecedores/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const v = camposDoFornecedor(req.body, true);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      if (Object.keys(v.campos).length === 0) return res.status(400).json({ error: 'Nada para atualizar.' });
+      const { data, error } = await req.db!.from('fornecedores').update(v.campos).eq('id', req.params.id).select(FORNECEDOR_COLUMNS).maybeSingle();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: 'Já existe um fornecedor com este WhatsApp.' });
+        throw error;
+      }
+      if (!data) return res.status(404).json({ error: 'Fornecedor não encontrado.' });
+      res.json({ fornecedor: data });
+    } catch (err: any) {
+      console.error('[PATCH /api/fornecedores/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao atualizar fornecedor.' });
+    }
+  });
+
+  app.delete('/api/fornecedores/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { count } = await req.db!.from('cotacao_fornecedores').select('*', { count: 'exact', head: true }).eq('fornecedor_id', req.params.id);
+      if ((count ?? 0) > 0) {
+        // Já participou de cotação: some da lista, mas o histórico fica.
+        const { error } = await req.db!.from('fornecedores').update({ ativo: false }).eq('id', req.params.id);
+        if (error) throw error;
+        return res.json({ ok: true, inativado: true });
+      }
+      const { error } = await req.db!.from('fornecedores').delete().eq('id', req.params.id);
+      if (error) throw error;
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error('[DELETE /api/fornecedores/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao excluir fornecedor.' });
+    }
+  });
+
+  const COTACAO_COLUMNS = 'id, titulo, itens, entrega, observacoes, status, pedido, created_at, encerrada_em, criado_por';
+  const COTACAO_FORNECEDOR_COLUMNS = 'fornecedor_id, status, enviada_em, respondida_em, erro, precos, total, conversa, fornecedores(id, nome, whatsapp, contato)';
+
+  /** Uma cotação com a linha de cada fornecedor, no formato da tela. */
+  async function cotacaoCompleta(db: any, id: string) {
+    const { data: c } = await db.from('cotacoes').select(COTACAO_COLUMNS).eq('id', id).maybeSingle();
+    if (!c) return null;
+    const { data: linhas } = await db.from('cotacao_fornecedores').select(COTACAO_FORNECEDOR_COLUMNS).eq('cotacao_id', id);
+    const fornecedores = ((linhas ?? []) as any[]).map(({ fornecedores: f, ...l }) => ({ ...l, fornecedor: f }));
+    return { ...c, fornecedores };
+  }
+
+  async function organizacaoParaCotar(req: express.Request): Promise<{ nome: string; instancia: string | null }> {
+    const { data } = await req.db!.from('organizations').select('nome, whatsapp_instancia').eq('id', req.user!.organization_id).single();
+    return { nome: data?.nome ?? 'a empresa', instancia: data?.whatsapp_instancia ?? null };
+  }
+
+  app.get('/api/cotacoes', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data, error } = await req.db!.from('cotacoes').select(COTACAO_COLUMNS).order('created_at', { ascending: false }).limit(100);
+      if (error) throw error;
+      const ids = (data ?? []).map((c: any) => c.id);
+      const { data: linhas } = ids.length ? await req.db!.from('cotacao_fornecedores').select('cotacao_id, fornecedor_id, status, total, fornecedores(id, nome, whatsapp, contato)').in('cotacao_id', ids) : { data: [] };
+      const porCotacao = new Map<string, any[]>();
+      for (const l of (linhas ?? []) as any[]) {
+        const { fornecedores: f, cotacao_id, ...resto } = l;
+        porCotacao.set(cotacao_id, [...(porCotacao.get(cotacao_id) ?? []), { ...resto, fornecedor: f, precos: [], conversa: [], enviada_em: null, respondida_em: null, erro: null }]);
+      }
+      res.json({ cotacoes: (data ?? []).map((c: any) => ({ ...c, fornecedores: porCotacao.get(c.id) ?? [] })) });
+    } catch (err: any) {
+      console.error('[GET /api/cotacoes] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar cotações.' });
+    }
+  });
+
+  app.get('/api/cotacoes/:id', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const c = await cotacaoCompleta(req.db!, req.params.id);
+      if (!c) return res.status(404).json({ error: 'Cotação não encontrada.' });
+      res.json({ cotacao: c });
+    } catch (err: any) {
+      console.error('[GET /api/cotacoes/:id] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao carregar a cotação.' });
+    }
+  });
+
+  /** Cria a cotação e já manda a mensagem a cada fornecedor. */
+  app.post('/api/cotacoes', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const negada = negarRecurso(req.plano!, 'cotacoes');
+      if (negada) return res.status(negada.status).json(negada.body);
+      if (!evolutionConfigurada()) return res.status(503).json({ error: 'O WhatsApp do Stok Aí não está conectado neste servidor.' });
+
+      const titulo = String(req.body?.titulo ?? '').trim();
+      if (titulo.length < 2 || titulo.length > 80) return res.status(400).json({ error: 'Dê um título à cotação (2 a 80 caracteres).' });
+      const brutos: any[] = Array.isArray(req.body?.itens) ? req.body.itens : [];
+      const itens = brutos
+        .map((i, idx) => ({
+          n: idx + 1,
+          material_id: Number.isInteger(Number(i?.material_id)) && i?.material_id !== null && i?.material_id !== undefined ? Number(i.material_id) : null,
+          descricao: String(i?.descricao ?? '').trim().slice(0, 120),
+          quantidade: Number(i?.quantidade),
+          unidade: String(i?.unidade ?? 'un').trim().slice(0, 12) || 'un',
+        }))
+        .filter((i) => i.descricao && Number.isFinite(i.quantidade) && i.quantidade > 0);
+      if (itens.length === 0) return res.status(400).json({ error: 'Adicione pelo menos um item com quantidade.' });
+      if (itens.length > 30) return res.status(400).json({ error: 'No máximo 30 itens por cotação.' });
+      const fornecedorIds: string[] = Array.isArray(req.body?.fornecedores) ? req.body.fornecedores.map(String) : [];
+      if (fornecedorIds.length === 0) return res.status(400).json({ error: 'Escolha pelo menos um fornecedor.' });
+      const { data: fornecedores } = await req.db!.from('fornecedores').select('id').in('id', fornecedorIds).eq('ativo', true);
+      if (!fornecedores?.length) return res.status(400).json({ error: 'Nenhum dos fornecedores escolhidos está ativo.' });
+      const entrega = String(req.body?.entrega ?? '').trim().slice(0, 200) || null;
+      const observacoes = String(req.body?.observacoes ?? '').trim().slice(0, 500) || null;
+
+      const { data: c, error } = await req.db!.from('cotacoes').insert({ titulo, itens, entrega, observacoes, criado_por: req.user!.id }).select(COTACAO_COLUMNS).single();
+      if (error) throw error;
+      const { error: erroLinhas } = await req.db!.from('cotacao_fornecedores').insert(fornecedores.map((f: any) => ({ cotacao_id: c.id, fornecedor_id: f.id })));
+      if (erroLinhas) throw erroLinhas;
+
+      const org = await organizacaoParaCotar(req);
+      const envio = await enviarCotacao(req.user!.organization_id, org.nome, c, org.instancia);
+      res.status(201).json({ cotacao: await cotacaoCompleta(req.db!, c.id), envio });
+    } catch (err: any) {
+      console.error('[POST /api/cotacoes] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao criar a cotação.' });
+    }
+  });
+
+  /** Manda de novo para quem ainda não respondeu (ou deu erro no envio). */
+  app.post('/api/cotacoes/:id/reenviar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const negada = negarRecurso(req.plano!, 'cotacoes');
+      if (negada) return res.status(negada.status).json(negada.body);
+      if (!evolutionConfigurada()) return res.status(503).json({ error: 'O WhatsApp do Stok Aí não está conectado neste servidor.' });
+      const { data: c } = await req.db!.from('cotacoes').select(COTACAO_COLUMNS).eq('id', req.params.id).maybeSingle();
+      if (!c) return res.status(404).json({ error: 'Cotação não encontrada.' });
+      if (c.status !== 'aberta') return res.status(400).json({ error: 'Esta cotação já foi encerrada.' });
+      const apenas = Array.isArray(req.body?.fornecedores) ? req.body.fornecedores.map(String) : undefined;
+      const org = await organizacaoParaCotar(req);
+      const envio = await enviarCotacao(req.user!.organization_id, org.nome, c, org.instancia, apenas);
+      res.json({ cotacao: await cotacaoCompleta(req.db!, c.id), envio });
+    } catch (err: any) {
+      console.error('[POST /api/cotacoes/:id/reenviar] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao reenviar.' });
+    }
+  });
+
+  /** Fecha o pedido com um fornecedor: manda a mensagem de pedido e encerra a cotação. */
+  app.post('/api/cotacoes/:id/pedido', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const negada = negarRecurso(req.plano!, 'cotacoes');
+      if (negada) return res.status(negada.status).json(negada.body);
+      if (!evolutionConfigurada()) return res.status(503).json({ error: 'O WhatsApp do Stok Aí não está conectado neste servidor.' });
+      const fornecedorId = String(req.body?.fornecedor_id ?? '');
+      if (!fornecedorId) return res.status(400).json({ error: 'Escolha o fornecedor.' });
+      const observacoes = String(req.body?.observacoes ?? '').trim().slice(0, 500) || null;
+      const org = await organizacaoParaCotar(req);
+      let r: { texto: string; total: number };
+      try {
+        r = await fecharPedido(req.user!.organization_id, org.nome, req.params.id, fornecedorId, observacoes, org.instancia);
+      } catch (e: any) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ cotacao: await cotacaoCompleta(req.db!, req.params.id), pedido: r });
+    } catch (err: any) {
+      console.error('[POST /api/cotacoes/:id/pedido] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao fechar o pedido.' });
+    }
+  });
+
+  app.post('/api/cotacoes/:id/cancelar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data, error } = await req.db!.from('cotacoes').update({ status: 'cancelada', encerrada_em: new Date().toISOString() }).eq('id', req.params.id).eq('status', 'aberta').select('id').maybeSingle();
+      if (error) throw error;
+      if (!data) return res.status(400).json({ error: 'Só uma cotação aberta pode ser cancelada.' });
+      res.json({ cotacao: await cotacaoCompleta(req.db!, req.params.id) });
+    } catch (err: any) {
+      console.error('[POST /api/cotacoes/:id/cancelar] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao cancelar.' });
     }
   });
 

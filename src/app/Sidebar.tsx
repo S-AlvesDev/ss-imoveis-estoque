@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertTriangle, BookOpen, Building2, CalendarClock, Check, ChevronRight, ChevronsUpDown, Laptop, LayoutDashboard, LifeBuoy, LogOut, Package, PackageOpen, Plus, Settings, ShieldCheck, Users, Warehouse,
+  AlertTriangle, BookOpen, Building2, CalendarClock, Check, ChevronRight, ChevronsUpDown, Laptop, LayoutDashboard, LifeBuoy, LogOut, Package, PackageOpen, Plus, Settings, ShieldCheck, ShoppingCart, Users, Warehouse,
 } from 'lucide-react';
 import { useAuth } from '@/store/auth';
 import { useMarca } from '@/store/marca';
@@ -14,7 +14,7 @@ import type { Deposito, ModoEstoque, NivelAcesso, Unidade } from '@/shared/types
  * As telas do sistema. As de estoque são dinâmicas: uma por estoque que a
  * pessoa enxerga na unidade em uso, identificada por `estoque:<id>`.
  */
-export type AppView = 'dashboard' | 'materiais' | 'alertas' | 'suporte' | 'ajuda' | 'usuarios' | 'configuracoes' | `estoque:${string}`;
+export type AppView = 'dashboard' | 'materiais' | 'alertas' | 'compras' | 'suporte' | 'ajuda' | 'usuarios' | 'configuracoes' | `estoque:${string}`;
 
 /** Compatibilidade com o nome antigo, ainda usado em algumas assinaturas. */
 export type AdminView = AppView;
@@ -77,6 +77,7 @@ export function navGroupsFor(role: string, estoques: EstoqueVisivel[]): NavGroup
       items: [
         ...so([{ view: 'materiais', label: 'Materiais', icon: <Package size={18} />, roles: ADMIN_ROLES }]),
         ...estoques.map(({ deposito }) => ({ view: viewDoEstoque(deposito.id), label: deposito.nome, icon: ICONE_DO_MODO[deposito.modo] ?? <Warehouse size={18} /> })),
+        ...so([{ view: 'compras', label: 'Compras', icon: <ShoppingCart size={18} />, roles: ADMIN_ROLES }]),
       ],
     },
     {

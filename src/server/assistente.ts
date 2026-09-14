@@ -14,6 +14,7 @@ import { acessosDoUsuario, podeVer, podeOperar, ehAdmin, type Acessos } from './
 import { depositosDaOrg, unidadesDaOrg, saldosDaOrg, saldosDoMaterial, calcularMovimento, gravarSaldos, operacaoPermitida, arredondar, type Deposito, type OperacaoGenerica } from './estoque';
 import { conversar, claudeConfigurado, type Ferramenta, type MensagemDoChat, type Uso } from './claude';
 import { variantesDoTelefone } from './evolution';
+import { fornecedorPeloTelefone, responderFornecedor, avisarQuemPediu } from './cotacoes';
 import { contaDaOrg } from './planos';
 import { planoLibera, NOME_DO_PLANO } from '../shared/planos';
 import { stockStatus } from '../features/estoque/utils';
@@ -461,9 +462,18 @@ export interface Resposta {
  * Uma mensagem chegou: descobre quem é, resolve confirmações, ou conversa
  * com a IA. Devolve o texto a mandar de volta (quem chama envia).
  */
-export async function responder(telefone: string, texto: string | null, tipo: 'texto' | 'imagem' | 'audio' | 'documento' | 'outro' = 'texto'): Promise<Resposta> {
+export async function responder(telefone: string, texto: string | null, tipo: 'texto' | 'imagem' | 'audio' | 'documento' | 'outro' = 'texto', instancia: string | null = null): Promise<Resposta> {
   const falante = await falantePeloTelefone(telefone);
   if (!falante) {
+    // Não é da equipe de ninguém: pode ser um fornecedor respondendo a uma cotação.
+    const fornecedor = await fornecedorPeloTelefone(telefone, instancia);
+    if (fornecedor) {
+      await registrar({ organizationId: fornecedor.organization_id, userId: null, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });
+      const r = await responderFornecedor(fornecedor, texto, tipo);
+      await registrar({ organizationId: fornecedor.organization_id, userId: null, telefone, direcao: 'saida', texto: r.texto });
+      if (r.avisar) await avisarQuemPediu(fornecedor, r);
+      return { texto: r.texto, falante: null };
+    }
     await registrar({ organizationId: null, userId: null, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });
     return { texto: MENSAGEM_PARA_DESCONHECIDO, falante: null };
   }

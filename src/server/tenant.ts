@@ -54,6 +54,10 @@ const TABELAS_DA_ORGANIZACAO = new Set([
   'pagamentos',
   // WhatsApp (migração 024).
   'whatsapp_conversas',
+  // Fornecedores e cotações (migração 025).
+  'fornecedores',
+  'cotacoes',
+  'cotacao_fornecedores',
 ]);
 
 const clientesPorOrg = new Map<string, SupabaseClient>();
