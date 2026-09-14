@@ -98,9 +98,12 @@ export function traduzirStatus(s: StatusMp | string | undefined): StatusAssinatu
 export function traduzirPagamento(ap: Pick<PagamentoAutorizadoMp, 'status' | 'payment'>): { status: StatusPagamento; detalhe: string | null } {
   const p = ap.payment?.status;
   const detalhe = ap.payment?.status_detail ?? null;
+  // "recycling" = o MP vai tentar de novo: continua pendente, dizendo por quê.
+  if (ap.status === 'recycling') return { status: 'pendente', detalhe: detalhe ?? 'nova tentativa agendada' };
+  // Uma cobrança "agendada" cujo pagamento já foi tentado e recusado é uma recusa.
+  if (p === 'rejected') return { status: 'recusado', detalhe };
   if (ap.status === 'scheduled') return { status: 'agendado', detalhe };
   if (ap.status === 'cancelled') return { status: 'cancelado', detalhe };
-  if (ap.status === 'recycling') return { status: 'pendente', detalhe: detalhe ?? 'nova tentativa agendada' };
   switch (p) {
     case 'approved':
       return { status: 'aprovado', detalhe };
@@ -502,6 +505,13 @@ export async function atualizarAvulso(pedido: Pagamento): Promise<Pagamento> {
   const pay = await buscarPagamento(pedido.mp_payment_id);
   const r = await aplicarPagamentoAvulso(pay);
   return r.casou && 'pagamento' in r && r.pagamento ? r.pagamento : pedido;
+}
+
+/** Todos os pedidos avulsos pendentes ainda dentro da validade — para o cron conferir no MP. */
+export async function avulsosPendentes(limite = 100): Promise<Pagamento[]> {
+  const { data, error } = await supabaseServer.from('pagamentos').select('*').eq('status', 'pendente').neq('metodo', 'cartao').not('mp_payment_id', 'is', null).gte('vence_em', new Date(Date.now() - 2 * 24 * 3600_000).toISOString()).limit(limite);
+  if (error) throw error;
+  return (data || []) as Pagamento[];
 }
 
 /** O pedido avulso pendente mais recente da organização, se houver e ainda valer. */

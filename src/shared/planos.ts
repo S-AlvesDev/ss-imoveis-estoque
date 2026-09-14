@@ -299,3 +299,32 @@ export function mensagemDeLimite(plano: PlanoEfetivo, limite: Limite): string {
   const sufixo = proximo ? ` Para mais, o plano ${NOME_DO_PLANO[proximo]}.` : ' Para mais, fale com a gente (Enterprise).';
   return `O plano ${NOME_DO_PLANO[plano]} inclui ${descreverLimite(limite, max)}.${sufixo}`;
 }
+
+/** Os `status_detail` do Mercado Pago que mais aparecem, em português. Desconhecido volta como veio. */
+export function detalheDoPagamento(detalhe: string | null | undefined): string | null {
+  if (!detalhe) return null;
+  const d = detalhe.toLowerCase();
+  const MAPA: Array<[RegExp, string]> = [
+    [/^accredited$/, 'aprovado'],
+    [/^pending_waiting_payment$/, 'aguardando pagamento'],
+    [/^pending_waiting_transfer$/, 'aguardando o Pix'],
+    [/^pending_review_manual$/, 'em análise pelo Mercado Pago'],
+    [/^pending_contingency$/, 'processando'],
+    [/^expired$/, 'expirado'],
+    [/^cc_rejected_high_risk$/, 'recusado pelo antifraude do cartão'],
+    [/^cc_rejected_insufficient_amount$/, 'saldo/limite insuficiente'],
+    [/^cc_rejected_bad_filled/, 'dados do cartão incorretos'],
+    [/^cc_rejected_call_for_authorize$/, 'o banco pediu para autorizar a compra'],
+    [/^cc_rejected_card_disabled$/, 'cartão desativado'],
+    [/^cc_rejected_duplicated_payment$/, 'pagamento duplicado'],
+    [/^cc_rejected_max_attempts$/, 'muitas tentativas'],
+    [/^cc_rejected_blacklist$/, 'cartão bloqueado pelo Mercado Pago'],
+    [/^cc_rejected_other_reason$/, 'recusado pelo banco'],
+    [/^by_collector$/, 'cancelado por nós'],
+    [/^by_payer$/, 'cancelado por você'],
+    [/^refunded$/, 'reembolsado'],
+  ];
+  for (const [re, texto] of MAPA) if (re.test(d)) return texto;
+  return detalhe;
+}
+

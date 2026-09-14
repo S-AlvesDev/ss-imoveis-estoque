@@ -5,7 +5,8 @@ vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 import { situacaoDaConta, fimDoPeriodo, LEMBRETE_DIAS } from '../shared/planos';
 import { validarPagador, cpfValido, cnpjValido } from './pagador';
 import { corpoDoPagamentoAvulso, dadosParaPagar } from './mercadopago';
-import { traduzirStatusDePagamento, descricaoDoAvulso } from './assinaturas';
+import { traduzirStatusDePagamento, descricaoDoAvulso, traduzirPagamento } from './assinaturas';
+import { detalheDoPagamento } from '../shared/planos';
 import { precisaLembrar, emailDeLembrete } from './lembretes';
 import { configuracaoNfse, corpoDaNfse, traduzirFocus, discriminacao } from './notafiscal';
 import { numeroDoRecibo, dadosDoRecibo, descricaoDoRecibo } from '../shared/recibo';
@@ -56,6 +57,12 @@ describe('pagamento avulso no MP', () => {
     expect(traduzirStatusDePagamento('rejected')).toBe('recusado');
     expect(traduzirStatusDePagamento('refunded')).toBe('reembolsado');
     expect(descricaoDoAvulso('profissional', 'anual')).toBe('Stok Aí — Profissional (anual)');
+    // Cobrança de assinatura "agendada" cujo pagamento foi recusado é uma recusa.
+    expect(traduzirPagamento({ status: 'scheduled', payment: { status: 'rejected', status_detail: 'cc_rejected_high_risk' } })).toEqual({ status: 'recusado', detalhe: 'cc_rejected_high_risk' });
+    expect(detalheDoPagamento('cc_rejected_high_risk')).toBe('recusado pelo antifraude do cartão');
+    expect(detalheDoPagamento('pending_waiting_payment')).toBe('aguardando pagamento');
+    expect(detalheDoPagamento('xyz')).toBe('xyz');
+    expect(detalheDoPagamento(null)).toBeNull();
   });
 });
 
@@ -143,6 +150,8 @@ describe('recibo (não fiscal)', () => {
     expect(dadosDoRecibo({ ...pg, pagador: null }, 'IFRN', 'Stok Aí').pagador).toEqual({ nome: 'IFRN', doc: null, email: null });
     expect(emitente({})).toBe('Stok Aí');
     expect(emitente({ RECIBO_EMITENTE: ' LEMUSA ' })).toBe('LEMUSA');
+    expect(emitente({ RECIBO_EMITENTE_DOC: '529.982.247-25' })).toBe('Stok Aí · CPF ***.982.247-**');
+    expect(emitente({ RECIBO_EMITENTE: 'Stok Aí', RECIBO_EMITENTE_DOC: '11222333000181' })).toBe('Stok Aí · CNPJ **.222.333/0001-**');
   });
 
   it('o e-mail vai para o pagador; sem e-mail, não há e-mail', () => {

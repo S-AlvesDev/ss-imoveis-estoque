@@ -14,7 +14,7 @@ import { baixarReciboPdf } from '@/features/planos/reciboPdf';
 import { useMarca } from '@/store/marca';
 import { api } from '@/lib/api';
 import { formatDateTime } from '@/features/estoque/utils';
-import { DEFINICOES, NOME_DO_CICLO, NOME_DO_METODO, NOME_DO_PLANO, formatarPreco, descreverLimite, type Ciclo, type Conta, type Limite, type Plano, type Recurso } from '@/shared/planos';
+import { DEFINICOES, NOME_DO_CICLO, NOME_DO_METODO, NOME_DO_PLANO, formatarPreco, descreverLimite, detalheDoPagamento, type Ciclo, type Conta, type Limite, type Plano, type Recurso } from '@/shared/planos';
 import { linkWhatsApp } from '@/shared/produto';
 import type { Deposito, Unidade } from '@/shared/types';
 
@@ -122,7 +122,14 @@ function Situacao({ conta, assinatura }: { conta: Conta; assinatura: Assinatura 
     return <p className="text-xs text-[var(--text-muted)]">{ate ? <>Avaliação gratuita até <strong className="text-[var(--text)]">{ate}</strong> ({conta.dias_restantes} {conta.dias_restantes === 1 ? 'dia' : 'dias'}). Enquanto isso, tudo do Empresarial.</> : 'Conta sem cobrança: tudo do Empresarial liberado.'}</p>;
   }
   if (conta.situacao === 'carencia') {
-    return <p className="text-xs font-semibold text-[var(--vermelho)]">Pagamento não aprovado. A conta trava em {ate}: atualize o cartão no Mercado Pago ou assine de novo.</p>;
+    return <p className="text-xs font-semibold text-[var(--vermelho)]">Pagamento não confirmado. A conta trava em {ate}: {conta.renovacao === 'manual' ? 'gere um novo Pix ou boleto' : 'atualize o cartão no Mercado Pago ou assine de novo'}.</p>;
+  }
+  if (conta.renovacao === 'manual' && ate) {
+    return (
+      <p className="text-xs text-[var(--text-muted)]">
+        <strong className="text-[var(--text)]">Pago por Pix/boleto</strong> até <strong className="text-[var(--text)]">{ate}</strong> ({conta.dias_restantes} {conta.dias_restantes === 1 ? 'dia' : 'dias'}). A renovação é manual: pague o próximo período antes de vencer e ele começa onde este termina.
+      </p>
+    );
   }
   if (assinatura?.status === 'autorizada') {
     return (
@@ -135,13 +142,6 @@ function Situacao({ conta, assinatura }: { conta: Conta; assinatura: Assinatura 
   }
   if (assinatura?.status === 'cancelada' && conta.ate) {
     return <p className="text-xs text-[var(--text-muted)]">Assinatura cancelada. O plano continua até <strong className="text-[var(--text)]">{ate}</strong>; depois a conta trava até assinar de novo.</p>;
-  }
-  if (conta.renovacao === 'manual' && ate) {
-    return (
-      <p className="text-xs text-[var(--text-muted)]">
-        Pago por Pix/boleto até <strong className="text-[var(--text)]">{ate}</strong> ({conta.dias_restantes} {conta.dias_restantes === 1 ? 'dia' : 'dias'}). A renovação é manual: pague o próximo período antes de vencer e ele começa onde este termina.
-      </p>
-    );
   }
   return <p className="text-xs text-[var(--text-muted)]">{ate ? <>Plano válido até <strong className="text-[var(--text)]">{ate}</strong>.</> : 'Plano sem vencimento — cortesia.'}</p>;
 }
@@ -237,7 +237,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   ];
 
   const tituloDoPlano = conta.situacao === 'avaliacao' ? 'Avaliação' : NOME_DO_PLANO[planoAtual.plano];
-  const subtituloDoPlano = conta.situacao === 'avaliacao' ? `${resumo?.avaliacao_dias ?? 7} dias grátis · tudo do Empresarial` : cortesia ? `${d.publico} · sem cobrança` : `${formatarPreco(d.preco)}/mês · ${d.publico}`;
+  const subtituloDoPlano = conta.situacao === 'avaliacao' ? `${resumo?.avaliacao_dias ?? 7} dias grátis · tudo do Empresarial` : cortesia ? `${d.publico} · sem cobrança` : conta.renovacao === 'manual' ? `${d.publico} · pago por Pix/boleto` : `${formatarPreco(d.preco)}/mês · ${d.publico}`;
 
   return (
     <section className="space-y-4">
@@ -340,7 +340,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
                     {formatDateTime(p.data)} · <strong>{formatarPreco(Number(p.valor))}</strong>
                     <span className="text-[var(--text-muted)]"> · {NOME_DO_METODO[p.metodo] ?? p.metodo}</span>
                     {p.periodo_ate && p.status === 'aprovado' && <span className="text-[var(--text-muted)]"> · até {fmtData.format(new Date(p.periodo_ate))}</span>}
-                    {p.detalhe && p.status !== 'aprovado' && <span className="text-[var(--text-muted)]"> · {p.detalhe}</span>}
+                    {p.detalhe && p.status !== 'aprovado' && <span className="text-[var(--text-muted)]"> · {detalheDoPagamento(p.detalhe)}</span>}
                   </span>
                   <span className="inline-flex items-center gap-2">
                     {p.status === 'aprovado' && (

@@ -58,6 +58,24 @@ export function formatarDoc(doc: string | null | undefined): string | null {
   return d || null;
 }
 
+/** CPF/CNPJ com o começo e o fim escondidos: `***.456.789-**`, `**.345.678/0001-**`. */
+export function mascararDoc(doc: string | null | undefined): string | null {
+  const f = formatarDoc(doc);
+  if (!f) return null;
+  const d = f.replace(/\D/g, '');
+  if (d.length === 11) return `***.${d.slice(3, 6)}.${d.slice(6, 9)}-**`;
+  if (d.length === 14) return `**.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-**`;
+  return f;
+}
+
+/** "Stok Aí · CPF ***.456.789-**" — quem assina o recibo, sem expor o documento inteiro. */
+export function linhaDoEmitente(nome: string, doc: string | null | undefined): string {
+  const m = mascararDoc(doc);
+  if (!m) return nome;
+  const tipo = String(doc ?? '').replace(/\D/g, '').length === 14 ? 'CNPJ' : 'CPF';
+  return `${nome} · ${tipo} ${m}`;
+}
+
 /** Tudo que o recibo mostra, tirado do pagamento. */
 export function dadosDoRecibo(pg: PagamentoParaRecibo, empresa: string, emitente: string): DadosDoRecibo {
   const pagador = (pg.pagador ?? {}) as { nome?: string; doc?: string; email?: string };

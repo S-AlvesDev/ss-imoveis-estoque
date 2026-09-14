@@ -8,13 +8,17 @@ import type { Pagamento } from './assinaturas';
 import { layoutEmail, escapeHtml, p, tabela } from './email-layout';
 import { formatarPreco } from '../shared/planos';
 import { PRODUTO } from '../shared/produto';
-import { dadosDoRecibo as montar, type DadosDoRecibo } from '../shared/recibo';
+import { dadosDoRecibo as montar, linhaDoEmitente, type DadosDoRecibo } from '../shared/recibo';
 
 export type { DadosDoRecibo };
 
-/** Quem emite o recibo: o que estiver em RECIBO_EMITENTE; sem isso, o produto. */
+/**
+ * Quem emite o recibo: o nome em RECIBO_EMITENTE (padrão "Stok Aí") e, se
+ * houver RECIBO_EMITENTE_DOC, o CPF/CNPJ com o meio visível e as pontas
+ * escondidas — identifica sem expor.
+ */
 export function emitente(env: Record<string, string | undefined> = process.env): string {
-  return (env.RECIBO_EMITENTE ?? '').trim() || PRODUTO.nome;
+  return linhaDoEmitente((env.RECIBO_EMITENTE ?? '').trim() || PRODUTO.nome, env.RECIBO_EMITENTE_DOC);
 }
 
 /** Tudo que o recibo mostra, tirado do pagamento. */

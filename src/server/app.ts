@@ -19,7 +19,7 @@ import { validarItem, validarEvento, transicionar } from './patrimonio';
 import { contaDaOrg, negarRecurso, negarLimite } from './planos';
 import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
 import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico, ErroDoMercadoPago, mensagemParaOPagador } from './mercadopago';
-import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, type Pagamento } from './assinaturas';
+import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, avulsosPendentes, type Pagamento } from './assinaturas';
 import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
 import { emailDeRecibo, emitente as emitenteDoRecibo } from './recibo';
@@ -2244,6 +2244,17 @@ export function createApp() {
   // --------------------------- ASSINATURA (Mercado Pago) ---------------------------
   // Estas rotas funcionam mesmo com a conta bloqueada: são o caminho de volta.
   const resumoDaAssinatura = async (organizationId: string) => {
+    // Um Pix/boleto pendente é conferido no MP antes de montar o resumo: se
+    // pagou com a tela fechada e o webhook atrasou, abrir o cartão Plano resolve.
+    const pendenteAntes = await avulsoPendente(organizationId);
+    if (pendenteAntes && mpConfigurado()) {
+      try {
+        const atualizado = await atualizarAvulso(pendenteAntes);
+        if (atualizado.status === 'aprovado') await cuidarDaNota(atualizado);
+      } catch (e: any) {
+        console.warn('[resumo] não conferiu o avulso pendente:', e.message);
+      }
+    }
     const [c, assinatura, pagamentos, pendente] = await Promise.all([contaDe(organizationId), assinaturaAtual(organizationId), pagamentosDe(organizationId), avulsoPendente(organizationId)]);
     return {
       organizacao: c?.organizacao ?? null,
@@ -2443,6 +2454,21 @@ export function createApp() {
         }
         await marcarLembrete(c.organizationId);
       }
+      // Pix/boletos pendentes: confere no MP (webhook pode ter falhado) e aplica o que foi pago.
+      let avulsos = 0;
+      if (mpConfigurado()) {
+        for (const pg of await avulsosPendentes()) {
+          try {
+            const atualizado = await atualizarAvulso(pg);
+            if (atualizado.status === 'aprovado') {
+              await cuidarDaNota(atualizado);
+              avulsos++;
+            }
+          } catch (e: any) {
+            console.warn(`[lembretes] avulso ${pg.id}:`, e.message);
+          }
+        }
+      }
       // Recibos que não saíram na hora (SMTP fora do ar) e notas fiscais que ficaram para trás.
       let notas = 0;
       const { data: semRecibo } = await supabaseServer.from('pagamentos').select('*').eq('status', 'aprovado').is('recibo_enviado_em', null).order('data', { ascending: true }).limit(50);
@@ -2454,7 +2480,7 @@ export function createApp() {
         }
       }
       console.info(`[lembretes] ${contas.length} conta(s) para lembrar, ${enviados} e-mail(s) enviado(s), ${notas} nota(s) verificada(s).`);
-      res.json({ contas: contas.length, enviados, notas });
+      res.json({ contas: contas.length, enviados, notas, avulsos_aprovados: avulsos });
     } catch (err: any) {
       console.error('[GET /api/cron/lembretes] erro:', err.message);
       res.status(500).json({ error: err.message });
