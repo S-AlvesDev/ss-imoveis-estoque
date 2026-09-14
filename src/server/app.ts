@@ -22,6 +22,7 @@ import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipo
 import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, type Pagamento } from './assinaturas';
 import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
+import { emailDeRecibo, emitente as emitenteDoRecibo } from './recibo';
 import { validarPagador } from './pagador';
 import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
 import {
@@ -2255,6 +2256,8 @@ export function createApp() {
       avulso_disponivel: mpConfigurado(),
       // Só se promete nota fiscal quando há emissor configurado (exige CNPJ e inscrição municipal).
       nf_configurada: nfseConfigurada(),
+      // Quem assina o recibo (não fiscal) que o cliente baixa em PDF.
+      emitente: emitenteDoRecibo(),
       // O que dá para assinar agora: por plano e ciclo, se existe caminho (plano no painel ou API configurada).
       disponivel: Object.fromEntries(CICLOS.map((ciclo: Ciclo) => [ciclo, mpConfigurado() || PLANOS.some((p) => mpPlanId(p, ciclo))])),
       modo_teste: modoTeste(),
@@ -2328,13 +2331,31 @@ export function createApp() {
     }
   });
 
+  /** O recibo (não fiscal) de um pagamento aprovado, por e-mail, uma vez só. */
+  async function enviarRecibo(pg: Pagamento) {
+    if (pg.recibo_enviado_em) return;
+    try {
+      const t = await getTransporter();
+      if (!t) return;
+      const { data: org } = await supabaseServer.from('organizations').select('nome').eq('id', pg.organization_id).maybeSingle();
+      const email = emailDeRecibo(pg, org?.nome ?? 'sua empresa');
+      if (!email) return;
+      await t.sendMail({ from: remetente(), to: email.to, subject: email.subject, html: email.html });
+      await supabaseServer.from('pagamentos').update({ recibo_enviado_em: new Date().toISOString() }).eq('id', pg.id);
+    } catch (e: any) {
+      console.error(`[recibo] pagamento ${pg.id}:`, e.message);
+    }
+  }
+
   /**
    * Nota fiscal de um pagamento aprovado: envia ao provedor (ou consulta o
    * que já foi enviado) e, quando sai, manda o link para quem pagou. Erros
    * ficam em `nf_erro` para tratar à mão; nunca derrubam o pagamento.
    */
   async function cuidarDaNota(pg: Pagamento | undefined | null) {
-    if (!pg || pg.status !== 'aprovado' || pg.nf_status === 'emitida' || !nfseConfigurada()) return;
+    if (!pg || pg.status !== 'aprovado') return;
+    await enviarRecibo(pg);
+    if (pg.nf_status === 'emitida' || !nfseConfigurada()) return;
     try {
       const r = await emitirNota(pg);
       if (r?.situacao === 'emitida') {
@@ -2422,8 +2443,10 @@ export function createApp() {
         }
         await marcarLembrete(c.organizationId);
       }
-      // Notas fiscais que ficaram para trás (provedor fora do ar, prefeitura processando).
+      // Recibos que não saíram na hora (SMTP fora do ar) e notas fiscais que ficaram para trás.
       let notas = 0;
+      const { data: semRecibo } = await supabaseServer.from('pagamentos').select('*').eq('status', 'aprovado').is('recibo_enviado_em', null).order('data', { ascending: true }).limit(50);
+      for (const pg of (semRecibo || []) as Pagamento[]) await enviarRecibo(pg);
       if (nfseConfigurada()) {
         for (const pg of await pagamentosSemNota()) {
           await cuidarDaNota(pg);

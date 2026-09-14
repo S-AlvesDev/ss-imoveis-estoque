@@ -75,6 +75,7 @@ export interface Pagamento {
   nf_ref: string | null;
   nf_numero: string | null;
   nf_url: string | null;
+  recibo_enviado_em: string | null;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -8,6 +8,8 @@ import { corpoDoPagamentoAvulso, dadosParaPagar } from './mercadopago';
 import { traduzirStatusDePagamento, descricaoDoAvulso } from './assinaturas';
 import { precisaLembrar, emailDeLembrete } from './lembretes';
 import { configuracaoNfse, corpoDaNfse, traduzirFocus, discriminacao } from './notafiscal';
+import { numeroDoRecibo, dadosDoRecibo, descricaoDoRecibo } from '../shared/recibo';
+import { emailDeRecibo, emitente } from './recibo';
 
 const agora = new Date('2026-09-14T12:00:00Z');
 const DIA = 24 * 60 * 60 * 1000;
@@ -126,3 +128,29 @@ describe('nota fiscal (Focus NFe)', () => {
     expect(traduzirFocus(400, { codigo: 'requisicao_invalida', mensagem: 'faltou cnpj' })).toEqual({ situacao: 'erro', erro: 'faltou cnpj' });
   });
 });
+
+describe('recibo (não fiscal)', () => {
+  const pg: any = { id: '6e8e378b-32f5-48bc-bdef-2de191f82f57', data: '2026-09-14T15:30:00Z', valor: '199.9', metodo: 'pix', plano: 'essencial', ciclo: 'mensal', periodo_de: '2026-09-14T15:30:00Z', periodo_ate: '2026-10-14T15:30:00Z', mp_payment_id: '123456', pagador: { nome: 'Instituto Teste', doc: '11222333000181', email: 'fin@teste.com' }, status: 'aprovado' };
+
+  it('número curto e estável, descrição legível', () => {
+    expect(numeroDoRecibo(pg)).toBe('R-2026-0914-2F57');
+    expect(descricaoDoRecibo(pg)).toBe('Plano Essencial (mensal) do Stok Aí — período de 14/09/2026 a 14/10/2026');
+  });
+
+  it('monta os dados com o documento formatado; sem pagador, usa a empresa', () => {
+    const r = dadosDoRecibo(pg, 'IFRN', 'LEMUSA');
+    expect(r).toMatchObject({ emitente: 'LEMUSA', pagador: { nome: 'Instituto Teste', doc: '11.222.333/0001-81', email: 'fin@teste.com' }, valor: 199.9, metodo: 'Pix', transacao: '123456' });
+    expect(dadosDoRecibo({ ...pg, pagador: null }, 'IFRN', 'Stok Aí').pagador).toEqual({ nome: 'IFRN', doc: null, email: null });
+    expect(emitente({})).toBe('Stok Aí');
+    expect(emitente({ RECIBO_EMITENTE: ' LEMUSA ' })).toBe('LEMUSA');
+  });
+
+  it('o e-mail vai para o pagador; sem e-mail, não há e-mail', () => {
+    const e = emailDeRecibo(pg, 'IFRN', {});
+    expect(e?.to).toBe('fin@teste.com');
+    expect(e?.subject).toBe('Recibo R-2026-0914-2F57 — Stok Aí');
+    expect(e?.html).toContain('não substitui nota fiscal');
+    expect(emailDeRecibo({ ...pg, pagador: { nome: 'X' } }, 'IFRN', {})).toBeNull();
+  });
+});
+

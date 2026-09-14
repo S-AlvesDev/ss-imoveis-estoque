@@ -10,6 +10,8 @@ import { useAuth } from '@/store/auth';
 import { usePlano } from '@/features/planos/usePlano';
 import { EscolherPlano } from '@/features/planos/EscolherPlano';
 import { PagamentoPendente, type PedidoAvulso } from '@/features/planos/PagamentoAvulso';
+import { baixarReciboPdf } from '@/features/planos/reciboPdf';
+import { useMarca } from '@/store/marca';
 import { api } from '@/lib/api';
 import { formatDateTime } from '@/features/estoque/utils';
 import { DEFINICOES, NOME_DO_CICLO, NOME_DO_METODO, NOME_DO_PLANO, formatarPreco, descreverLimite, type Ciclo, type Conta, type Limite, type Plano, type Recurso } from '@/shared/planos';
@@ -41,7 +43,13 @@ interface Pagamento {
   valor: number;
   data: string;
   detalhe: string | null;
+  plano: Plano | null;
+  ciclo: Ciclo | null;
+  periodo_de: string | null;
   periodo_ate: string | null;
+  mp_payment_id: string | null;
+  mp_authorized_payment_id: string | null;
+  pagador: Record<string, unknown> | null;
   nf_status: 'pendente' | 'emitida' | 'erro' | 'cancelada' | null;
   nf_numero: string | null;
   nf_url: string | null;
@@ -59,6 +67,7 @@ interface Resumo {
   pendente_avulso: PedidoAvulso | null;
   avulso_disponivel: boolean;
   nf_configurada: boolean;
+  emitente: string;
   ceo: { id: number; nome: string; email: string | null } | null;
   sou_ceo: boolean;
   administradores: Array<{ id: number; nome: string; email: string | null; role: string }>;
@@ -156,6 +165,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   const [paraId, setParaId] = useState('');
   const [salvandoTransferencia, setSalvandoTransferencia] = useState(false);
   const logout = useAuth((s) => s.logout);
+  const organizacao = useMarca((s) => s.organizacao);
 
   const carregar = useCallback(async () => {
     try {
@@ -333,6 +343,15 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
                     {p.detalhe && p.status !== 'aprovado' && <span className="text-[var(--text-muted)]"> · {p.detalhe}</span>}
                   </span>
                   <span className="inline-flex items-center gap-2">
+                    {p.status === 'aprovado' && (
+                      <button
+                        type="button"
+                        onClick={() => baixarReciboPdf(p, organizacao?.nome ?? 'sua empresa', resumo?.emitente ?? 'Stok Aí').catch(() => toast.error('Não foi possível gerar o recibo.'))}
+                        className="inline-flex items-center gap-1 font-semibold text-[var(--brand)] hover:underline"
+                      >
+                        <Receipt size={12} /> Recibo
+                      </button>
+                    )}
                     {p.nf_status === 'emitida' && p.nf_url && (
                       <a href={p.nf_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-[var(--brand)] hover:underline">
                         <FileText size={12} /> Nota fiscal{p.nf_numero ? ` ${p.nf_numero}` : ''}

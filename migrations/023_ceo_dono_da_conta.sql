@@ -12,6 +12,9 @@
 --  pessoa do cadastro.
 -- =============================================================================
 
+-- Recibo (não fiscal) enviado por e-mail a cada pagamento aprovado: quando foi.
+alter table pagamentos add column if not exists recibo_enviado_em timestamptz;
+
 -- Um CEO por organização, nem mais nem menos (o "menos" é garantido abaixo).
 create unique index if not exists estoque_users_um_ceo_por_org on estoque_users (organization_id) where role = 'CEO';
 

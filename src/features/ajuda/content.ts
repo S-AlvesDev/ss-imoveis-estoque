@@ -571,6 +571,7 @@ export const GUIA: Section[] = [
           { tipo: 'dica', texto: 'Transferência entre depósitos, logo e cor da empresa, exportações em PDF/Word e alertas por e-mail começam no Profissional. A lista de compras e os alertas na tela são de todos os planos.' },
           { tipo: 'dica', texto: 'O anual sai por 10 meses (2 grátis). Cancelar não apaga nada: o plano vale até o fim do período pago, e depois a conta só pede um plano de novo.' },
           { tipo: 'dica', texto: 'Sem cartão? Escolha Pix ou boleto: paga o período inteiro de uma vez. Não renova sozinho — 5 dias antes de vencer aparece o aviso e chega um e-mail; pagando antes, o novo período começa onde o atual termina.' },
+          { tipo: 'dica', texto: 'Cada pagamento aprovado gera um recibo numerado (não fiscal): vai por e-mail e fica em PDF na lista de cobranças.' },
           { tipo: 'dica', texto: 'Para passar a conta a outra pessoa, o CEO usa "Transferir titularidade": o escolhido (um administrador com e-mail) vira CEO e quem passou continua como administrador.' },
           { tipo: 'atencao', texto: 'Cartão recusado: o Mercado Pago tenta de novo e a conta continua por 2 dias com um aviso no topo. Passado isso, a tela pede para regularizar — e tudo volta assim que o pagamento aprova.' },
         ],

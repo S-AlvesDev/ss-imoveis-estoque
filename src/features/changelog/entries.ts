@@ -26,13 +26,14 @@ export const RELEASES: Release[] = [
   {
     versao: '3.6',
     data: '2026-09-14',
-    titulo: 'CEO: quem criou a conta é o dono dela',
+    titulo: 'CEO: quem criou a conta é o dono dela — e recibo a cada pagamento',
     resumo:
       'Um cargo novo e único por empresa. O CEO é quem cadastrou a conta: só ele assina, troca ou cancela o plano, recebe recibos, lembretes e notas fiscais, e pode passar a titularidade a outro administrador. Ninguém o rebaixa nem exclui. No resto, é um administrador como os outros.',
     mudancas: [
       { tipo: 'novo', titulo: 'Cargo CEO', descricao: 'Aparece em Usuários com um selo. Só o próprio CEO edita os dados dele; o cargo não se atribui nem se troca por ali.' },
       { tipo: 'novo', titulo: 'Transferir titularidade', descricao: 'Em Configurações → Plano e assinatura, o CEO escolhe outro administrador (com e-mail) para assumir; quem passou continua como administrador e entra de novo.' },
       { tipo: 'melhoria', titulo: 'Cobrança só com o CEO', descricao: 'Administradores veem o plano e o uso, mas os botões de assinar, trocar e cancelar ficam com o CEO — a tela diz quem é.' },
+      { tipo: 'novo', titulo: 'Recibo de cada pagamento', descricao: 'Pagamento aprovado gera um recibo numerado: vai por e-mail para quem pagou e fica em PDF na lista de cobranças. Não substitui nota fiscal.' },
     ],
   },
   {
