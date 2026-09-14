@@ -10,6 +10,7 @@ import { useAuth } from '@/store/auth';
 import type { ManagedUser } from '@/shared/types';
 import { formatDateTime } from '@/features/estoque/utils';
 import { ROLE_LABELS } from '@/features/usuarios/constants';
+import { CEO } from '@/shared/constants';
 import { UserModal } from './UserModal';
 import { usePlano } from '@/features/planos/usePlano';
 import { Cadeado } from '@/features/planos/Cadeado';
@@ -118,7 +119,7 @@ export function Usuarios() {
                       </td>
                       <td className="px-3 py-3 font-mono text-[12px] text-[var(--text-muted)]">{u.matricula}</td>
                       <td className="px-3 py-3">
-                        <span className="text-xs font-semibold text-[var(--text)]">{ROLE_LABELS[u.role] || u.role}</span>
+                        {u.role === CEO ? <Badge variant="indigo">CEO</Badge> : <span className="text-xs font-semibold text-[var(--text)]">{ROLE_LABELS[u.role] || u.role}</span>}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3">
                         {u.senha_em_texto_puro ? (
@@ -136,12 +137,17 @@ export function Usuarios() {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => setEditing(u)}
-                            className="rounded-full p-1.5 text-[var(--brand)] transition-colors hover:bg-[var(--brand)]/10"
-                            title="Editar"
+                            disabled={u.role === CEO && !isSelf}
+                            className="rounded-full p-1.5 text-[var(--brand)] transition-colors hover:bg-[var(--brand)]/10 disabled:cursor-not-allowed disabled:opacity-30"
+                            title={u.role === CEO && !isSelf ? 'Só o CEO altera os próprios dados' : 'Editar'}
                           >
                             <Pencil size={15} />
                           </button>
-                          {deletingId === u.id ? (
+                          {u.role === CEO ? (
+                            <span className="p-1.5 text-[11px] text-[var(--text-muted)]" title="O CEO não pode ser excluído; transfira a titularidade em Plano e assinatura">
+                              —
+                            </span>
+                          ) : deletingId === u.id ? (
                             <span className="flex items-center gap-1.5 px-1 text-[11px] font-bold">
                               <button onClick={() => handleDelete(u.id)} className="text-rose-500 hover:underline">
                                 Excluir

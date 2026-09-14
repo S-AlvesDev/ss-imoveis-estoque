@@ -18,6 +18,8 @@ interface ResumoDaAssinatura {
   mp_public_key: string | null;
   meu_email: string | null;
   avulso_disponivel: boolean;
+  ceo: { nome: string; email: string | null } | null;
+  sou_ceo: boolean;
 }
 
 /**
@@ -53,6 +55,9 @@ export function ContaBloqueada({ conta }: { conta: Conta }) {
 
   const porQue = conta.plano !== 'avaliacao' ? 'O pagamento da assinatura não foi aprovado e a carência terminou.' : 'Os dias grátis da sua conta terminaram.';
   const nome = resumo?.organizacao?.nome;
+  // Só o CEO escolhe plano; administradores e operadores veem a quem pedir.
+  const souCeo = resumo?.sou_ceo ?? false;
+  const quemResolve = resumo?.ceo ? `${resumo.ceo.nome}${resumo.ceo.email ? ` (${resumo.ceo.email})` : ''}` : 'o CEO da conta';
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-6">
@@ -76,12 +81,12 @@ export function ContaBloqueada({ conta }: { conta: Conta }) {
             <div>
               <h1 className="text-xl font-bold text-[var(--text)]">Assine para continuar</h1>
               <p className="mt-1 text-sm text-[var(--text-muted)]">
-                {porQue} Nada foi apagado: seus materiais, estoques e histórico estão aqui, esperando. {admin ? 'Escolha um plano e em um minuto está tudo de volta.' : 'Peça ao administrador da empresa para escolher um plano.'}
+                {porQue} Nada foi apagado: seus materiais, estoques e histórico estão aqui, esperando. {souCeo ? 'Escolha um plano e em um minuto está tudo de volta.' : `Peça a ${quemResolve} para escolher um plano.`}
               </p>
             </div>
           </div>
 
-          {admin && (
+          {admin && souCeo && (
             <div className="mt-6">
               <EscolherPlano disponivel={resumo?.disponivel ?? { mensal: true, anual: true }} modoTeste={resumo?.modo_teste ?? false} publicKey={resumo?.mp_public_key ?? null} emailInicial={resumo?.meu_email ?? ''} avulsoDisponivel={resumo?.avulso_disponivel ?? false} onAssinou={() => window.location.reload()} />
               <div className="mt-4 text-center">

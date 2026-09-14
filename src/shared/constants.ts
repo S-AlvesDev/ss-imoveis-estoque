@@ -15,7 +15,13 @@ export const CATEGORIAS_SUGERIDAS = [
 /** Nome antigo, ainda importado por alguns lugares. */
 export const CATEGORIES = CATEGORIAS_SUGERIDAS;
 
-export const ADMIN_ROLES = ['ADMINISTRADOR', 'ADMINISTRATIVO'];
+/**
+ * O CEO é quem criou a conta: dono dela e da cobrança. Único por organização,
+ * ninguém o cria, rebaixa ou remove — só ele passa a titularidade adiante.
+ * Para tudo que é operação, é um administrador.
+ */
+export const CEO = 'CEO';
+export const ADMIN_ROLES = [CEO, 'ADMINISTRADOR', 'ADMINISTRATIVO'];
 
 /**
  * Quem não administra, opera — e o que pode operar é dito pelo acesso a cada
@@ -35,6 +41,7 @@ export const OBRA_ROLES = ['ALMOXARIFE_OBRA', ...ADMIN_ROLES];
 export const ALL_INVENTORY_ROLES = Array.from(new Set([...ADMIN_ROLES, OPERADOR, ...LEGACY_OPERATOR_ROLES]));
 
 export const ROLE_LABELS: Record<string, string> = {
+  CEO: 'CEO',
   ADMINISTRADOR: 'Administrador',
   ADMINISTRATIVO: 'Administrativo',
   OPERADOR: 'Operador',

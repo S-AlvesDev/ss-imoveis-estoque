@@ -7,7 +7,7 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import nodemailer from 'nodemailer';
 import { supabaseServer } from '../lib/supabaseServer';
-import { ADMIN_ROLES, ALL_INVENTORY_ROLES, ASSIGNABLE_ROLES } from '../shared/constants';
+import { ADMIN_ROLES, ALL_INVENTORY_ROLES, ASSIGNABLE_ROLES, CEO } from '../shared/constants';
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
 import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
 import { scopedDb, type ScopedDb } from './tenant';
@@ -182,6 +182,21 @@ async function withAcessos(req: express.Request, res: express.Response, next: ex
   } catch (err: any) {
     console.error('[withAcessos] erro:', err.message);
     res.status(500).json({ error: 'Erro ao carregar permissões.' });
+  }
+}
+
+/**
+ * Só o CEO — e conferido no banco, não no token: quem passou a titularidade
+ * adiante perde o poder na hora, mesmo com a sessão antiga.
+ */
+async function requireCeo(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const { data } = await req.db!.from(ESTOQUE_USERS).select('role').eq('id', req.user!.id).maybeSingle();
+    if (data?.role !== CEO) return res.status(403).json({ error: 'Só o CEO da conta pode fazer isso.' });
+    next();
+  } catch (err: any) {
+    console.error('[requireCeo]', err.message);
+    res.status(500).json({ error: 'Erro ao conferir a permissão.' });
   }
 }
 
@@ -2249,8 +2264,20 @@ export function createApp() {
 
   app.get('/api/assinatura', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const { data: eu } = await req.db!.from(ESTOQUE_USERS).select('email').eq('id', req.user!.id).maybeSingle();
-      res.json({ ...(await resumoDaAssinatura(req.user!.organization_id)), meu_email: eu?.email ?? null });
+      const [{ data: eu }, { data: ceo }, { data: admins }] = await Promise.all([
+        req.db!.from(ESTOQUE_USERS).select('email, role').eq('id', req.user!.id).maybeSingle(),
+        req.db!.from(ESTOQUE_USERS).select('id, nome, email').eq('role', CEO).maybeSingle(),
+        req.db!.from(ESTOQUE_USERS).select('id, nome, email, role').in('role', ADMIN_ROLES.filter((r) => r !== CEO)).eq('ativo', true).order('nome'),
+      ]);
+      res.json({
+        ...(await resumoDaAssinatura(req.user!.organization_id)),
+        meu_email: eu?.email ?? null,
+        // Quem manda na cobrança — e se é quem está olhando.
+        ceo: ceo ? { id: ceo.id, nome: ceo.nome, email: ceo.email } : null,
+        sou_ceo: eu?.role === CEO,
+        // Para quem o CEO pode passar a titularidade.
+        administradores: admins || [],
+      });
     } catch (err: any) {
       console.error('[GET /api/assinatura] erro:', err.message);
       res.status(500).json({ error: 'Erro ao carregar a assinatura.' });
@@ -2260,7 +2287,7 @@ export function createApp() {
   const EMAIL_SIMPLES = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   /** Começa (ou troca, com `trocar: true`) uma assinatura: com `card_token_id`, assina aqui mesmo; sem, devolve a URL do checkout do Mercado Pago. */
-  app.post('/api/assinatura', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.post('/api/assinatura', authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
     try {
       const plano = req.body?.plano;
       const ciclo = req.body?.ciclo ?? 'mensal';
@@ -2324,7 +2351,7 @@ export function createApp() {
    * Pix ou boleto do período inteiro (mês ou ano). Devolve o pedido com o
    * QR Code / boleto; a tela fica consultando GET .../avulso/:id até aprovar.
    */
-  app.post('/api/assinatura/avulso', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.post('/api/assinatura/avulso', authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
     try {
       if (!mpConfigurado()) return res.status(503).json({ error: 'Pagamento ainda não configurado no servidor.' });
       const plano = req.body?.plano;
@@ -2409,6 +2436,35 @@ export function createApp() {
     }
   });
 
+  /**
+   * O CEO passa a titularidade a outro administrador: ele vira CEO, quem
+   * passou vira administrador. A sessão de quem passou continua valendo
+   * como administrador; o que é de CEO passa a ser recusado na hora.
+   */
+  app.post('/api/assinatura/transferir', authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
+    try {
+      const paraId = Number(req.body?.user_id);
+      if (!Number.isInteger(paraId) || paraId === req.user!.id) return res.status(400).json({ error: 'Escolha outro administrador.' });
+      const { data: alvo } = await req.db!.from(ESTOQUE_USERS).select('id, nome, email, role, ativo').eq('id', paraId).maybeSingle();
+      if (!alvo || !alvo.ativo || !ADMIN_ROLES.includes(alvo.role) || alvo.role === CEO) return res.status(400).json({ error: 'A titularidade só pode ir para um administrador ativo.' });
+      if (!alvo.email) return res.status(400).json({ error: `${alvo.nome} precisa ter um e-mail cadastrado antes: é para onde vão recibos e notas.` });
+
+      // Primeiro quem sai (o índice só admite um CEO por organização), depois quem entra.
+      const { error: e1 } = await req.db!.from(ESTOQUE_USERS).update({ role: 'ADMINISTRADOR', updated_at: new Date().toISOString() }).eq('id', req.user!.id);
+      if (e1) throw e1;
+      const { error: e2 } = await req.db!.from(ESTOQUE_USERS).update({ role: CEO, updated_at: new Date().toISOString() }).eq('id', alvo.id);
+      if (e2) {
+        await req.db!.from(ESTOQUE_USERS).update({ role: CEO }).eq('id', req.user!.id);
+        throw e2;
+      }
+      console.info(`[CEO] ${req.user!.organization_id}: titularidade de ${req.user!.matricula} para ${alvo.nome} (#${alvo.id})`);
+      res.json({ ok: true, ceo: { id: alvo.id, nome: alvo.nome, email: alvo.email } });
+    } catch (err: any) {
+      console.error('[POST /api/assinatura/transferir] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível transferir a titularidade.' });
+    }
+  });
+
   /** O que a credencial do Mercado Pago enxerga — para diagnosticar "paguei e não liberou". Só administrador; nunca devolve segredos. */
   app.get('/api/assinatura/diagnostico', authenticate, withTenant, requireRole(ADMIN_ROLES), async (_req, res) => {
     try {
@@ -2418,7 +2474,7 @@ export function createApp() {
     }
   });
 
-  app.post('/api/assinatura/cancelar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.post('/api/assinatura/cancelar', authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
     try {
       await cancelarAssinatura(req.user!.organization_id);
       res.json(await resumoDaAssinatura(req.user!.organization_id));
@@ -2434,7 +2490,7 @@ export function createApp() {
    * com `preapproval_id`. Buscamos a assinatura lá e aplicamos — sem esperar o
    * webhook, que pode chegar depois.
    */
-  app.post('/api/assinatura/sincronizar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.post('/api/assinatura/sincronizar', authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
     try {
       if (!mpConfigurado()) return res.status(503).json({ error: 'Pagamento ainda não configurado no servidor (MP_ACCESS_TOKEN).' });
       const id = String(req.body?.preapproval_id ?? '').trim();
@@ -2879,11 +2935,14 @@ export function createApp() {
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: 'Este usuário pertence a outro sistema e não pode ser editado aqui.' });
       }
+      // O CEO só é editado por ele mesmo, e o cargo dele não muda por aqui (é a transferência de titularidade).
+      if (target.role === CEO && target.id !== req.user!.id) return res.status(403).json({ error: 'Só o CEO altera os próprios dados.' });
+      if (target.role === CEO && role !== undefined && role !== CEO) return res.status(400).json({ error: 'O CEO não muda de cargo por aqui: use "Transferir titularidade" em Plano e assinatura.' });
 
       const patch: Record<string, any> = {};
       if (nome !== undefined) patch.nome = String(nome).trim();
       if (email !== undefined) patch.email = email ? String(email).trim().toLowerCase() : null; // minúsculo como no cadastro: a recuperação de senha busca assim
-      if (role !== undefined) {
+      if (role !== undefined && !(target.role === CEO && role === CEO)) {
         if (!ASSIGNABLE_ROLES.includes(String(role))) return res.status(400).json({ error: 'Perfil inválido: use Administrador, Administrativo ou Operador.' });
         // Sem isso, o último admin pode se rebaixar e trancar todo mundo para fora.
         if (target.id === req.user!.id && !ADMIN_ROLES.includes(role)) {
@@ -2919,6 +2978,7 @@ export function createApp() {
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: 'Este usuário pertence a outro sistema e não pode ser excluído aqui.' });
       }
+      if (target.role === CEO) return res.status(403).json({ error: 'O CEO não pode ser excluído. Transfira a titularidade primeiro.' });
 
       // Não deixa o sistema ficar sem administrador.
       if (ADMIN_ROLES.includes(target.role)) {

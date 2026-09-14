@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, CreditCard, FileText, Lock, MessageCircle, Receipt, RefreshCw, XCircle } from 'lucide-react';
+import { Check, CreditCard, Crown, FileText, Lock, MessageCircle, Receipt, RefreshCw, XCircle } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
 import { Modal } from '@/shared/ui/Modal';
+import { Select } from '@/shared/ui/Field';
+import { useAuth } from '@/store/auth';
 import { usePlano } from '@/features/planos/usePlano';
 import { EscolherPlano } from '@/features/planos/EscolherPlano';
 import { PagamentoPendente, type PedidoAvulso } from '@/features/planos/PagamentoAvulso';
@@ -56,6 +58,9 @@ interface Resumo {
   meu_email: string | null;
   pendente_avulso: PedidoAvulso | null;
   avulso_disponivel: boolean;
+  ceo: { id: number; nome: string; email: string | null } | null;
+  sou_ceo: boolean;
+  administradores: Array<{ id: number; nome: string; email: string | null; role: string }>;
 }
 
 const RECURSOS_VISIVEIS: Array<{ id: Recurso; nome: string }> = [
@@ -146,6 +151,10 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   const [confirmarCancelar, setConfirmarCancelar] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [verPendente, setVerPendente] = useState(false);
+  const [transferindo, setTransferindo] = useState(false);
+  const [paraId, setParaId] = useState('');
+  const [salvandoTransferencia, setSalvandoTransferencia] = useState(false);
+  const logout = useAuth((s) => s.logout);
 
   const carregar = useCallback(async () => {
     try {
@@ -160,6 +169,23 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
 
   const assinatura = resumo?.assinatura ?? null;
   const emVigor = assinatura?.status === 'autorizada' || assinatura?.status === 'pausada';
+  // Só o CEO mexe na cobrança. Enquanto o resumo não chegou, ninguém — evita o botão aparecer e sumir.
+  const souCeo = resumo?.sou_ceo ?? false;
+
+  async function transferir() {
+    if (!paraId) return toast.error('Escolha para quem vai a titularidade.');
+    setSalvandoTransferencia(true);
+    try {
+      const r = await api.post<{ ceo: { nome: string } }>('/api/assinatura/transferir', { user_id: Number(paraId) });
+      toast.success(`${r.ceo.nome} agora é o CEO da conta. Entre de novo para atualizar a sua sessão.`);
+      setTransferindo(false);
+      setTimeout(logout, 1500);
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível transferir.');
+    } finally {
+      setSalvandoTransferencia(false);
+    }
+  }
   // Cortesia: plano gravado, sem vencimento, sem assinatura — não tem o que assinar.
   const cortesia = conta.situacao === 'assinada' && conta.ate === null && !emVigor;
 
@@ -224,23 +250,36 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
             <div className="mt-3">
               <Situacao conta={conta} assinatura={assinatura} />
             </div>
+            {resumo && !souCeo && (
+              <p className="mt-3 inline-flex items-start gap-1.5 text-xs text-[var(--text-muted)]">
+                <Crown size={13} className="mt-0.5 shrink-0 text-[var(--brand)]" />
+                <span>
+                  Só o CEO da conta{resumo.ceo ? <> — <strong className="text-[var(--text)]">{resumo.ceo.nome}</strong>{resumo.ceo.email ? ` (${resumo.ceo.email})` : ''}</> : ''} — assina, troca ou cancela o plano.
+                </span>
+              </p>
+            )}
             <div className="mt-4 flex flex-wrap gap-2">
-              {!cortesia && (
+              {!cortesia && souCeo && (
                 <Button size="sm" onClick={() => setEscolhendo(true)} icon={<CreditCard size={14} />}>
                   {emVigor ? 'Trocar de plano' : conta.situacao === 'avaliacao' ? 'Assinar um plano' : conta.renovacao === 'manual' ? 'Renovar / mudar' : 'Assinar'}
                 </Button>
               )}
-              {resumo?.pendente_avulso && (
+              {resumo?.pendente_avulso && souCeo && (
                 <Button size="sm" variant="outline" onClick={() => setVerPendente(true)} icon={<Receipt size={14} />}>
                   {resumo.pendente_avulso.metodo === 'pix' ? 'Ver Pix pendente' : 'Ver boleto pendente'}
                 </Button>
               )}
-              {emVigor && (
+              {souCeo && (
+                <Button size="sm" variant="ghost" onClick={() => setTransferindo(true)} icon={<Crown size={14} />} title="Passar o cargo de CEO a outro administrador">
+                  Transferir titularidade
+                </Button>
+              )}
+              {emVigor && souCeo && (
                 <Button size="sm" variant="ghost" onClick={() => setConfirmarCancelar(true)} icon={<XCircle size={14} />}>
                   Cancelar assinatura
                 </Button>
               )}
-              {!emVigor && !cortesia && (
+              {!emVigor && !cortesia && souCeo && (
                 <Button size="sm" variant="ghost" loading={confirmando} onClick={confirmarPagamento} icon={confirmando ? undefined : <RefreshCw size={14} />} title="Pagou e a conta não liberou? Procura a assinatura no Mercado Pago.">
                   Já paguei
                 </Button>
@@ -341,6 +380,33 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
             }}
           />
         )}
+      </Modal>
+
+      <Modal open={transferindo} onClose={() => setTransferindo(false)} title="Transferir a titularidade" subtitle="Quem receber vira o CEO: passa a assinar, trocar e cancelar o plano e a receber recibos e notas. Você continua como administrador.">
+        <div className="space-y-4">
+          {(resumo?.administradores ?? []).length === 0 ? (
+            <p className="text-sm text-[var(--text-muted)]">Não há outro administrador ativo. Crie um em Usuários (com e-mail) e volte aqui.</p>
+          ) : (
+            <Select label="Novo CEO" required value={paraId} onChange={(e) => setParaId(e.target.value)}>
+              <option value="">Escolha…</option>
+              {(resumo?.administradores ?? []).map((a) => (
+                <option key={a.id} value={a.id} disabled={!a.email}>
+                  {a.nome}
+                  {a.email ? ` — ${a.email}` : ' (sem e-mail: cadastre antes)'}
+                </option>
+              ))}
+            </Select>
+          )}
+          <p className="text-[11px] text-[var(--text-muted)]">Depois da transferência você precisa entrar de novo. Não dá para desfazer sozinho — só o novo CEO pode devolver.</p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setTransferindo(false)}>
+              Cancelar
+            </Button>
+            <Button variant="danger" loading={salvandoTransferencia} disabled={!paraId} onClick={transferir} icon={salvandoTransferencia ? undefined : <Crown size={14} />}>
+              Transferir
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal open={confirmarCancelar} onClose={() => setConfirmarCancelar(false)} title="Cancelar a assinatura?" subtitle="Não há cobrança nova. O plano continua até o fim do período já pago; depois a conta trava até assinar de novo. Nada é apagado.">

@@ -3,6 +3,7 @@ import { ASSIGNABLE_ROLES as CARGOS, ROLE_LABELS as LABELS } from '@/shared/cons
 export const ROLE_LABELS: Record<string, string> = LABELS;
 
 export const ROLE_HINTS: Record<string, string> = {
+  CEO: 'Dono da conta: quem criou a organização. Só ele assina, troca ou cancela o plano e passa a titularidade adiante. No resto, é um administrador.',
   ADMINISTRADOR: 'Acesso total: materiais, usuários, configurações, auditoria e suporte.',
   ADMINISTRATIVO: 'Acesso total ao estoque, incluindo cadastro e auditoria.',
   OPERADOR: 'Opera os estoques que receber em Configurações → Acessos. Não vê o resto.',

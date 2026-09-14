@@ -36,8 +36,11 @@ export async function contasParaLembrar(agora: Date = new Date()): Promise<Conta
   for (const o of orgs || []) {
     const conta = situacaoDaConta(o, agora);
     if (!precisaLembrar(conta, o.lembrete_enviado_em, agora)) continue;
-    const { data: admins } = await supabaseServer.from('estoque_users').select('email').eq('organization_id', o.id).in('role', ['ADMINISTRADOR', 'ADMINISTRATIVO']);
-    const emails = (admins || []).map((a: any) => String(a.email || '').trim().toLowerCase()).filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+    const { data: pessoas } = await supabaseServer.from('estoque_users').select('email, role').eq('organization_id', o.id).in('role', ['CEO', 'ADMINISTRADOR', 'ADMINISTRATIVO']).eq('ativo', true);
+    const valido = (e: unknown) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || '').trim().toLowerCase());
+    // O CEO responde pela conta; só se ele não tem e-mail é que os administradores recebem.
+    const doCeo = (pessoas || []).filter((p: any) => p.role === 'CEO' && valido(p.email)).map((p: any) => String(p.email).trim().toLowerCase());
+    const emails = doCeo.length > 0 ? doCeo : (pessoas || []).filter((p: any) => valido(p.email)).map((p: any) => String(p.email).trim().toLowerCase());
     if (emails.length === 0) continue;
     lista.push({ organizationId: o.id, nome: o.nome, conta, emails });
   }

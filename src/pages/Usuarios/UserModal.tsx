@@ -112,14 +112,24 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
           placeholder="opcional — também serve para entrar"
         />
 
-        <Select label="Perfil" required value={role} onChange={(e) => setRole(e.target.value)}>
-          {ASSIGNABLE_ROLES.map((r) => (
-            <option key={r} value={r}>
-              {ROLE_LABELS[r] || r}
-            </option>
-          ))}
-        </Select>
-        <p className="-mt-2 text-[11px] text-[var(--text-muted)]">{ROLE_HINTS[role]}</p>
+        {role === 'CEO' ? (
+          <div>
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">Perfil</p>
+            <p className="rounded-lg bg-[var(--bg-2)] px-3 py-2 text-sm font-semibold text-[var(--text)]">CEO — dono da conta</p>
+            <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">{ROLE_HINTS.CEO} Para passar o cargo a outra pessoa, use "Transferir titularidade" em Configurações → Plano e assinatura.</p>
+          </div>
+        ) : (
+          <>
+            <Select label="Perfil" required value={role} onChange={(e) => setRole(e.target.value)}>
+              {ASSIGNABLE_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r] || r}
+                </option>
+              ))}
+            </Select>
+            <p className="-mt-2 text-[11px] text-[var(--text-muted)]">{ROLE_HINTS[role]}</p>
+          </>
+        )}
 
         <div>
           <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wide text-[var(--text-muted)]">

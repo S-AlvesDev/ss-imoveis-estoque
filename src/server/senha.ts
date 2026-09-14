@@ -8,6 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PRODUTO } from '../shared/produto';
 import { escapeHtml, layoutEmail, p, tabela } from './email-layout';
+import { AVALIACAO_DIAS } from '../shared/planos';
 
 export const VALIDADE_DO_TOKEN_MS = 60 * 60 * 1000;
 export const MIN_SENHA = 8;
@@ -82,7 +83,7 @@ export function emailDeBoasVindas(nome: string, empresa: string, env?: Record<st
     html: layoutEmail({
       titulo: `${escapeHtml(empresa)} está no ar.`,
       corpo:
-        p(`Olá, ${escapeHtml(primeiroNome(nome))}. A conta da <strong>${escapeHtml(empresa)}</strong> foi criada e você é o administrador. Ela já vem com uma unidade e dois depósitos (Central e Obra) prontos.`) +
+        p(`Olá, ${escapeHtml(primeiroNome(nome))}. A conta da <strong>${escapeHtml(empresa)}</strong> foi criada e você é o <strong>CEO</strong> da conta: é quem responde por ela, pela cobrança e por passar a titularidade adiante. Os primeiros ${AVALIACAO_DIAS} dias são grátis, com tudo liberado.`) +
         p('Por onde começar:') +
         `<ol style="margin:0 0 12px;padding-left:20px">` +
         `<li style="margin-bottom:6px"><strong>Materiais</strong> — cadastre o que a empresa controla, com unidade de medida e estoque mínimo.</li>` +
