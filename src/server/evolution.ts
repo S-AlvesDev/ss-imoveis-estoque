@@ -51,6 +51,20 @@ export function normalizarTelefone(v: unknown): string | null {
   return /^\d{12,15}$/.test(comDdi) ? comDdi : null;
 }
 
+/**
+ * O mesmo número brasileiro nas duas grafias do WhatsApp: contas antigas
+ * ainda aparecem sem o nono dígito (55 84 9128-4470), e o cadastro costuma
+ * ter com (55 84 99128-4470). Devolve o próprio e o equivalente, quando há.
+ */
+export function variantesDoTelefone(telefone: string): string[] {
+  const m = /^55(\d{2})(\d{8,9})$/.exec(telefone);
+  if (!m) return [telefone];
+  const [, ddd, local] = m;
+  if (local.length === 9 && local.startsWith('9')) return [telefone, `55${ddd}${local.slice(1)}`];
+  if (local.length === 8) return [telefone, `55${ddd}9${local}`];
+  return [telefone];
+}
+
 /** Manda um texto para um número, pela instância pedida (ou a padrão). */
 export async function enviarTexto(telefone: string, texto: string, instancia?: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
   const inst = instancia || (env.EVOLUTION_INSTANCE as string);

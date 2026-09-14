@@ -13,6 +13,7 @@ import { scopedDb, type ScopedDb } from './tenant';
 import { acessosDoUsuario, podeVer, podeOperar, ehAdmin, type Acessos } from './acessos';
 import { depositosDaOrg, unidadesDaOrg, saldosDaOrg, saldosDoMaterial, calcularMovimento, gravarSaldos, operacaoPermitida, arredondar, type Deposito, type OperacaoGenerica } from './estoque';
 import { conversar, claudeConfigurado, type Ferramenta, type MensagemDoChat, type Uso } from './claude';
+import { variantesDoTelefone } from './evolution';
 import { contaDaOrg } from './planos';
 import { planoLibera, NOME_DO_PLANO } from '../shared/planos';
 import { stockStatus } from '../features/estoque/utils';
@@ -67,7 +68,7 @@ export interface Falante {
 }
 
 export async function falantePeloTelefone(telefone: string): Promise<Falante | null> {
-  const { data } = await supabaseServer.from('estoque_users').select('id, nome, matricula, role, organization_id, whatsapp_operacoes, whatsapp_pin, ativo, organizations(nome)').eq('whatsapp', telefone).maybeSingle();
+  const { data } = await supabaseServer.from('estoque_users').select('id, nome, matricula, role, organization_id, whatsapp_operacoes, whatsapp_pin, ativo, organizations(nome)').in('whatsapp', variantesDoTelefone(telefone)).limit(1).maybeSingle();
   if (!data || data.ativo === false) return null;
   return {
     id: Number(data.id),

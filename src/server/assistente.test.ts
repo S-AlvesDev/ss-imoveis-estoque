@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
-import { normalizarTelefone, lerEvento, evolutionConfigurada } from './evolution';
+import { normalizarTelefone, lerEvento, evolutionConfigurada, variantesDoTelefone } from './evolution';
 import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO } from './assistente';
 import { formatarWhatsapp } from '../shared/whatsapp';
 import { claudeConfigurado } from './claude';
@@ -14,6 +14,13 @@ describe('telefone', () => {
     expect(normalizarTelefone('5584991434190')).toBe('5584991434190');
     expect(normalizarTelefone('123')).toBeNull();
     expect(normalizarTelefone('')).toBeNull();
+  });
+  it('reconhece o número com e sem o nono dígito (contas antigas do WhatsApp)', () => {
+    expect(variantesDoTelefone('558491284470')).toEqual(['558491284470', '5584991284470']);
+    expect(variantesDoTelefone('5584991284470')).toEqual(['5584991284470', '558491284470']);
+    expect(variantesDoTelefone('558433334444')).toEqual(['558433334444', '5584933334444']);
+    expect(variantesDoTelefone('5584833334444')).toEqual(['5584833334444']);
+    expect(variantesDoTelefone('351912345678')).toEqual(['351912345678']);
   });
   it('mostra bonito na tela', () => {
     expect(formatarWhatsapp('5584991434190')).toBe('(84) 99143-4190');
