@@ -134,6 +134,21 @@ const FERRAMENTAS: Ferramenta[] = [
 ];
 
 /**
+ * Preço de material acima disto não é preço: é erro de leitura. Serve de
+ * teto para nenhuma multiplicação (quantidade × preço) virar Infinity.
+ */
+const PRECO_MAXIMO = 1_000_000_000;
+
+/** Um preço em reais, ou null. Só número e texto numérico entram — `true` e `[]` viram número em JS, e não podem virar dinheiro. */
+function precoValido(v: unknown): number | null {
+  if (typeof v !== 'number' && typeof v !== 'string') return null;
+  if (typeof v === 'string' && v.trim() === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || n > PRECO_MAXIMO) return null;
+  return Math.round(n * 100) / 100;
+}
+
+/**
  * O que a IA disse ter lido vira preço registrado — ou não vira nada.
  * Item que não está na cotação é ignorado; preço impossível (texto,
  * negativo, infinito) entra como "sem preço", nunca como número errado.
@@ -146,8 +161,7 @@ export function mesclarPrecos(itens: ItemDeCotacao[], atuais: PrecoRespondido[],
   for (const it of lista) {
     const n = Number(it?.n);
     if (!Number.isInteger(n) || !itens.some((i) => i.n === n)) continue;
-    const bruto = it?.preco_unitario === undefined || it?.preco_unitario === null || it?.preco_unitario === '' ? null : Number(it.preco_unitario);
-    const preco_unitario = bruto !== null && Number.isFinite(bruto) && bruto >= 0 ? Math.round(bruto * 100) / 100 : null;
+    const preco_unitario = precoValido(it?.preco_unitario);
     const novo: PrecoRespondido = {
       n,
       preco_unitario,

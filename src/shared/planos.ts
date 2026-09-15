@@ -192,6 +192,21 @@ function dias(ate: Date, agora: Date): number {
 }
 
 /**
+ * Uma data do banco que dá para usar, ou nada.
+ *
+ * Parece paranoia até o dia em que uma linha tem `plano_ate` estranho: sem
+ * isto, `new Date('...').toISOString()` estoura um RangeError dentro do
+ * `contaDaOrg`, e a organização inteira passa a receber 500 em cada tela.
+ * Data ilegível vira "não tem data" — a conta cai para a regra seguinte em
+ * vez de derrubar o sistema.
+ */
+function emData(v: unknown): Date | null {
+  if (v === null || v === undefined || typeof v === 'boolean') return null;
+  const d = v instanceof Date ? v : new Date(v as string);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/**
  * A regra inteira de "esta conta pode usar o sistema?":
  *  - encerrada pelo CEO → encerrada (só exporta, até os dados sumirem);
  *  - plano gravado e sem vencimento (cortesia) ou vencimento no futuro → assinada;
@@ -202,23 +217,27 @@ function dias(ate: Date, agora: Date): number {
 export function situacaoDaConta(c: CamposDaConta, agora: Date = new Date()): Conta {
   const renovacao = c.cobranca === 'cartao' ? 'automatica' : c.cobranca === 'avulso' ? 'manual' : null;
   // Encerrada manda em tudo: não importa o plano, a empresa saiu.
-  if (c.encerrada_em) {
-    const some = new Date(new Date(c.encerrada_em).getTime() + DIAS_PARA_APAGAR * DIA_MS);
+  const encerrada = emData(c.encerrada_em);
+  if (encerrada) {
+    const some = new Date(encerrada.getTime() + DIAS_PARA_APAGAR * DIA_MS);
     return { situacao: 'encerrada', renovacao: null, plano: 'avaliacao', ate: some.toISOString(), dias_restantes: dias(some, agora) };
   }
   if (ehPlano(c.plano)) {
+    const vence = emData(c.plano_ate);
+    // Sem data (cortesia) o plano vale; com data ilegível, não inventamos validade.
     if (!c.plano_ate) return { situacao: 'assinada', renovacao, plano: c.plano, ate: null, dias_restantes: null };
-    const vence = new Date(c.plano_ate);
+    if (!vence) return { situacao: 'bloqueada', renovacao, plano: 'avaliacao', ate: null, dias_restantes: 0 };
     if (vence.getTime() >= agora.getTime()) return { situacao: 'assinada', renovacao, plano: c.plano, ate: vence.toISOString(), dias_restantes: dias(vence, agora) };
     const fimDaCarencia = new Date(vence.getTime() + CARENCIA_DIAS * DIA_MS);
     if (fimDaCarencia.getTime() >= agora.getTime()) return { situacao: 'carencia', renovacao, plano: c.plano, ate: fimDaCarencia.toISOString(), dias_restantes: dias(fimDaCarencia, agora) };
     return { situacao: 'bloqueada', renovacao, plano: 'avaliacao', ate: fimDaCarencia.toISOString(), dias_restantes: 0 };
   }
-  if (c.avaliacao_ate) {
-    const fim = new Date(c.avaliacao_ate);
+  const fim = emData(c.avaliacao_ate);
+  if (fim) {
     if (fim.getTime() >= agora.getTime()) return { situacao: 'avaliacao', renovacao: null, plano: 'avaliacao', ate: fim.toISOString(), dias_restantes: dias(fim, agora) };
     return { situacao: 'bloqueada', renovacao: null, plano: 'avaliacao', ate: fim.toISOString(), dias_restantes: 0 };
   }
+  if (c.avaliacao_ate) return { situacao: 'bloqueada', renovacao: null, plano: 'avaliacao', ate: null, dias_restantes: 0 };
   // Sem plano e sem data de avaliação: conta de antes da cobrança existir. Não trava.
   return { situacao: 'avaliacao', renovacao: null, plano: 'avaliacao', ate: null, dias_restantes: null };
 }

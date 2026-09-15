@@ -46,7 +46,8 @@ export function operacoesDoUsuario(role: string, lista: unknown): OperacaoWhatsa
 
 /** "SIM", "sim 1234", "confirmo" → a confirmação e o PIN, se veio. */
 export function lerConfirmacao(texto: string): { confirma: boolean; nega: boolean; pin: string | null } {
-  const t = texto.trim().toLowerCase();
+  // Nunca estoura: quem chama vem do webhook, e mensagem sem texto é rotina.
+  const t = String(texto ?? '').trim().toLowerCase();
   const m = t.match(/^(sim|s|confirmo|confirmar|ok|pode|isso)(?:[\s,.]+(\d{4,6}))?[.!]*$/);
   if (m) return { confirma: true, nega: false, pin: m[2] ?? null };
   if (/^(n[aã]o|n|cancela|cancelar|deixa|esquece|para)[.!]*$/.test(t)) return { confirma: false, nega: true, pin: null };

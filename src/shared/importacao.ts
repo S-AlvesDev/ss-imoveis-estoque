@@ -107,10 +107,16 @@ export function dividirLinha(linha: string, sep: string): string[] {
   return campos.map((c) => c.trim());
 }
 
+/** Acima disto não é quantidade de estoque: é erro de digitação ou de exportação. */
+const NUMERO_MAXIMO = 1_000_000_000;
+
 /** "1.234,50" e "1,234.50" viram 1234.5; vazio vira null; lixo vira NaN. */
 export function lerNumero(v: string): number | null {
   const t = v.trim();
   if (!t) return null;
+  // Notação científica é recusada, não limpa: "1e400" com as letras apagadas
+  // viraria 1400 — um saldo inventado, que é pior que uma linha rejeitada.
+  if (/\d\s*[eE]\s*[+-]?\d/.test(t)) return NaN;
   const limpo = t.replace(/[^\d.,-]/g, '');
   if (!limpo) return NaN;
   const ultimaVirgula = limpo.lastIndexOf(',');
@@ -120,7 +126,7 @@ export function lerNumero(v: string): number | null {
   else if (ultimoPonto > ultimaVirgula) normal = limpo.replace(/,/g, '');
   else normal = limpo.replace(',', '.');
   const n = Number(normal);
-  return Number.isFinite(n) ? n : NaN;
+  return Number.isFinite(n) && Math.abs(n) <= NUMERO_MAXIMO ? n : NaN;
 }
 
 /**

@@ -229,6 +229,10 @@ export function calcularMovimento(atuais: SaldosPorDeposito, p: MovimentoPedido)
   // outro depósito é problema dele: travar uma operação que não tem relação
   // nenhuma com ele deixaria o estoque parado sem motivo.
   for (const id of tocados) {
+    // Saldo que não é número (linha corrompida, coluna nula) contamina a conta
+    // inteira: NaN não é maior nem menor que nada, então passaria batido e
+    // seria gravado. Recusar aqui é o que mantém o estoque auditável.
+    if (!Number.isFinite(novos[id])) return { ok: false, erro: 'O saldo atual deste depósito está inconsistente. Faça uma recontagem antes de operar.' };
     if (novos[id] < 0) return { ok: false, erro: 'A operação resultaria em saldo negativo.' };
   }
 
