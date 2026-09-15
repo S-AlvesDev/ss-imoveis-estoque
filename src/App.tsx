@@ -160,6 +160,7 @@ function InventoryApp({ role }: { role: string }) {
                 unidadeUnica={unidadesAtivas.length <= 1}
                 atualizadoEm={atualizadoEm}
                 categorias={nomesDeCategorias}
+                equipe={staff.length}
                 onNavigate={setView}
               />
             )}

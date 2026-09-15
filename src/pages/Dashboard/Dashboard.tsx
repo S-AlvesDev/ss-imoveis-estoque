@@ -29,6 +29,7 @@ import type { Deposito, Material, MaterialMovement, Unidade } from '@/shared/typ
 import { formatNumber, needsPurchase, saldoEm, stockStatus } from '@/features/estoque/utils';
 import { OPERATION_LABELS } from '@/shared/constants';
 import { viewDoEstoque } from '@/app/Sidebar';
+import { PrimeirosPassos } from './PrimeirosPassos';
 import { useTheme } from '@/store/theme';
 import { useAuth } from '@/store/auth';
 import type { AppView } from '@/app/Sidebar';
@@ -132,10 +133,12 @@ interface DashboardProps {
   atualizadoEm: Date | null;
   /** Nomes das categorias da organização, na ordem dela. */
   categorias: string[];
+  /** Quantas pessoas têm acesso — para o guia de primeiros passos saber se a equipe já entrou. */
+  equipe: number;
   onNavigate: (view: AppView) => void;
 }
 
-export function Dashboard({ materials, materialMovements, unidade, depositos, unidadeUnica, atualizadoEm, categorias: nomesDeCategorias, onNavigate }: DashboardProps) {
+export function Dashboard({ materials, materialMovements, unidade, depositos, unidadeUnica, atualizadoEm, categorias: nomesDeCategorias, equipe, onNavigate }: DashboardProps) {
   const user = useAuth((s) => s.user);
   const dark = useTheme((s) => s.theme === 'dark');
   const agora = useAgora();
@@ -185,6 +188,9 @@ export function Dashboard({ materials, materialMovements, unidade, depositos, un
 
   return (
     <div className="space-y-5">
+      {/* ---------- Conta nova: por onde começar ---------- */}
+      <PrimeirosPassos materials={materials} materialMovements={materialMovements} depositos={depositos} equipe={equipe} onNavigate={onNavigate} />
+
       {/* ---------- Saudação ---------- */}
       <Card className="relative overflow-hidden border-[var(--brand)]/20 bg-gradient-to-r from-[var(--surface)] via-[var(--surface)] to-[var(--brand)]/10 p-5 sm:p-6">
         <div className="pointer-events-none absolute -right-10 -top-16 h-72 w-72 rounded-full bg-[var(--brand)]/20 blur-3xl" aria-hidden />
