@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
 import { normalizarTelefone, lerEvento, evolutionConfigurada, variantesDoTelefone } from './evolution';
-import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO, pediuConfirmacaoSemProposta } from './assistente';
+import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO, pediuConfirmacaoSemProposta, respondeuNumeroSemConsultar } from './assistente';
 import { formatarWhatsapp } from '../shared/whatsapp';
 import { claudeConfigurado } from './claude';
 
@@ -98,6 +98,22 @@ describe('contrato da IA: só a ferramenta prepara, só o código grava', () => 
   it('deixa passar quando há proposta nova ou pendente', () => {
     expect(pediuConfirmacaoSemProposta('Transferir 1 Teste do Central para Obra? Responda SIM', proposta, null)).toBe(false);
     expect(pediuConfirmacaoSemProposta('Ainda espero o SIM da transferência.', null, proposta)).toBe(false);
+  });
+});
+
+describe('número só sai de ferramenta', () => {
+  it('pega a resposta com saldo que não consultou nada', () => {
+    // O caso real: "Tem 10 no Almoxarifado e 7 na Coordenação" — sem chamar consultar_saldo.
+    expect(respondeuNumeroSemConsultar('Tem 10 no Almoxarifado de Materiais e 7 na Coordenação. Total: 17 UN.', [])).toBe(true);
+    expect(respondeuNumeroSemConsultar('São 3 dias de prazo.', [])).toBe(true);
+  });
+  it('deixa passar quando a ferramenta foi chamada', () => {
+    expect(respondeuNumeroSemConsultar('Tem 21 no Almoxarifado e 7 na Coordenação. Total: 28 UN.', ['consultar_saldo'])).toBe(false);
+    expect(respondeuNumeroSemConsultar('Nada abaixo do mínimo hoje.', ['listar_pendencias'])).toBe(false);
+  });
+  it('conversa sem número segue livre', () => {
+    expect(respondeuNumeroSemConsultar('Oi! Precisa de algo? Consulto saldo e registro movimentações.', [])).toBe(false);
+    expect(respondeuNumeroSemConsultar('Não entendi. Pode dizer de outro jeito?', [])).toBe(false);
   });
 });
 

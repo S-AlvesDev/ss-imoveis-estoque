@@ -374,7 +374,9 @@ function systemPrompt(ctx: Contexto, pendente: Proposta | null): string {
   const hoje = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   return [
     `Você é o assistente do Stok Aí (sistema de controle de estoque) no WhatsApp, falando com ${ctx.falante.nome} (${ctx.falante.role === 'CEO' ? 'CEO' : ehAdmin(ctx.falante.role) ? 'administrador' : 'operador'}) da empresa ${ctx.falante.organizacao}. Hoje é ${hoje}.`,
-    'Responda curto, em português do Brasil, como uma mensagem de WhatsApp: sem markdown pesado, no máximo umas 6 linhas, números claros. Use as ferramentas para tudo que é dado — nunca invente saldo, nome de material ou estoque.',
+    'Responda curto, em português do Brasil, como uma mensagem de WhatsApp: sem markdown pesado, no máximo umas 6 linhas, números claros.',
+    'REGRA QUE NÃO TEM EXCEÇÃO: todo número que você disser (saldo, quantidade, prazo, validade, preço) tem que vir de uma ferramenta chamada NESTA resposta. Não repita número de mensagem anterior, não some de cabeça, não estime. Se a pergunta é sobre quantidade, a primeira coisa que você faz é chamar consultar_saldo.',
+    'Se a pessoa disser que o número está errado, consulte de novo e diga o que o sistema mostra. Se der o mesmo número, diga que confere e sugira conferir a prateleira ou ver o histórico no painel — nunca mude o número só porque ela discordou.',
     `Estoques que a pessoa vê: ${ctx.depositos.map((d) => `${d.nome} [${d.modo}${podeOperar(ctx.acessos, d.id) ? ', opera' : ', consulta'}]`).join('; ') || 'nenhum'}.`,
     `Operações que ela pode registrar pelo WhatsApp: ${ctx.falante.operacoes.map((o) => NOME_DA_OPERACAO_WHATSAPP[o]).join(', ') || 'nenhuma (só consulta)'}. Fora disso, diga que é só pelo painel ou com o administrador.`,
     'Gravação (saída, consumo, transferência, entrada, devolução): você NÃO tem como registrar nem preparar nada sozinha — só a ferramenta propor_movimentacao/propor_devolucao prepara. Chame-a sempre que a pessoa disser uma movimentação; só depois de ela devolver PROPOSTA PRONTA apresente o resumo e peça SIM. Nunca escreva "confirma", "SIM" ou "registrado" sem isso. Quem grava é o sistema, quando a pessoa responde SIM; quem avisa que gravou também é o sistema — nunca você. Se a ferramenta devolver dúvida (material ambíguo, estoque), pergunte à pessoa.',
@@ -401,6 +403,19 @@ export const SEM_PENDENCIA_PARA_CONFIRMAR = 'Não há nada esperando confirmaç�
  * exista — nem nova, nem pendente. É o contrato quebrado: só a ferramenta
  * prepara, só o código grava.
  */
+/**
+ * A IA respondeu com número sem ter consultado nada.
+ *
+ * Aconteceu de verdade: perguntaram quantas bolas de futsal havia e ela
+ * respondeu "10" de cabeça — o estoque tinha 21. Saldo, prazo e validade
+ * só existem nas ferramentas; qualquer algarismo numa resposta que não
+ * chamou ferramenta nenhuma é chute até prova em contrário.
+ */
+export function respondeuNumeroSemConsultar(texto: string, ferramentas: string[]): boolean {
+  if (ferramentas.length > 0) return false;
+  return /[0-9]/.test(texto);
+}
+
 export function pediuConfirmacaoSemProposta(texto: string, nova: Proposta | null, pendente: Proposta | null): boolean {
   if (nova || pendente) return false;
   return /\bSIM\b/.test(texto) || /\bconfirma\b/i.test(texto) || /registrad[ao]\b/i.test(texto);
@@ -572,11 +587,20 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
         novaProposta = p;
       });
     let r = await conversar({ system: systemPrompt(ctx, conversa.pendente), historico, tools: FERRAMENTAS, executar });
-    if (pediuConfirmacaoSemProposta(r.texto, novaProposta, conversa.pendente)) {
-      // Pediu SIM sem chamar propor_*: repete a rodada mandando usar a ferramenta. Se insistir, o código responde.
+
+    // Duas maneiras de a IA falar além do que sabe: pedir SIM sem ter preparado
+    // nada, e soltar número sem ter consultado. Nas duas, o código manda refazer
+    // usando a ferramenta — e, se ela insistir, responde no lugar dela.
+    const chamou = () => r.chamadas.map((c) => c.name);
+    const encenou = () => pediuConfirmacaoSemProposta(r.texto, novaProposta, conversa.pendente);
+    const chutou = () => respondeuNumeroSemConsultar(r.texto, chamou());
+    if (encenou() || chutou()) {
+      const cobranca = encenou()
+        ? '[sistema] Você pediu confirmação sem chamar propor_movimentacao/propor_devolucao. Chame a ferramenta agora com o que a pessoa disse; se faltar dado, pergunte.'
+        : '[sistema] Você respondeu com número sem consultar o sistema. Chame consultar_saldo (ou listar_pendencias/listar_estoques) e responda apenas com o que a ferramenta devolver.';
       const segunda = await conversar({
         system: systemPrompt(ctx, conversa.pendente),
-        historico: [...historico, { role: 'assistant', content: r.texto }, { role: 'user', content: '[sistema] Você pediu confirmação sem chamar propor_movimentacao/propor_devolucao. Chame a ferramenta agora com o que a pessoa disse; se faltar dado, pergunte.' }],
+        historico: [...historico, { role: 'assistant', content: r.texto }, { role: 'user', content: cobranca }],
         tools: FERRAMENTAS,
         executar,
       });
@@ -584,7 +608,8 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
       segunda.uso.tokens_saida += r.uso.tokens_saida;
       segunda.chamadas.unshift(...r.chamadas);
       r = segunda;
-      if (pediuConfirmacaoSemProposta(r.texto, novaProposta, conversa.pendente)) r = { ...r, texto: 'Não consegui preparar essa movimentação. Me diga o material, a quantidade e o estoque — ex.: "saiu 2 sacos de cimento do Central".' };
+      if (encenou()) r = { ...r, texto: 'Não consegui preparar essa movimentação. Me diga o material, a quantidade e o estoque — ex.: "saiu 2 sacos de cimento do Central".' };
+      else if (chutou()) r = { ...r, texto: 'Não consegui conferir isso no sistema agora. Pergunte de novo em instantes, ou veja no painel — prefiro não dar número sem ter certeza.' };
     }
     resposta = r.texto || 'Não entendi. Pode dizer de outro jeito?';
     uso = r.uso;
