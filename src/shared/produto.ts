@@ -12,7 +12,7 @@ export const PRODUTO = {
   nome: 'Stok Aí',
   slogan: 'Sua operação, no controle.',
   descricao:
-    'Controle estoques, depósitos, unidades e movimentações em um só lugar. Saiba o que você tem, onde está e o que aconteceu.',
+    'Controle estoques, depósitos e unidades em um só lugar — e opere pelo WhatsApp: a equipe registra pelo celular, os fornecedores respondem cotações, e você decide com os dados na tela.',
   /** O laranja da marca. O do sistema por dentro é `--brand`, que a organização pode trocar. */
   cor: '#FF8A24',
   /** Fundo navy da Home e da tela de login. */

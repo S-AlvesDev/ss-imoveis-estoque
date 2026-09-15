@@ -33,7 +33,7 @@ export function Hero({ onDemo }: { onDemo: () => void }) {
       <Container className="relative grid items-center gap-12 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-10">
         <div className="max-w-xl">
           <motion.div {...entrada(0)}>
-            <Eyebrow>Stok Aí · Controle de estoque</Eyebrow>
+            <Eyebrow>Stok Aí · Estoque, WhatsApp e compras</Eyebrow>
           </motion.div>
           <motion.h1
             id="hero-titulo"
@@ -65,7 +65,7 @@ export function Hero({ onDemo }: { onDemo: () => void }) {
           </motion.div>
 
           <motion.ul {...entrada(0.32)} className="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-500" aria-label="O que o painel mostra">
-            {['Saldo de estoque', 'Movimentações', 'Unidades', 'Alertas'].map((t) => (
+            {['Saldo por depósito', 'Assistente no WhatsApp', 'Cotações a fornecedores', 'Alertas e resumos'].map((t) => (
               <li key={t} className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--laranja)]" aria-hidden />
                 {t}

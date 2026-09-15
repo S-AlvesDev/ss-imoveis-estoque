@@ -6,7 +6,6 @@ import {
   Building2,
   ClipboardList,
   FileText,
-  History,
   Layers,
   MapPin,
   MessageSquareWarning,
@@ -18,7 +17,9 @@ import {
   Users,
   Warehouse,
   Bot,
+  BellRing,
   Check,
+  MessageCircle,
   ShoppingCart,
   Truck,
   Workflow,
@@ -36,7 +37,7 @@ const PROVAS = [
   { icone: <ShieldCheck size={20} />, titulo: 'Controle', texto: 'Saldo por depósito e mínimo por material. Alerta só quando falta de verdade.' },
   { icone: <Search size={20} />, titulo: 'Rastreabilidade', texto: 'Toda movimentação com origem, destino, quantidade e quem fez.' },
   { icone: <Network size={20} />, titulo: 'Multiunidade', texto: 'Cada filial com o próprio estoque. Uma empresa, um só controle.' },
-  { icone: <History size={20} />, titulo: 'Histórico', texto: 'Auditoria por período, pronta para exportar em PDF.' },
+  { icone: <MessageCircle size={20} />, titulo: 'WhatsApp', texto: 'A equipe registra pelo celular e os fornecedores respondem cotações — o sistema confirma antes de gravar.' },
 ];
 
 export function Prova() {
@@ -102,12 +103,15 @@ export function Dor() {
 /* ------------------------------------------------------------------------- */
 
 const RECURSOS = [
-  { icone: <Boxes size={20} />, titulo: 'Estoque', texto: 'Catálogo único da empresa, com unidade de medida e mínimo por material.', micro: 'Veja o que você tem' },
-  { icone: <Building2 size={20} />, titulo: 'Unidades', texto: 'Cada filial com o próprio estoque e os próprios materiais. Trocar de unidade é um clique.', micro: 'Escolha a unidade' },
-  { icone: <Warehouse size={20} />, titulo: 'Depósitos', texto: 'Almoxarifado, armário de EPI, farmácia, patrimônio: cada unidade com os depósitos que a operação pede, cada um no seu modo.', micro: 'Veja onde está' },
-  { icone: <ArrowLeftRight size={20} />, titulo: 'Movimentações', texto: 'Entrada, saída, transferência, consumo, empréstimo com prazo, entrega com assinatura — sempre com origem, destino e responsável.', micro: 'Registre a saída' },
-  { icone: <Users size={20} />, titulo: 'Usuários', texto: 'Cada pessoa vê e opera só o depósito que é dela. O administrador decide quem faz o quê.', micro: 'Saiba quem movimentou' },
-  { icone: <FileText size={20} />, titulo: 'Relatórios', texto: 'Auditoria por período e lista de reposição, prontas para PDF.', micro: 'Leve para a reunião' },
+  { icone: <Boxes size={20} />, titulo: 'Estoque', texto: 'Catálogo único da empresa, com unidade de medida, categoria e mínimo por material.', micro: 'Veja o que você tem' },
+  { icone: <Warehouse size={20} />, titulo: 'Depósitos no modo certo', texto: 'Almoxarifado, empréstimo de ferramentas, entrega de EPI com assinatura, validade e lotes, patrimônio: cada depósito funciona como a operação pede.', micro: 'Veja onde está' },
+  { icone: <ArrowLeftRight size={20} />, titulo: 'Movimentações', texto: 'Entrada, saída, transferência, consumo, empréstimo com prazo, entrega, devolução — sempre com origem, destino e responsável.', micro: 'Registre a saída' },
+  { icone: <MessageCircle size={20} />, titulo: 'Stok Aí no WhatsApp', texto: '"Quanto tem de cimento?" "Saiu 10 sacos pra obra." A equipe consulta e registra pelo celular; o sistema pede SIM antes de gravar.', micro: 'Opere pelo celular' },
+  { icone: <ShoppingCart size={20} />, titulo: 'Compras e cotações', texto: 'Monte a lista, escolha os fornecedores e o sistema pergunta o preço a cada um pelo WhatsApp. Compare e feche o pedido com a nota fiscal pedida.', micro: 'Compre onde está mais barato' },
+  { icone: <Building2 size={20} />, titulo: 'Unidades', texto: 'Cada filial com o próprio estoque e os próprios materiais. Trocar de unidade é um clique; a matriz vê tudo.', micro: 'Escolha a unidade' },
+  { icone: <Users size={20} />, titulo: 'Usuários e acessos', texto: 'Cada pessoa vê e opera só o depósito que é dela — no painel e no WhatsApp. O administrador decide quem faz o quê.', micro: 'Saiba quem movimentou' },
+  { icone: <BellRing size={20} />, titulo: 'Alertas e resumos', texto: 'Abaixo do mínimo, empréstimo atrasado, lote vencendo: por e-mail na hora, no WhatsApp de manhã, e um resumo da semana toda segunda.', micro: 'Saiba antes de faltar' },
+  { icone: <FileText size={20} />, titulo: 'Relatórios e exportação', texto: 'Auditoria por período e lista de reposição em PDF; catálogo em Word; tudo em CSV quando quiser. Os dados são seus.', micro: 'Leve para a reunião' },
 ];
 
 export function Recursos() {
@@ -116,7 +120,7 @@ export function Recursos() {
       id="recursos"
       eyebrow="Como resolve"
       titulo="Tudo que a operação precisa, e nada que ela não usa."
-      descricao="Seis partes que conversam entre si. Você começa pelo cadastro e o resto acompanha."
+      descricao="Nove partes que conversam entre si. Você começa pelo cadastro e o resto acompanha."
       className="bg-[var(--navy-2)]/40"
     >
       <ul className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -137,6 +141,93 @@ export function Recursos() {
   );
 }
 
+
+/* ------------------------------------------------------------------------- */
+/*  WhatsApp — a conversa de verdade, dos dois lados                          */
+/* ------------------------------------------------------------------------- */
+
+function Balao({ de, children, hora }: { de: 'pessoa' | 'stokai'; children: React.ReactNode; hora: string }) {
+  const nosso = de === 'stokai';
+  return (
+    <div className={`flex ${nosso ? 'justify-start' : 'justify-end'}`}>
+      <div className={`max-w-[88%] rounded-2xl px-3 py-2 text-[13px] leading-snug ${nosso ? 'rounded-tl-sm bg-[#1f2937] text-slate-200' : 'rounded-tr-sm bg-[#1f3b2a] text-slate-100'}`}>
+        <div className="whitespace-pre-line">{children}</div>
+        <p className={`mt-1 text-right text-[10px] ${nosso ? 'text-slate-500' : 'text-emerald-300/60'}`}>{hora}</p>
+      </div>
+    </div>
+  );
+}
+
+function Conversa({ titulo, sub, children }: { titulo: string; sub: string; children: React.ReactNode }) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0b141a] shadow-2xl">
+      <div className="flex items-center gap-3 border-b border-white/10 bg-[#111b21] px-4 py-3">
+        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--laranja)] text-[#1a0c00]">
+          <MessageCircle size={16} />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-white">{titulo}</p>
+          <p className="truncate text-[11px] text-slate-400">{sub}</p>
+        </div>
+      </div>
+      <div className="flex flex-1 flex-col gap-2 p-3 sm:p-4">{children}</div>
+    </div>
+  );
+}
+
+const PONTOS_WHATSAPP = [
+  { icone: <ShieldCheck size={18} />, titulo: 'A IA propõe. A pessoa confirma. O sistema grava.', texto: 'Nenhuma movimentação entra sem um SIM. Fica no histórico com nome, hora e "via WhatsApp" — igual ao painel.' },
+  { icone: <Users size={18} />, titulo: 'Cada um só faz o que o cargo permite', texto: 'Operador registra saída, consumo, transferência e devolução; entrada e ajuste são do administrador. Com PIN, se quiser.' },
+  { icone: <ShoppingCart size={18} />, titulo: 'Cotação sem sair do sistema', texto: 'A mesma pergunta vai a cada fornecedor. A IA só lê a resposta — foto de tabela inclusive — e a tela mostra onde está mais barato.' },
+];
+
+export function NoWhatsapp() {
+  return (
+    <Secao id="whatsapp" eyebrow="Stok Aí no WhatsApp" titulo="O estoque responde no mesmo lugar onde a equipe já conversa." descricao="Quem está na obra não abre painel. Manda mensagem. O Stok Aí entende, confirma e registra — e faz a cotação com os fornecedores do mesmo jeito.">
+      <div className="mt-12 grid gap-4 lg:grid-cols-2">
+        <Revelar className="min-w-0">
+          <Conversa titulo="Stok Aí" sub="Carlos, operador · Obra Bairro Norte">
+            <Balao de="pessoa" hora="09:12">quanto tem de cimento?</Balao>
+            <Balao de="stokai" hora="09:12">
+              Cimento CP-II 50kg — Central: 148, Obra Bairro Norte: 12. Total 160 sc (mínimo 40).
+            </Balao>
+            <Balao de="pessoa" hora="09:13">saiu 10 sacos pra obra</Balao>
+            <Balao de="stokai" hora="09:13">
+              Transferir 10 sc de Cimento CP-II 50kg do Central para Obra Bairro Norte?{'\n'}Responda SIM para confirmar.
+            </Balao>
+            <Balao de="pessoa" hora="09:13">SIM</Balao>
+            <Balao de="stokai" hora="09:13">
+              ✅ Transferido. Saldo agora — Central: 138 sc; Obra Bairro Norte: 22 sc.
+            </Balao>
+          </Conversa>
+        </Revelar>
+        <Revelar delay={0.08} className="min-w-0">
+          <Conversa titulo="Depósito Central Materiais" sub="fornecedor · cotação “Obra Norte”">
+            <Balao de="stokai" hora="10:02">
+              Olá, João! 👋 Aqui é o assistente de compras da Construtora Horizonte (pelo Stok Aí).{'\n'}Precisamos de cotação para "Obra Norte":{'\n'}1) 50 sc — Cimento CP-II 50kg{'\n'}2) 2 lata — Tinta acrílica branca 18L{'\n'}Entrega em: Obra Bairro Norte
+            </Balao>
+            <Balao de="pessoa" hora="10:41">cimento 31,90 o saco, tinta não tenho. entrego amanhã cedo</Balao>
+            <Balao de="stokai" hora="10:41">
+              Obrigado, João! Registrei: cimento R$ 31,90/sc, entrega amanhã; tinta sem estoque. A Construtora Horizonte vai avaliar e retorna por aqui.
+            </Balao>
+          </Conversa>
+        </Revelar>
+      </div>
+      <ul className="mt-10 grid gap-6 md:grid-cols-3">
+        {PONTOS_WHATSAPP.map((p, i) => (
+          <Revelar as="li" key={p.titulo} delay={i * 0.06} className="flex gap-4">
+            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--laranja)]/12 text-[var(--laranja)]">{p.icone}</span>
+            <div>
+              <p className="font-bold text-white">{p.titulo}</p>
+              <p className="mt-1 text-sm leading-relaxed text-slate-400">{p.texto}</p>
+            </div>
+          </Revelar>
+        ))}
+      </ul>
+      <Revelar className="mt-8 text-xs text-slate-500">Faz parte do plano Empresarial. As mensagens saem do número do Stok Aí ou, se preferir, do WhatsApp da sua empresa.</Revelar>
+    </Secao>
+  );
+}
 
 /* ------------------------------------------------------------------------- */
 /*  Planos — o catálogo de src/shared/planos.ts, vendido                      */
@@ -205,8 +296,8 @@ export function Planos({ onDemo }: { onDemo: (origem: string) => void }) {
 
 const PASSOS = [
   { icone: <ClipboardList size={22} />, titulo: 'Cadastre a operação', texto: 'Empresa, unidades, depósitos e materiais. O primeiro acesso pergunta qual é o primeiro estoque e como ele funciona.' },
-  { icone: <ArrowLeftRight size={22} />, titulo: 'Registre as movimentações', texto: 'Entrada do fornecedor, transferência, consumo, empréstimo, entrega de EPI. Cada uma leva segundos.' },
-  { icone: <Table2 size={22} />, titulo: 'Acompanhe e decida', texto: 'Painel com saldo, alertas de mínimo e histórico. Compre o que falta, não o que parece faltar.' },
+  { icone: <ArrowLeftRight size={22} />, titulo: 'Registre as movimentações', texto: 'No painel ou pelo WhatsApp: "saiu 10 sacos de cimento pra obra", o sistema confirma, e está registrado com nome e hora.' },
+  { icone: <Table2 size={22} />, titulo: 'Acompanhe e decida', texto: 'Painel com saldo, alertas e histórico. Faltou? Cote com os fornecedores pelo próprio sistema e feche onde estiver mais barato.' },
 ];
 
 export function ComoFunciona() {
@@ -440,16 +531,16 @@ export function Multiunidade({ onDemo }: { onDemo: () => void }) {
 /* ------------------------------------------------------------------------- */
 
 const ETAPAS = [
-  { icone: <Boxes size={18} />, titulo: 'Estoque', texto: 'Unidades, depósitos, movimentações, alertas e relatórios.', estado: 'Disponível' },
-  { icone: <ShoppingCart size={18} />, titulo: 'Compras', texto: 'Da lista de reposição ao pedido, sem sair do sistema.', estado: 'Próximo' },
-  { icone: <Truck size={18} />, titulo: 'Fornecedores', texto: 'Quem entrega o quê, por quanto e em quanto tempo.', estado: 'Planejado' },
-  { icone: <Workflow size={18} />, titulo: 'Automações', texto: 'Remessa sugerida quando um depósito baixa e o outro sobra.', estado: 'Planejado' },
+  { icone: <Boxes size={18} />, titulo: 'Estoque', texto: 'Unidades, depósitos em cinco modos, movimentações, alertas e relatórios.', estado: 'Disponível' },
+  { icone: <MessageCircle size={18} />, titulo: 'WhatsApp', texto: 'A equipe opera pelo celular; avisos de manhã e resumo da semana.', estado: 'Disponível' },
+  { icone: <ShoppingCart size={18} />, titulo: 'Compras', texto: 'Cotação a fornecedores, comparação e pedido com a nota fiscal pedida.', estado: 'Disponível' },
+  { icone: <Workflow size={18} />, titulo: 'Automações', texto: 'Remessa sugerida quando um depósito baixa e o outro sobra; cotação automática do que faltou.', estado: 'Próximo' },
   { icone: <Bot size={18} />, titulo: 'Inteligência operacional', texto: 'Previsão de consumo por obra e por época do ano.', estado: 'Planejado' },
 ];
 
 export function Evolucao() {
   return (
-    <Secao id="evolucao" eyebrow="Evolução" titulo="Comece pelo estoque. Cresça com o Stok Aí." descricao="O que está no ar hoje resolve o problema de hoje. O que vem depois nasce dos mesmos dados.">
+    <Secao id="evolucao" eyebrow="Evolução" titulo="Comece pelo estoque. Cresça com o Stok Aí." descricao="Três partes no ar; as próximas nascem dos mesmos dados. Quem assina o Empresarial recebe cada uma primeiro.">
       <ol className="mt-12 grid gap-4 md:grid-cols-5">
         {ETAPAS.map((e, i) => {
           const ativa = e.estado === 'Disponível';

@@ -24,6 +24,9 @@ export function Footer({ onDemo }: { onDemo: () => void }) {
           <a href="#recursos" className={link}>
             Recursos
           </a>
+          <a href="#whatsapp" className={link}>
+            WhatsApp
+          </a>
           <a href="#como-funciona" className={link}>
             Como funciona
           </a>
