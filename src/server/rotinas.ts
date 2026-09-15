@@ -225,6 +225,48 @@ export async function resumosSemanais(agora: Date = new Date()): Promise<{ organ
 // ---------------------------------------------------------------------------
 
 /**
+ * O número de cada empresa que conectou o próprio WhatsApp. Uma sessão
+ * dessas cai sozinha (celular sem internet, aparelho desconectado) e a
+ * empresa só descobre quando tenta mandar cotação — então avisamos antes.
+ */
+export async function vigiarWhatsappDasEmpresas(): Promise<Array<{ empresa: string; estado: string }>> {
+  if (!evolutionConfigurada()) return [];
+  const { data } = await supabaseServer.from('organizations').select('id, nome, whatsapp_instancia').not('whatsapp_instancia', 'is', null).eq('ativo', true);
+  const caidas: Array<{ empresa: string; estado: string }> = [];
+  const t = await getTransporter();
+  for (const o of (data || []) as Array<{ id: string; nome: string; whatsapp_instancia: string }>) {
+    let estado: string;
+    try {
+      estado = await estadoDaInstancia(o.whatsapp_instancia);
+    } catch (e: any) {
+      estado = `erro: ${String(e.message).slice(0, 80)}`;
+    }
+    if (estado === 'open') continue;
+    caidas.push({ empresa: o.nome, estado });
+    if (!t) continue;
+    const para = await emailsDosAdministradores(o.id);
+    if (!para.length) continue;
+    try {
+      await t.sendMail({
+        from: remetente(),
+        to: para.join(', '),
+        subject: `⚠️ O WhatsApp da ${o.nome} se desconectou do Stok Aí`,
+        html: layoutEmail({
+          titulo: 'Reconecte o WhatsApp da empresa',
+          corpo:
+            p(`O número da <strong>${escapeHtml(o.nome)}</strong> que você conectou ao Stok Aí está <strong>${escapeHtml(estado)}</strong>. Enquanto isso, cotações e pedidos aos fornecedores não saem por ele.`) +
+            p('Abra <strong>Configurações → Stok Aí no WhatsApp</strong> e clique em "Ver QR" para reconectar pelo celular da empresa (WhatsApp → Aparelhos conectados). Se preferir, "Desconectar" faz tudo voltar a sair pelo número do Stok Aí.'),
+          botao: { rotulo: 'Abrir as configurações', url: `${siteUrl()}/entrar` },
+        }),
+      });
+    } catch (e: any) {
+      console.error(`[vigiar empresa] ${o.nome}:`, e.message);
+    }
+  }
+  return caidas;
+}
+
+/**
  * A instância do Stok Aí está conectada? Se não, avisa o operador por
  * e-mail (o WhatsApp está justamente fora). Devolve o estado visto.
  */

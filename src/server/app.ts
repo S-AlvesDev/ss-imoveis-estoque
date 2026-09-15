@@ -24,7 +24,7 @@ import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normal
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
-import { vigiarWhatsapp, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores, apagarContasVencidas } from './rotinas';
+import { vigiarWhatsapp, vigiarWhatsappDasEmpresas, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores, apagarContasVencidas } from './rotinas';
 import { iniciarErros } from './erros';
 import { exportarCsv, ehTabelaExportavel } from './exportar';
 import { lerPlanilha, MAX_LINHAS_POR_ENVIO, type MaterialImportado } from '../shared/importacao';
@@ -2495,12 +2495,13 @@ export function createApp() {
       const apagadas = await apagarContasVencidas();
       // O WhatsApp está de pé? Avisos do dia no WhatsApp dos administradores. Às segundas, o resumo da semana por e-mail.
       const whatsapp = await vigiarWhatsapp();
+      const empresasCaidas = await vigiarWhatsappDasEmpresas();
       const avisos = await avisosDoDiaPorWhatsapp();
       const hoje = new Date();
       const segunda = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Sao_Paulo' }).format(hoje) === 'Mon';
       const resumos = segunda ? await resumosSemanais(hoje) : { organizacoes: 0, enviados: 0 };
       console.info(`[lembretes] ${contas.length} conta(s) para lembrar, ${enviados} e-mail(s) enviado(s), ${notas} nota(s) verificada(s), whatsapp ${whatsapp.estado ?? 'n/a'}, ${avisos.mensagens} aviso(s), ${resumos.enviados} resumo(s).`);
-      res.json({ contas: contas.length, enviados, notas, avulsos_aprovados: avulsos, whatsapp, avisos, resumos, apagadas });
+      res.json({ contas: contas.length, enviados, notas, avulsos_aprovados: avulsos, whatsapp, whatsapp_das_empresas: empresasCaidas, avisos, resumos, apagadas });
     } catch (err: any) {
       console.error('[GET /api/cron/lembretes] erro:', err.message);
       res.status(500).json({ error: err.message });
@@ -3409,6 +3410,26 @@ export function createApp() {
     return { ...c, fornecedores };
   }
 
+  /**
+   * A conexão está de pé? Devolve null quando pode mandar, ou a frase para
+   * mostrar à pessoa. Conferir antes vale a pena: sem isso, a cotação nasce
+   * e cada fornecedor vira uma linha com erro — e ninguém entende por quê.
+   */
+  async function whatsappPronto(instancia: string | null): Promise<string | null> {
+    if (!evolutionConfigurada()) return 'O WhatsApp do Stok Aí não está conectado neste servidor.';
+    try {
+      const estado = await estadoDaInstancia(instancia);
+      if (estado === 'open') return null;
+      return instancia
+        ? `O WhatsApp da sua empresa está desconectado (${estado}). Reconecte em Configurações → Stok Aí no WhatsApp ("Ver QR"), ou desconecte o número da empresa para enviar pelo número do Stok Aí.`
+        : `O WhatsApp do Stok Aí está fora do ar (${estado}). Tente de novo em alguns minutos — já avisamos a equipe.`;
+    } catch (e: any) {
+      return instancia
+        ? `Não consegui falar com o WhatsApp da sua empresa: ${String(e.message).slice(0, 100)}. Confira em Configurações → Stok Aí no WhatsApp.`
+        : `O WhatsApp do Stok Aí não respondeu: ${String(e.message).slice(0, 100)}.`;
+    }
+  }
+
   async function organizacaoParaCotar(req: express.Request): Promise<{ nome: string; instancia: string | null }> {
     const { data } = await req.db!.from('organizations').select('nome, whatsapp_instancia').eq('id', req.user!.organization_id).single();
     return { nome: data?.nome ?? 'a empresa', instancia: data?.whatsapp_instancia ?? null };
@@ -3448,7 +3469,6 @@ export function createApp() {
     try {
       const negada = negarRecurso(req.plano!, 'cotacoes');
       if (negada) return res.status(negada.status).json(negada.body);
-      if (!evolutionConfigurada()) return res.status(503).json({ error: 'O WhatsApp do Stok Aí não está conectado neste servidor.' });
 
       const titulo = String(req.body?.titulo ?? '').trim();
       if (titulo.length < 2 || titulo.length > 80) return res.status(400).json({ error: 'Dê um título à cotação (2 a 80 caracteres).' });
@@ -3471,12 +3491,16 @@ export function createApp() {
       const entrega = String(req.body?.entrega ?? '').trim().slice(0, 200) || null;
       const observacoes = String(req.body?.observacoes ?? '').trim().slice(0, 500) || null;
 
+      // A conexão é conferida antes de gravar: cotação que nasce sem conseguir sair só atrapalha.
+      const org = await organizacaoParaCotar(req);
+      const problema = await whatsappPronto(org.instancia);
+      if (problema) return res.status(503).json({ error: problema, whatsapp_desconectado: true });
+
       const { data: c, error } = await req.db!.from('cotacoes').insert({ titulo, itens, entrega, observacoes, criado_por: req.user!.id }).select(COTACAO_COLUMNS).single();
       if (error) throw error;
       const { error: erroLinhas } = await req.db!.from('cotacao_fornecedores').insert(fornecedores.map((f: any) => ({ cotacao_id: c.id, fornecedor_id: f.id })));
       if (erroLinhas) throw erroLinhas;
 
-      const org = await organizacaoParaCotar(req);
       const envio = await enviarCotacao(req.user!.organization_id, org.nome, c, org.instancia);
       res.status(201).json({ cotacao: await cotacaoCompleta(req.db!, c.id), envio });
     } catch (err: any) {
@@ -3490,12 +3514,13 @@ export function createApp() {
     try {
       const negada = negarRecurso(req.plano!, 'cotacoes');
       if (negada) return res.status(negada.status).json(negada.body);
-      if (!evolutionConfigurada()) return res.status(503).json({ error: 'O WhatsApp do Stok Aí não está conectado neste servidor.' });
       const { data: c } = await req.db!.from('cotacoes').select(COTACAO_COLUMNS).eq('id', req.params.id).maybeSingle();
       if (!c) return res.status(404).json({ error: 'Cotação não encontrada.' });
       if (c.status !== 'aberta') return res.status(400).json({ error: 'Esta cotação já foi encerrada.' });
       const apenas = Array.isArray(req.body?.fornecedores) ? req.body.fornecedores.map(String) : undefined;
       const org = await organizacaoParaCotar(req);
+      const problema = await whatsappPronto(org.instancia);
+      if (problema) return res.status(503).json({ error: problema, whatsapp_desconectado: true });
       const envio = await enviarCotacao(req.user!.organization_id, org.nome, c, org.instancia, apenas);
       res.json({ cotacao: await cotacaoCompleta(req.db!, c.id), envio });
     } catch (err: any) {
@@ -3509,11 +3534,12 @@ export function createApp() {
     try {
       const negada = negarRecurso(req.plano!, 'cotacoes');
       if (negada) return res.status(negada.status).json(negada.body);
-      if (!evolutionConfigurada()) return res.status(503).json({ error: 'O WhatsApp do Stok Aí não está conectado neste servidor.' });
       const fornecedorId = String(req.body?.fornecedor_id ?? '');
       if (!fornecedorId) return res.status(400).json({ error: 'Escolha o fornecedor.' });
       const observacoes = String(req.body?.observacoes ?? '').trim().slice(0, 500) || null;
       const org = await organizacaoParaCotar(req);
+      const problema = await whatsappPronto(org.instancia);
+      if (problema) return res.status(503).json({ error: problema, whatsapp_desconectado: true });
       let r: { texto: string; total: number };
       try {
         r = await fecharPedido(req.user!.organization_id, org.nome, req.params.id, fornecedorId, observacoes, org.instancia);

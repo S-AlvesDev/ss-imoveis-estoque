@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { ClipboardList, Plus } from 'lucide-react';
+import { ClipboardList, Plus, WifiOff } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
@@ -39,6 +39,8 @@ export function Compras({ catalogo, unidade, depositos }: Props) {
   const [loading, setLoading] = useState(true);
   const [criando, setCriando] = useState(false);
   const [aberta, setAberta] = useState<string | null>(null);
+  /** Só quando a empresa usa o próprio número: se a sessão caiu, nada sai — melhor avisar antes de montar a cotação. */
+  const [whatsappDaEmpresa, setWhatsappDaEmpresa] = useState<{ instancia: string | null; estado: string | null } | null>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -55,6 +57,13 @@ export function Compras({ catalogo, unidade, depositos }: Props) {
   useEffect(() => {
     carregar();
   }, [carregar]);
+
+  useEffect(() => {
+    api
+      .get<{ instancia: string | null; estado: string | null }>('/api/whatsapp/empresa')
+      .then(setWhatsappDaEmpresa)
+      .catch(() => setWhatsappDaEmpresa(null));
+  }, []);
 
   const ativos = fornecedores.filter((f) => f.ativo);
 
@@ -76,6 +85,15 @@ export function Compras({ catalogo, unidade, depositos }: Props) {
       </div>
 
       {!liberado && <Cadeado texto={planoAtual.porQueNao('cotacoes')} />}
+
+      {whatsappDaEmpresa?.instancia && whatsappDaEmpresa.estado !== 'open' && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-orange-500/30 bg-orange-500/10 p-4">
+          <WifiOff size={18} className="shrink-0 text-orange-500" />
+          <p className="min-w-0 flex-1 text-sm text-[var(--text)]">
+            <strong>O WhatsApp da sua empresa está desconectado.</strong> Enquanto isso, cotações e pedidos não saem. Reconecte pelo QR em Configurações → Stok Aí no WhatsApp — ou desconecte o número da empresa para enviar pelo número do Stok Aí.
+          </p>
+        </div>
+      )}
 
       {aba === 'fornecedores' ? (
         <Fornecedores fornecedores={fornecedores} loading={loading} refetch={carregar} />
