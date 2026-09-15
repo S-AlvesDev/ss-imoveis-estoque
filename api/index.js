@@ -5,8 +5,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import jwt2 from "jsonwebtoken";
-import bcrypt from "bcryptjs";
-import nodemailer from "nodemailer";
+import bcrypt2 from "bcryptjs";
 
 // src/lib/supabaseServer.ts
 import { createClient } from "@supabase/supabase-js";
@@ -20,7 +19,8 @@ var supabaseServer = createClient(supabaseUrl || "", serviceRoleKey || "", {
 });
 
 // src/shared/constants.ts
-var ADMIN_ROLES = ["ADMINISTRADOR", "ADMINISTRATIVO"];
+var CEO = "CEO";
+var ADMIN_ROLES = [CEO, "ADMINISTRADOR", "ADMINISTRATIVO"];
 var OPERADOR = "OPERADOR";
 var LEGACY_OPERATOR_ROLES = ["ALMOXARIFE_GERAL", "ALMOXARIFADO", "ALMOXARIFE_OBRA"];
 var ASSIGNABLE_ROLES = ["ADMINISTRADOR", "ADMINISTRATIVO", OPERADOR];
@@ -83,7 +83,13 @@ var TABELAS_DA_ORGANIZACAO = /* @__PURE__ */ new Set([
   "asset_events",
   // Assinaturas (migração 021).
   "assinaturas",
-  "pagamentos"
+  "pagamentos",
+  // WhatsApp (migração 024).
+  "whatsapp_conversas",
+  // Fornecedores e cotações (migração 025).
+  "fornecedores",
+  "cotacoes",
+  "cotacao_fornecedores"
 ]);
 var clientesPorOrg = /* @__PURE__ */ new Map();
 function clientePara(organizationId) {
@@ -121,24 +127,24 @@ function scopedDb(organizationId) {
     /** Escapatória explícita, para o que é global de verdade (ex.: organizations). */
     raw: client,
     from(table) {
-      const base = client.from(table);
+      const base2 = client.from(table);
       const daOrg = TABELAS_DA_ORGANIZACAO.has(table);
       return {
         select: (colunas = "*", opcoes) => {
-          const q = base.select(colunas, opcoes);
+          const q = base2.select(colunas, opcoes);
           return daOrg ? q.eq("organization_id", organizationId) : q;
         },
-        insert: (linhas) => base.insert(daOrg ? comOrganizacao(linhas, organizationId) : linhas),
+        insert: (linhas) => base2.insert(daOrg ? comOrganizacao(linhas, organizationId) : linhas),
         // O saldo por depósito é gravado por upsert: a linha pode já existir
         // (material antigo) ou não (depósito recém-criado), e o caminho tem que
         // ser o mesmo nos dois casos.
-        upsert: (linhas, opcoes) => base.upsert(daOrg ? comOrganizacao(linhas, organizationId) : linhas, opcoes),
+        upsert: (linhas, opcoes) => base2.upsert(daOrg ? comOrganizacao(linhas, organizationId) : linhas, opcoes),
         update: (patch) => {
-          const q = base.update(patch);
+          const q = base2.update(patch);
           return daOrg ? q.eq("organization_id", organizationId) : q;
         },
         delete: () => {
-          const q = base.delete();
+          const q = base2.delete();
           return daOrg ? q.eq("organization_id", organizationId) : q;
         }
       };
@@ -466,10 +472,10 @@ var DEFINICOES = {
   empresarial: {
     id: "empresarial",
     nome: "Empresarial",
-    preco: 999.9,
+    preco: 1200,
     publico: "Opera\xE7\xF5es maiores",
     limites: { unidades: 4, depositosPorUnidade: null, usuarios: null },
-    recursos: ["transferencia", "identidade-visual", "exportacoes", "alertas-por-email", "relatorios-automaticos", "whatsapp"],
+    recursos: ["transferencia", "identidade-visual", "exportacoes", "alertas-por-email", "relatorios-automaticos", "whatsapp", "cotacoes"],
     niveis: { auditoria: "Avan\xE7ada", alertas: "Autom\xE1ticos", dashboard: "Avan\xE7ado", relatorios: "Avan\xE7ados", permissoes: "Avan\xE7adas", suporte: "Prioridade m\xE1xima" },
     destaques: ["4 unidades, dep\xF3sitos ilimitados*", "Usu\xE1rios ilimitados*", "Tudo do Profissional", "WhatsApp inclu\xEDdo", "Relat\xF3rios autom\xE1ticos", "Personaliza\xE7\xE3o completa", "Acesso antecipado a novos m\xF3dulos"],
     servicos: ["Implanta\xE7\xE3o e treinamento da equipe", "Acompanhamento dedicado", "Prioridade m\xE1xima no suporte"]
@@ -479,6 +485,15 @@ var CICLOS = ["mensal", "anual"];
 var AVALIACAO_DIAS = 7;
 var CARENCIA_DIAS = 2;
 var MESES_GRATIS_NO_ANUAL = 2;
+var LEMBRETE_DIAS = 5;
+var PIX_VALIDADE_HORAS = 24;
+var BOLETO_VALIDADE_DIAS = 3;
+var NOME_DO_METODO = { cartao: "Cart\xE3o de cr\xE9dito", pix: "Pix", boleto: "Boleto" };
+function fimDoPeriodo(de, ciclo) {
+  const d = new Date(de);
+  d.setMonth(d.getMonth() + (ciclo === "anual" ? 12 : 1));
+  return d;
+}
 function precoDo(plano, ciclo) {
   const mensal = DEFINICOES[plano].preco;
   return ciclo === "anual" ? Math.round(mensal * (12 - MESES_GRATIS_NO_ANUAL) * 100) / 100 : mensal;
@@ -489,10 +504,9 @@ var MP_PLANO_ID = {
   profissional: { mensal: "146fe762b8a6479c91eb942920b6d2ce", anual: null },
   empresarial: { mensal: "2aa62da2af554e63806660ac1aa7c145", anual: null }
 };
-var MP_PLANO_DE_TESTE = "d498ce9708594fec89331933d452b488";
-function planoDoMpPlanId(planId, modoTeste2 = false) {
+function planoDoMpPlanId(planId, planoDeTeste2 = null) {
   if (!planId) return null;
-  if (modoTeste2 && planId === MP_PLANO_DE_TESTE) return { plano: "essencial", ciclo: "mensal" };
+  if (planoDeTeste2 && planId === planoDeTeste2) return { plano: "essencial", ciclo: "mensal" };
   for (const plano of PLANOS) for (const ciclo of CICLOS) if (MP_PLANO_ID[plano][ciclo] === planId) return { plano, ciclo };
   return null;
 }
@@ -501,20 +515,21 @@ function dias(ate, agora) {
   return Math.max(0, Math.ceil((ate.getTime() - agora.getTime()) / DIA_MS3));
 }
 function situacaoDaConta(c, agora = /* @__PURE__ */ new Date()) {
+  const renovacao = c.cobranca === "cartao" ? "automatica" : c.cobranca === "avulso" ? "manual" : null;
   if (ehPlano(c.plano)) {
-    if (!c.plano_ate) return { situacao: "assinada", plano: c.plano, ate: null, dias_restantes: null };
+    if (!c.plano_ate) return { situacao: "assinada", renovacao, plano: c.plano, ate: null, dias_restantes: null };
     const vence = new Date(c.plano_ate);
-    if (vence.getTime() >= agora.getTime()) return { situacao: "assinada", plano: c.plano, ate: vence.toISOString(), dias_restantes: dias(vence, agora) };
+    if (vence.getTime() >= agora.getTime()) return { situacao: "assinada", renovacao, plano: c.plano, ate: vence.toISOString(), dias_restantes: dias(vence, agora) };
     const fimDaCarencia = new Date(vence.getTime() + CARENCIA_DIAS * DIA_MS3);
-    if (fimDaCarencia.getTime() >= agora.getTime()) return { situacao: "carencia", plano: c.plano, ate: fimDaCarencia.toISOString(), dias_restantes: dias(fimDaCarencia, agora) };
-    return { situacao: "bloqueada", plano: "avaliacao", ate: fimDaCarencia.toISOString(), dias_restantes: 0 };
+    if (fimDaCarencia.getTime() >= agora.getTime()) return { situacao: "carencia", renovacao, plano: c.plano, ate: fimDaCarencia.toISOString(), dias_restantes: dias(fimDaCarencia, agora) };
+    return { situacao: "bloqueada", renovacao, plano: "avaliacao", ate: fimDaCarencia.toISOString(), dias_restantes: 0 };
   }
   if (c.avaliacao_ate) {
     const fim = new Date(c.avaliacao_ate);
-    if (fim.getTime() >= agora.getTime()) return { situacao: "avaliacao", plano: "avaliacao", ate: fim.toISOString(), dias_restantes: dias(fim, agora) };
-    return { situacao: "bloqueada", plano: "avaliacao", ate: fim.toISOString(), dias_restantes: 0 };
+    if (fim.getTime() >= agora.getTime()) return { situacao: "avaliacao", renovacao: null, plano: "avaliacao", ate: fim.toISOString(), dias_restantes: dias(fim, agora) };
+    return { situacao: "bloqueada", renovacao: null, plano: "avaliacao", ate: fim.toISOString(), dias_restantes: 0 };
   }
-  return { situacao: "avaliacao", plano: "avaliacao", ate: null, dias_restantes: null };
+  return { situacao: "avaliacao", renovacao: null, plano: "avaliacao", ate: null, dias_restantes: null };
 }
 var NOME_DO_PLANO = { essencial: "Essencial", profissional: "Profissional", empresarial: "Empresarial", avaliacao: "Avalia\xE7\xE3o" };
 function ehPlano(s) {
@@ -549,6 +564,9 @@ function descreverLimite(limite, valor) {
   if (valor === null) return `${varios} ilimitados`;
   return `${valor} ${valor === 1 ? um : varios}`;
 }
+function formatarPreco(valor) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(valor);
+}
 function mensagemDeRecurso(recurso) {
   const nome = NOME_DO_PLANO[planoMinimoPara(recurso)];
   const oque = {
@@ -557,7 +575,8 @@ function mensagemDeRecurso(recurso) {
     exportacoes: "Exporta\xE7\xE3o de relat\xF3rios",
     "alertas-por-email": "Alertas por e-mail",
     "relatorios-automaticos": "Relat\xF3rios autom\xE1ticos",
-    whatsapp: "Avisos por WhatsApp"
+    whatsapp: "Stok A\xED no WhatsApp",
+    cotacoes: "Cota\xE7\xF5es pelo WhatsApp"
   };
   return `${oque[recurso]}: dispon\xEDvel a partir do plano ${nome}.`;
 }
@@ -567,6 +586,32 @@ function mensagemDeLimite(plano, limite) {
   const sufixo = proximo ? ` Para mais, o plano ${NOME_DO_PLANO[proximo]}.` : " Para mais, fale com a gente (Enterprise).";
   return `O plano ${NOME_DO_PLANO[plano]} inclui ${descreverLimite(limite, max)}.${sufixo}`;
 }
+function detalheDoPagamento(detalhe) {
+  if (!detalhe) return null;
+  const d = detalhe.toLowerCase();
+  const MAPA = [
+    [/^accredited$/, "aprovado"],
+    [/^pending_waiting_payment$/, "aguardando pagamento"],
+    [/^pending_waiting_transfer$/, "aguardando o Pix"],
+    [/^pending_review_manual$/, "em an\xE1lise pelo Mercado Pago"],
+    [/^pending_contingency$/, "processando"],
+    [/^expired$/, "expirado"],
+    [/^cc_rejected_high_risk$/, "recusado pelo antifraude do cart\xE3o"],
+    [/^cc_rejected_insufficient_amount$/, "saldo/limite insuficiente"],
+    [/^cc_rejected_bad_filled/, "dados do cart\xE3o incorretos"],
+    [/^cc_rejected_call_for_authorize$/, "o banco pediu para autorizar a compra"],
+    [/^cc_rejected_card_disabled$/, "cart\xE3o desativado"],
+    [/^cc_rejected_duplicated_payment$/, "pagamento duplicado"],
+    [/^cc_rejected_max_attempts$/, "muitas tentativas"],
+    [/^cc_rejected_blacklist$/, "cart\xE3o bloqueado pelo Mercado Pago"],
+    [/^cc_rejected_other_reason$/, "recusado pelo banco"],
+    [/^by_collector$/, "cancelado por n\xF3s"],
+    [/^by_payer$/, "cancelado por voc\xEA"],
+    [/^refunded$/, "reembolsado"]
+  ];
+  for (const [re, texto6] of MAPA) if (re.test(d)) return texto6;
+  return detalhe;
+}
 
 // src/server/planos.ts
 var CACHE_MS = 6e4;
@@ -574,9 +619,9 @@ var cache = /* @__PURE__ */ new Map();
 async function contaDaOrg(organizationId, agora = Date.now()) {
   const c = cache.get(organizationId);
   if (c && c.ate > agora) return c.conta;
-  const { data, error } = await supabaseServer.from("organizations").select("plano, plano_ate, avaliacao_ate").eq("id", organizationId).maybeSingle();
+  const { data: data2, error } = await supabaseServer.from("organizations").select("plano, plano_ate, avaliacao_ate, cobranca").eq("id", organizationId).maybeSingle();
   if (error) throw error;
-  const conta = situacaoDaConta({ plano: data?.plano ?? null, plano_ate: data?.plano_ate ?? null, avaliacao_ate: data?.avaliacao_ate ?? null }, new Date(agora));
+  const conta = situacaoDaConta({ plano: data2?.plano ?? null, plano_ate: data2?.plano_ate ?? null, avaliacao_ate: data2?.avaliacao_ate ?? null, cobranca: data2?.cobranca ?? null }, new Date(agora));
   cache.set(organizationId, { conta, ate: agora + CACHE_MS });
   return conta;
 }
@@ -595,12 +640,20 @@ function negarLimite(plano, limite, atual) {
 // src/server/mercadopago.ts
 import { createHmac, timingSafeEqual } from "node:crypto";
 var API = "https://api.mercadopago.com";
+var DESCRITOR = "STOK AI";
 var CHECKOUT_DE_PLANO = "https://www.mercadopago.com.br/subscriptions/checkout";
+function planoDeTeste(env = process.env) {
+  const v = (env.MP_PLANO_DE_TESTE ?? "").trim();
+  return /^[a-f0-9]{32}$/i.test(v) ? v : null;
+}
 function modoTeste(env = process.env) {
-  return env.MP_MODO_TESTE === "1";
+  return planoDeTeste(env) !== null;
 }
 function mpConfigurado(env = process.env) {
   return Boolean(env.MP_ACCESS_TOKEN);
+}
+function mpPublicKey(env = process.env) {
+  return env.MP_ACCESS_TOKEN && env.MP_PUBLIC_KEY ? env.MP_PUBLIC_KEY : null;
 }
 function siteUrl(env) {
   return (env.SITE_URL || env.VITE_SITE_URL || "https://stokai.app").replace(/\/+$/, "");
@@ -609,7 +662,8 @@ function urlDeRetorno(env = process.env) {
   return `${siteUrl(env)}/assinatura/retorno`;
 }
 function mpPlanId(plano, ciclo, env = process.env) {
-  if (modoTeste(env) && plano === "essencial" && ciclo === "mensal") return MP_PLANO_DE_TESTE;
+  const teste = planoDeTeste(env);
+  if (teste && plano === "essencial" && ciclo === "mensal") return teste;
   return MP_PLANO_ID[plano][ciclo];
 }
 function urlDoCheckoutDoPlano(planId, organizationId) {
@@ -635,27 +689,59 @@ function corpoDaAssinatura(args) {
     status: "pending"
   };
 }
-async function mp(caminho, init = {}, env = process.env) {
+var ErroDoMercadoPago = class extends Error {
+  constructor(status, mensagem, corpo = null) {
+    super(mensagem);
+    this.status = status;
+    this.corpo = corpo;
+  }
+};
+function mensagemParaOPagador(e) {
+  if (!(e instanceof ErroDoMercadoPago)) return "N\xE3o foi poss\xEDvel concluir o pagamento. Tente de novo.";
+  const m = String(e.corpo?.message ?? "").toLowerCase();
+  if (m.includes("cc_val") || m.includes("validation has failed")) return "O banco do cart\xE3o n\xE3o autorizou a valida\xE7\xE3o. Use um cart\xE3o de cr\xE9dito (n\xE3o d\xE9bito ou virtual), confira o CPF do titular ou tente outro cart\xE3o.";
+  if (m.includes("card_token") || m.includes("token")) return "O cart\xE3o n\xE3o foi aceito. Confira os dados e tente de novo.";
+  if (m.includes("payer") && m.includes("collector")) return "N\xE3o \xE9 poss\xEDvel pagar com a conta que recebe. Use outro cart\xE3o/e-mail.";
+  if (e.status === 400 || e.status === 402) return `O Mercado Pago recusou: ${e.corpo?.message ?? "confira os dados do cart\xE3o."}`;
+  return "O Mercado Pago n\xE3o respondeu como esperado. Tente de novo em instantes.";
+}
+async function mp(caminho, init2 = {}, env = process.env) {
   if (!env.MP_ACCESS_TOKEN) throw new Error("MP_ACCESS_TOKEN n\xE3o configurado.");
   const r = await fetch(`${API}${caminho}`, {
-    ...init,
-    headers: { Authorization: `Bearer ${env.MP_ACCESS_TOKEN}`, "Content-Type": "application/json", ...init.headers }
+    ...init2,
+    headers: { Authorization: `Bearer ${env.MP_ACCESS_TOKEN}`, "Content-Type": "application/json", ...init2.headers }
   });
-  const texto5 = await r.text();
+  const texto6 = await r.text();
   let corpo = null;
   try {
-    corpo = texto5 ? JSON.parse(texto5) : null;
+    corpo = texto6 ? JSON.parse(texto6) : null;
   } catch {
-    corpo = { raw: texto5 };
+    corpo = { raw: texto6 };
   }
   if (!r.ok) {
     const msg = corpo?.message || corpo?.error || `HTTP ${r.status}`;
-    throw new Error(`Mercado Pago ${init.method ?? "GET"} ${caminho}: ${msg}`);
+    throw new ErroDoMercadoPago(r.status, `Mercado Pago ${init2.method ?? "GET"} ${caminho}: ${msg}`, corpo);
   }
   return corpo;
 }
 function criarAssinaturaSemPlano(args) {
   return mp("/preapproval", { method: "POST", body: JSON.stringify(corpoDaAssinatura(args)) });
+}
+function corpoDaAssinaturaComCartao(args) {
+  const env = args.env ?? process.env;
+  const base2 = { reason: motivo(args.plano, args.ciclo), external_reference: args.organizationId, payer_email: args.payerEmail, card_token_id: args.cardTokenId, back_url: urlDeRetorno(env), status: "authorized" };
+  if (args.planId) return { ...base2, preapproval_plan_id: args.planId, ...args.recorrenciaDoPlano ? { auto_recurring: args.recorrenciaDoPlano } : {} };
+  return { ...base2, auto_recurring: corpoDaAssinatura(args).auto_recurring };
+}
+async function recorrenciaDoPlano(planId) {
+  const p2 = await mp(`/preapproval_plan/${encodeURIComponent(planId)}`);
+  const r = p2.auto_recurring;
+  if (!r || r.frequency == null || !r.frequency_type || r.transaction_amount == null) return null;
+  return { frequency: r.frequency, frequency_type: r.frequency_type, transaction_amount: r.transaction_amount, currency_id: r.currency_id ?? "BRL" };
+}
+async function criarAssinaturaComCartao(args) {
+  const recorrencia = args.planId && !args.recorrenciaDoPlano ? await recorrenciaDoPlano(args.planId) : args.recorrenciaDoPlano;
+  return mp("/preapproval", { method: "POST", body: JSON.stringify(corpoDaAssinaturaComCartao({ ...args, recorrenciaDoPlano: recorrencia })) });
 }
 function buscarAssinatura(id) {
   return mp(`/preapproval/${encodeURIComponent(id)}`);
@@ -665,6 +751,83 @@ function cancelarAssinatura(id) {
 }
 function buscarPagamentoAutorizado(id) {
   return mp(`/authorized_payments/${encodeURIComponent(id)}`);
+}
+function partesDoNome(nome) {
+  const partes = nome.trim().split(/\s+/);
+  if (partes.length === 1) return { first_name: partes[0], last_name: partes[0] };
+  return { first_name: partes[0], last_name: partes.slice(1).join(" ") };
+}
+function corpoDoPagamentoAvulso(args) {
+  const env = args.env ?? process.env;
+  const payer = {
+    email: args.pagador.email,
+    ...partesDoNome(args.pagador.nome),
+    identification: { type: args.pagador.tipoDoc, number: args.pagador.doc.replace(/\D/g, "") }
+  };
+  if (args.metodo === "boleto" && args.pagador.endereco) {
+    const e = args.pagador.endereco;
+    payer.address = { zip_code: e.cep.replace(/\D/g, ""), street_name: e.rua, street_number: e.numero, neighborhood: e.bairro, city: e.cidade, federal_unit: e.uf.toUpperCase() };
+  }
+  return {
+    transaction_amount: Math.round(args.valor * 100) / 100,
+    description: args.descricao,
+    payment_method_id: args.metodo === "pix" ? "pix" : "bolbradesco",
+    // O que aparece na fatura do cartão e nos avisos do MP (até 22 caracteres, sem acento).
+    statement_descriptor: DESCRITOR,
+    external_reference: args.referencia,
+    notification_url: `${siteUrl(env)}/api/webhooks/mercadopago`,
+    date_of_expiration: args.venceEm.toISOString(),
+    payer
+  };
+}
+function criarPagamentoAvulso(args) {
+  return mp("/v1/payments", { method: "POST", headers: { "X-Idempotency-Key": args.idempotencia }, body: JSON.stringify(corpoDoPagamentoAvulso(args)) });
+}
+function buscarPagamento(id) {
+  return mp(`/v1/payments/${encodeURIComponent(id)}`);
+}
+function dadosParaPagar(p2) {
+  const t = p2.point_of_interaction?.transaction_data;
+  return {
+    qr_code: t?.qr_code ?? null,
+    qr_code_base64: t?.qr_code_base64 ?? null,
+    ticket_url: t?.ticket_url ?? p2.transaction_details?.external_resource_url ?? null,
+    linha_digitavel: p2.barcode?.content ?? null
+  };
+}
+async function procurarAssinaturasRecentes(limite = 50, filtro = {}) {
+  const q = new URLSearchParams({ sort: "date_created:desc", limit: String(limite), offset: "0", ...filtro });
+  const r = await mp(`/preapproval/search?${q.toString()}`);
+  return r.results ?? [];
+}
+async function diagnostico(env = process.env) {
+  const token = env.MP_ACCESS_TOKEN ?? "";
+  const tipoDoToken = !token ? "ausente" : token.startsWith("APP_USR-") ? "producao" : token.startsWith("TEST-") ? "teste" : "desconhecido";
+  const planos = {};
+  const ids = [planoDeTeste(env), ...Object.values(MP_PLANO_ID).flatMap((c) => Object.values(c))].filter((x) => Boolean(x));
+  for (const id of ids) {
+    try {
+      const p2 = await mp(`/preapproval_plan/${id}`, {}, env);
+      planos[id] = `${p2.status ?? "?"} \xB7 ${p2.reason ?? ""} \xB7 R$ ${p2.auto_recurring?.transaction_amount ?? "?"}`;
+    } catch (e) {
+      planos[id] = `ERRO: ${String(e.message).slice(0, 120)}`;
+    }
+  }
+  let busca;
+  try {
+    const r = await mp("/preapproval/search?sort=date_created:desc&limit=10&offset=0", {}, env);
+    busca = `total=${r.paging?.total ?? "?"} results=${r.results?.length ?? 0}: ${(r.results ?? []).map((p2) => `${p2.status}/${p2.preapproval_plan_id ?? "sem-plano"}/${p2.date_created?.slice(0, 10)}`).join("; ")}`;
+  } catch (e) {
+    busca = `ERRO: ${String(e.message).slice(0, 160)}`;
+  }
+  let usuario;
+  try {
+    const u = await mp("/users/me", {}, env);
+    usuario = `${u.nickname ?? "?"} (id ${u.id ?? "?"}, ${u.site_id ?? "?"})`;
+  } catch (e) {
+    usuario = `ERRO: ${String(e.message).slice(0, 120)}`;
+  }
+  return { token: tipoDoToken, modo_teste: modoTeste(env), usuario, planos, busca, webhook_secret: Boolean(env.MP_WEBHOOK_SECRET) };
 }
 function assinaturaDoWebhookValida(args) {
   if (!args.secret) return null;
@@ -711,9 +874,10 @@ function traduzirStatus(s) {
 function traduzirPagamento(ap) {
   const p2 = ap.payment?.status;
   const detalhe = ap.payment?.status_detail ?? null;
+  if (ap.status === "recycling") return { status: "pendente", detalhe: detalhe ?? "nova tentativa agendada" };
+  if (p2 === "rejected") return { status: "recusado", detalhe };
   if (ap.status === "scheduled") return { status: "agendado", detalhe };
   if (ap.status === "cancelled") return { status: "cancelado", detalhe };
-  if (ap.status === "recycling") return { status: "pendente", detalhe: detalhe ?? "nova tentativa agendada" };
   switch (p2) {
     case "approved":
       return { status: "aprovado", detalhe };
@@ -735,21 +899,21 @@ function planoAteDe(pre, ciclo, agora = /* @__PURE__ */ new Date()) {
   return d.toISOString();
 }
 async function contaDe(organizationId) {
-  const { data, error } = await supabaseServer.from("organizations").select("id, nome, slug, plano, plano_desde, plano_ate, avaliacao_ate").eq("id", organizationId).maybeSingle();
+  const { data: data2, error } = await supabaseServer.from("organizations").select("id, nome, slug, plano, plano_desde, plano_ate, avaliacao_ate").eq("id", organizationId).maybeSingle();
   if (error) throw error;
-  if (!data) return null;
-  return { organizacao: data, conta: situacaoDaConta(data) };
+  if (!data2) return null;
+  return { organizacao: data2, conta: situacaoDaConta(data2) };
 }
 async function assinaturaAtual(organizationId) {
-  const { data, error } = await supabaseServer.from("assinaturas").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(20);
+  const { data: data2, error } = await supabaseServer.from("assinaturas").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(20);
   if (error) throw error;
-  const lista = data || [];
+  const lista = data2 || [];
   return lista.find((a) => a.status === "autorizada") ?? lista.find((a) => a.status === "pausada") ?? lista[0] ?? null;
 }
 async function pagamentosDe(organizationId, limite = 24) {
-  const { data, error } = await supabaseServer.from("pagamentos").select("*").eq("organization_id", organizationId).order("data", { ascending: false }).limit(limite);
+  const { data: data2, error } = await supabaseServer.from("pagamentos").select("*").eq("organization_id", organizationId).order("data", { ascending: false }).limit(limite);
   if (error) throw error;
-  return data || [];
+  return data2 || [];
 }
 async function iniciarAssinatura(args) {
   const atual = await assinaturaAtual(args.organizationId);
@@ -760,26 +924,43 @@ async function iniciarAssinatura(args) {
   }
   await supabaseServer.from("assinaturas").delete().eq("organization_id", args.organizationId).eq("status", "pendente").is("mp_preapproval_id", null);
   const planId = mpPlanId(args.plano, args.ciclo);
-  const base = { organization_id: args.organizationId, plano: args.plano, ciclo: args.ciclo, valor: precoDo(args.plano, args.ciclo), payer_email: args.payerEmail, status: "pendente" };
+  const base2 = { organization_id: args.organizationId, plano: args.plano, ciclo: args.ciclo, valor: precoDo(args.plano, args.ciclo), payer_email: args.payerEmail, status: "pendente" };
   if (planId) {
-    const { data: data2, error: error2 } = await supabaseServer.from("assinaturas").insert({ ...base, mp_plan_id: planId }).select("*").single();
+    const { data: data3, error: error2 } = await supabaseServer.from("assinaturas").insert({ ...base2, mp_plan_id: planId }).select("*").single();
     if (error2) throw error2;
-    return { url: urlDoCheckoutDoPlano(planId, args.organizationId), assinatura: data2 };
+    return { url: urlDoCheckoutDoPlano(planId, args.organizationId), assinatura: data3 };
   }
   const pre = await criarAssinaturaSemPlano({ plano: args.plano, ciclo: args.ciclo, organizationId: args.organizationId, payerEmail: args.payerEmail });
   if (!pre.init_point) throw new Error("O Mercado Pago n\xE3o devolveu o link do checkout.");
-  const { data, error } = await supabaseServer.from("assinaturas").insert({ ...base, mp_preapproval_id: pre.id }).select("*").single();
+  const { data: data2, error } = await supabaseServer.from("assinaturas").insert({ ...base2, mp_preapproval_id: pre.id }).select("*").single();
   if (error) throw error;
-  return { url: pre.init_point, assinatura: data };
+  return { url: pre.init_point, assinatura: data2 };
+}
+async function assinarComCartao(args) {
+  const atual = await assinaturaAtual(args.organizationId);
+  const emVigor = atual && (atual.status === "autorizada" || atual.status === "pausada");
+  if (emVigor && !args.trocar) throw new ErroDeAssinatura(409, "Esta conta j\xE1 tem uma assinatura em vigor. Para mudar de plano, use a troca.");
+  const planId = mpPlanId(args.plano, args.ciclo);
+  const pre = await criarAssinaturaComCartao({ plano: args.plano, ciclo: args.ciclo, organizationId: args.organizationId, payerEmail: args.payerEmail, cardTokenId: args.cardTokenId, planId });
+  if (emVigor && atual?.mp_preapproval_id && pre.status === "authorized") {
+    try {
+      await cancelarAssinatura(atual.mp_preapproval_id);
+    } catch (e) {
+      console.error("[assinatura] n\xE3o cancelou a anterior no MP:", e.message);
+    }
+  }
+  await supabaseServer.from("assinaturas").delete().eq("organization_id", args.organizationId).eq("status", "pendente").is("mp_preapproval_id", null);
+  await supabaseServer.from("assinaturas").insert({ organization_id: args.organizationId, plano: args.plano, ciclo: args.ciclo, valor: precoDo(args.plano, args.ciclo), payer_email: args.payerEmail, mp_plan_id: planId, mp_preapproval_id: pre.id, status: "pendente" });
+  return aplicarPreapproval(pre, { organizationId: args.organizationId });
 }
 async function cancelarAssinatura2(organizationId) {
   const atual = await assinaturaAtual(organizationId);
   if (!atual || atual.status !== "autorizada" && atual.status !== "pausada") throw new ErroDeAssinatura(409, "N\xE3o h\xE1 assinatura em vigor para cancelar.");
   if (atual.mp_preapproval_id) await cancelarAssinatura(atual.mp_preapproval_id);
-  const { data, error } = await supabaseServer.from("assinaturas").update({ status: "cancelada", cancelada_em: (/* @__PURE__ */ new Date()).toISOString(), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", atual.id).select("*").single();
+  const { data: data2, error } = await supabaseServer.from("assinaturas").update({ status: "cancelada", cancelada_em: (/* @__PURE__ */ new Date()).toISOString(), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", atual.id).select("*").single();
   if (error) throw error;
   esquecerPlano(organizationId);
-  return data;
+  return data2;
 }
 var ErroDeAssinatura = class extends Error {
   constructor(status, mensagem) {
@@ -789,8 +970,8 @@ var ErroDeAssinatura = class extends Error {
 };
 async function organizacaoExiste(id) {
   if (!id || !UUID.test(id)) return false;
-  const { data } = await supabaseServer.from("organizations").select("id").eq("id", id).maybeSingle();
-  return Boolean(data);
+  const { data: data2 } = await supabaseServer.from("organizations").select("id").eq("id", id).maybeSingle();
+  return Boolean(data2);
 }
 async function acharDona(pre, sugerida) {
   const { data: existente } = await supabaseServer.from("assinaturas").select("*").eq("mp_preapproval_id", pre.id).maybeSingle();
@@ -814,7 +995,7 @@ async function aplicarPreapproval(pre, opcoes = {}) {
   if (opcoes.organizationId && dona.organizationId !== opcoes.organizationId) {
     return { casou: false, organizationId: dona.organizationId, assinatura: null, motivo: "a assinatura pertence a outra organiza\xE7\xE3o" };
   }
-  const doPainel = planoDoMpPlanId(pre.preapproval_plan_id, modoTeste());
+  const doPainel = planoDoMpPlanId(pre.preapproval_plan_id, planoDeTeste());
   const plano = doPainel?.plano ?? dona.intencao?.plano ?? null;
   const ciclo = doPainel?.ciclo ?? dona.intencao?.ciclo ?? (pre.auto_recurring?.frequency === 12 ? "anual" : "mensal");
   if (!ehPlano(plano)) return { casou: false, organizationId: dona.organizationId, assinatura: null, motivo: `plano do MP desconhecido (${pre.preapproval_plan_id ?? "sem plano"})` };
@@ -828,7 +1009,8 @@ async function aplicarPreapproval(pre, opcoes = {}) {
     mp_preapproval_id: pre.id,
     mp_plan_id: pre.preapproval_plan_id ?? null,
     status,
-    payer_email: pre.payer_email ?? dona.intencao?.payer_email ?? null,
+    // O MP às vezes manda e-mail vazio; aí vale o de quem clicou em assinar.
+    payer_email: pre.payer_email || dona.intencao?.payer_email || null,
     proxima_cobranca: pre.next_payment_date ?? null,
     autorizada_em: status === "autorizada" ? dona.intencao?.autorizada_em ?? agora : dona.intencao?.autorizada_em ?? null,
     cancelada_em: status === "cancelada" ? dona.intencao?.cancelada_em ?? agora : null,
@@ -836,21 +1018,125 @@ async function aplicarPreapproval(pre, opcoes = {}) {
   };
   let assinatura;
   if (dona.intencao) {
-    const { data, error } = await supabaseServer.from("assinaturas").update(campos).eq("id", dona.intencao.id).select("*").single();
+    const { data: data2, error } = await supabaseServer.from("assinaturas").update(campos).eq("id", dona.intencao.id).select("*").single();
     if (error) throw error;
-    assinatura = data;
+    assinatura = data2;
   } else {
-    const { data, error } = await supabaseServer.from("assinaturas").insert(campos).select("*").single();
+    const { data: data2, error } = await supabaseServer.from("assinaturas").insert(campos).select("*").single();
     if (error) throw error;
-    assinatura = data;
+    assinatura = data2;
   }
   if (status === "autorizada") {
     await supabaseServer.from("assinaturas").update({ status: "cancelada", cancelada_em: agora, updated_at: agora }).eq("organization_id", dona.organizationId).eq("status", "autorizada").neq("id", assinatura.id);
     const { data: org } = await supabaseServer.from("organizations").select("plano_desde").eq("id", dona.organizationId).maybeSingle();
-    await supabaseServer.from("organizations").update({ plano, plano_desde: org?.plano_desde ?? agora, plano_ate: planoAteDe(pre, ciclo) }).eq("id", dona.organizationId);
+    await supabaseServer.from("organizations").update({ plano, plano_desde: org?.plano_desde ?? agora, plano_ate: planoAteDe(pre, ciclo), cobranca: "cartao" }).eq("id", dona.organizationId);
   }
   esquecerPlano(dona.organizationId);
   return { casou: true, organizationId: dona.organizationId, assinatura };
+}
+async function procurarEAplicar(organizationId, emails) {
+  const recentes = await procurarAssinaturasRecentes();
+  const meus = new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean));
+  const { data: conhecidas } = await supabaseServer.from("assinaturas").select("mp_preapproval_id, organization_id").not("mp_preapproval_id", "is", null);
+  const deOutra = new Set((conhecidas || []).filter((a) => a.organization_id !== organizationId).map((a) => a.mp_preapproval_id));
+  const candidata = recentes.find((pre2) => {
+    if (deOutra.has(pre2.id)) return false;
+    if (pre2.status !== "authorized" && pre2.status !== "paused") return false;
+    if (pre2.external_reference === organizationId) return true;
+    if (pre2.payer_email && meus.has(pre2.payer_email.toLowerCase())) return true;
+    const teste = planoDeTeste();
+    return Boolean(teste) && pre2.preapproval_plan_id === teste;
+  });
+  if (!candidata) {
+    const vistas = recentes.slice(0, 10).map((p2) => `${p2.status}/${p2.preapproval_plan_id ?? "sem-plano"}/${p2.date_created?.slice(0, 10) ?? "?"}${p2.payer_email && meus.has(p2.payer_email.toLowerCase()) ? "/seu-email" : ""}`);
+    return { casou: false, organizationId, assinatura: null, motivo: `nenhuma das ${recentes.length} assinaturas recentes da conta do Mercado Pago corresponde a esta organiza\xE7\xE3o${vistas.length ? ` (${vistas.join("; ")})` : ""}` };
+  }
+  const pre = await buscarAssinatura(candidata.id);
+  return aplicarPreapproval(pre, { organizationId });
+}
+var REF_AVULSO = "avulso:";
+function traduzirStatusDePagamento(s) {
+  switch (s) {
+    case "approved":
+    case "authorized":
+      return "aprovado";
+    case "rejected":
+      return "recusado";
+    case "cancelled":
+      return "cancelado";
+    case "refunded":
+    case "charged_back":
+      return "reembolsado";
+    default:
+      return "pendente";
+  }
+}
+function descricaoDoAvulso(plano, ciclo) {
+  return `Stok A\xED \u2014 ${DEFINICOES[plano].nome} (${NOME_DO_CICLO[ciclo].toLowerCase()})`;
+}
+async function criarAvulso(args) {
+  const agora = /* @__PURE__ */ new Date();
+  const venceEm = args.metodo === "pix" ? new Date(agora.getTime() + PIX_VALIDADE_HORAS * 36e5) : new Date(agora.getTime() + BOLETO_VALIDADE_DIAS * 24 * 36e5);
+  const descricao = descricaoDoAvulso(args.plano, args.ciclo);
+  await supabaseServer.from("pagamentos").delete().eq("organization_id", args.organizationId).eq("status", "pendente").neq("metodo", "cartao").is("mp_payment_id", null);
+  const { data: pedido, error } = await supabaseServer.from("pagamentos").insert({ organization_id: args.organizationId, metodo: args.metodo, plano: args.plano, ciclo: args.ciclo, valor: args.valor, status: "pendente", descricao, vence_em: venceEm.toISOString(), pagador: args.pagador, data: agora.toISOString() }).select("*").single();
+  if (error) throw error;
+  let pay;
+  try {
+    pay = await criarPagamentoAvulso({ metodo: args.metodo, valor: args.valor, descricao, referencia: `${REF_AVULSO}${pedido.id}`, pagador: args.pagador, venceEm, idempotencia: pedido.id });
+  } catch (e) {
+    await supabaseServer.from("pagamentos").delete().eq("id", pedido.id);
+    throw e;
+  }
+  const { data: atualizado, error: e2 } = await supabaseServer.from("pagamentos").update({ mp_payment_id: String(pay.id), status: traduzirStatusDePagamento(pay.status), detalhe: pay.status_detail ?? null, dados: dadosParaPagar(pay), vence_em: pay.date_of_expiration ?? venceEm.toISOString(), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", pedido.id).select("*").single();
+  if (e2) throw e2;
+  return atualizado;
+}
+async function aplicarPagamentoAvulso(pay) {
+  const ref = String(pay.external_reference ?? "");
+  let { data: pedido } = await supabaseServer.from("pagamentos").select("*").eq("mp_payment_id", String(pay.id)).maybeSingle();
+  if (!pedido && ref.startsWith(REF_AVULSO)) {
+    const r = await supabaseServer.from("pagamentos").select("*").eq("id", ref.slice(REF_AVULSO.length)).maybeSingle();
+    pedido = r.data;
+  }
+  if (!pedido) return { casou: false, organizationId: null, assinatura: null, motivo: `pagamento ${pay.id} n\xE3o \xE9 de um pedido nosso` };
+  const p2 = pedido;
+  const agora = /* @__PURE__ */ new Date();
+  const status = traduzirStatusDePagamento(pay.status);
+  const patch = { mp_payment_id: String(pay.id), status, detalhe: pay.status_detail ?? null, updated_at: agora.toISOString() };
+  if (status === "aprovado" && !p2.periodo_ate && ehPlano(p2.plano) && p2.ciclo) {
+    const { data: org } = await supabaseServer.from("organizations").select("plano, plano_ate, plano_desde").eq("id", p2.organization_id).maybeSingle();
+    const aindaPago = org?.plano === p2.plano && org?.plano_ate && new Date(org.plano_ate).getTime() > agora.getTime();
+    const de = aindaPago ? new Date(org.plano_ate) : agora;
+    const ate = fimDoPeriodo(de, p2.ciclo);
+    patch.periodo_de = de.toISOString();
+    patch.periodo_ate = ate.toISOString();
+    patch.data = pay.date_approved ?? agora.toISOString();
+    patch.nf_status = "pendente";
+    await supabaseServer.from("organizations").update({ plano: p2.plano, plano_desde: org?.plano_desde ?? agora.toISOString(), plano_ate: ate.toISOString(), cobranca: "avulso" }).eq("id", p2.organization_id);
+    esquecerPlano(p2.organization_id);
+  }
+  const { data: atualizado, error } = await supabaseServer.from("pagamentos").update(patch).eq("id", p2.id).select("*").single();
+  if (error) throw error;
+  return { casou: true, organizationId: p2.organization_id, assinatura: null, pagamento: atualizado };
+}
+async function atualizarAvulso(pedido) {
+  if (!pedido.mp_payment_id) return pedido;
+  const pay = await buscarPagamento(pedido.mp_payment_id);
+  const r = await aplicarPagamentoAvulso(pay);
+  return r.casou && "pagamento" in r && r.pagamento ? r.pagamento : pedido;
+}
+async function avulsosPendentes(limite = 100) {
+  const { data: data2, error } = await supabaseServer.from("pagamentos").select("*").eq("status", "pendente").neq("metodo", "cartao").not("mp_payment_id", "is", null).gte("vence_em", new Date(Date.now() - 2 * 24 * 36e5).toISOString()).limit(limite);
+  if (error) throw error;
+  return data2 || [];
+}
+async function avulsoPendente(organizationId) {
+  const { data: data2 } = await supabaseServer.from("pagamentos").select("*").eq("organization_id", organizationId).eq("status", "pendente").neq("metodo", "cartao").not("mp_payment_id", "is", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (!data2) return null;
+  const p2 = data2;
+  if (p2.vence_em && new Date(p2.vence_em).getTime() < Date.now()) return null;
+  return p2;
 }
 async function aplicarPagamentoAutorizado(ap) {
   let { data: assinatura } = await supabaseServer.from("assinaturas").select("*").eq("mp_preapproval_id", ap.preapproval_id).maybeSingle();
@@ -866,6 +1152,9 @@ async function aplicarPagamentoAutorizado(ap) {
   const campos = {
     organization_id: a.organization_id,
     assinatura_id: a.id,
+    metodo: "cartao",
+    plano: a.plano,
+    ciclo: a.ciclo,
     mp_authorized_payment_id: String(ap.id),
     mp_payment_id: ap.payment?.id != null ? String(ap.payment.id) : null,
     status,
@@ -875,19 +1164,24 @@ async function aplicarPagamentoAutorizado(ap) {
     data: ap.debit_date ?? ap.date_created ?? agora,
     updated_at: agora
   };
-  const { error } = await supabaseServer.from("pagamentos").upsert(campos, { onConflict: "mp_authorized_payment_id" });
+  const { data: gravado, error } = await supabaseServer.from("pagamentos").upsert({ ...campos, ...status === "aprovado" ? { nf_status: "pendente" } : {}, pagador: { nome: a.payer_email ?? "", email: a.payer_email ?? "" } }, { onConflict: "mp_authorized_payment_id" }).select("*").maybeSingle();
   if (error) throw error;
   if (status === "aprovado") {
     const pre = await buscarAssinatura(ap.preapproval_id);
     await supabaseServer.from("assinaturas").update({ proxima_cobranca: pre.next_payment_date ?? null, status: traduzirStatus(pre.status), updated_at: agora }).eq("id", a.id);
-    await supabaseServer.from("organizations").update({ plano: a.plano, plano_ate: planoAteDe(pre, a.ciclo) }).eq("id", a.organization_id);
+    await supabaseServer.from("organizations").update({ plano: a.plano, plano_ate: planoAteDe(pre, a.ciclo), cobranca: "cartao" }).eq("id", a.organization_id);
     esquecerPlano(a.organization_id);
   }
-  return { casou: true, organizationId: a.organization_id, assinatura: a };
+  return { casou: true, organizationId: a.organization_id, assinatura: a, pagamento: gravado ?? void 0 };
 }
 async function tratarEvento(tipo, id) {
   if (tipo === "subscription_preapproval") return aplicarPreapproval(await buscarAssinatura(id));
   if (tipo === "subscription_authorized_payment") return aplicarPagamentoAutorizado(await buscarPagamentoAutorizado(id));
+  if (tipo === "payment") {
+    const pay = await buscarPagamento(id);
+    if (String(pay.external_reference ?? "").startsWith(REF_AVULSO)) return aplicarPagamentoAvulso(pay);
+    return { ignorado: true };
+  }
   return { ignorado: true };
 }
 async function registrarEvento(args) {
@@ -896,26 +1190,6 @@ async function registrarEvento(args) {
   } catch (e) {
     console.error("[mp_eventos] n\xE3o gravou:", e.message);
   }
-}
-
-// src/server/mail.ts
-function configuracaoSmtp(env = process.env) {
-  const brevo = Boolean(env.BREVO_SMTP_LOGIN && env.BREVO_SMTP_KEY);
-  const host = env.SMTP_HOST || (brevo ? "smtp-relay.brevo.com" : "");
-  const user = env.SMTP_USER || env.BREVO_SMTP_LOGIN || "";
-  const pass = env.SMTP_PASS || env.BREVO_SMTP_KEY || "";
-  if (!host || !user || !pass) return null;
-  const port = Number(env.SMTP_PORT) || (env.SMTP_HOST ? 465 : 2525);
-  return { host, port, secure: port === 465, auth: { user, pass } };
-}
-function remetente(env = process.env) {
-  return env.SMTP_FROM_EMAIL || env.SMTP_USER || "noreply@stokai.app";
-}
-function destinatarioAdmin(env = process.env) {
-  return env.ADMIN_EMAIL || remetente(env);
-}
-function destinatarioDemo(env = process.env) {
-  return env.DEMO_EMAIL || destinatarioAdmin(env);
 }
 
 // src/server/senha.ts
@@ -964,13 +1238,13 @@ function emailDeRecuperacao(nome, link) {
   };
 }
 function emailDeBoasVindas(nome, empresa, env) {
-  const base = siteUrl2(env);
+  const base2 = siteUrl2(env);
   return {
     subject: `Bem-vindo(a) ao Stok A\xED, ${primeiroNome(nome)}`,
     html: layoutEmail({
       titulo: `${escapeHtml(empresa)} est\xE1 no ar.`,
-      corpo: p(`Ol\xE1, ${escapeHtml(primeiroNome(nome))}. A conta da <strong>${escapeHtml(empresa)}</strong> foi criada e voc\xEA \xE9 o administrador. Ela j\xE1 vem com uma unidade e dois dep\xF3sitos (Central e Obra) prontos.`) + p("Por onde come\xE7ar:") + `<ol style="margin:0 0 12px;padding-left:20px"><li style="margin-bottom:6px"><strong>Materiais</strong> \u2014 cadastre o que a empresa controla, com unidade de medida e estoque m\xEDnimo.</li><li style="margin-bottom:6px"><strong>Usu\xE1rios</strong> \u2014 crie o acesso de quem opera cada dep\xF3sito.</li><li style="margin-bottom:6px"><strong>Movimenta\xE7\xF5es</strong> \u2014 registre entradas, remessas e consumos; o painel faz o resto.</li></ol>` + p(`Voc\xEA entra com este e-mail em <a href="${escapeHtml(base)}/entrar" style="color:${PRODUTO.cor}">${escapeHtml(base.replace(/^https?:\/\//, ""))}/entrar</a>. Esqueceu a senha? Tem "Esqueci minha senha" na tela de login.`),
-      botao: { rotulo: "Abrir o Stok A\xED", url: `${base}/entrar` },
+      corpo: p(`Ol\xE1, ${escapeHtml(primeiroNome(nome))}. A conta da <strong>${escapeHtml(empresa)}</strong> foi criada e voc\xEA \xE9 o <strong>CEO</strong> da conta: \xE9 quem responde por ela, pela cobran\xE7a e por passar a titularidade adiante. Os primeiros ${AVALIACAO_DIAS} dias s\xE3o gr\xE1tis, com tudo liberado.`) + p("Por onde come\xE7ar:") + `<ol style="margin:0 0 12px;padding-left:20px"><li style="margin-bottom:6px"><strong>Materiais</strong> \u2014 cadastre o que a empresa controla, com unidade de medida e estoque m\xEDnimo.</li><li style="margin-bottom:6px"><strong>Usu\xE1rios</strong> \u2014 crie o acesso de quem opera cada dep\xF3sito.</li><li style="margin-bottom:6px"><strong>Movimenta\xE7\xF5es</strong> \u2014 registre entradas, remessas e consumos; o painel faz o resto.</li></ol>` + p(`Voc\xEA entra com este e-mail em <a href="${escapeHtml(base2)}/entrar" style="color:${PRODUTO.cor}">${escapeHtml(base2.replace(/^https?:\/\//, ""))}/entrar</a>. Esqueceu a senha? Tem "Esqueci minha senha" na tela de login.`),
+      botao: { rotulo: "Abrir o Stok A\xED", url: `${base2}/entrar` },
       observacao: "D\xFAvida, sugest\xE3o ou algo que n\xE3o funcionou? Responda este e-mail ou chame no WhatsApp \u2014 quem responde \xE9 gente."
     })
   };
@@ -987,6 +1261,226 @@ function emailDeNovaEmpresa(dados) {
       ]) + p("Vale um oi nas pr\xF3ximas 24 horas: \xE9 quando a pessoa decide se o produto entra na rotina.")
     })
   };
+}
+
+// src/server/lembretes.ts
+var DIA_MS4 = 24 * 60 * 60 * 1e3;
+function precisaLembrar(conta, lembreteEnviadoEm, agora = /* @__PURE__ */ new Date()) {
+  if (conta.dias_restantes === null) return false;
+  if (lembreteEnviadoEm && agora.getTime() - new Date(lembreteEnviadoEm).getTime() < DIA_MS4) return false;
+  if (conta.situacao === "assinada" && conta.renovacao === "manual") return conta.dias_restantes <= LEMBRETE_DIAS;
+  if (conta.situacao === "carencia") return true;
+  if (conta.situacao === "avaliacao") return conta.dias_restantes <= 2;
+  return false;
+}
+async function contasParaLembrar(agora = /* @__PURE__ */ new Date()) {
+  const { data: orgs, error } = await supabaseServer.from("organizations").select("id, nome, plano, plano_ate, avaliacao_ate, cobranca, lembrete_enviado_em, ativo").eq("ativo", true);
+  if (error) throw error;
+  const lista = [];
+  for (const o of orgs || []) {
+    const conta = situacaoDaConta(o, agora);
+    if (!precisaLembrar(conta, o.lembrete_enviado_em, agora)) continue;
+    const { data: pessoas } = await supabaseServer.from("estoque_users").select("email, role").eq("organization_id", o.id).in("role", ["CEO", "ADMINISTRADOR", "ADMINISTRATIVO"]).eq("ativo", true);
+    const valido2 = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || "").trim().toLowerCase());
+    const doCeo = (pessoas || []).filter((p2) => p2.role === "CEO" && valido2(p2.email)).map((p2) => String(p2.email).trim().toLowerCase());
+    const emails = doCeo.length > 0 ? doCeo : (pessoas || []).filter((p2) => valido2(p2.email)).map((p2) => String(p2.email).trim().toLowerCase());
+    if (emails.length === 0) continue;
+    lista.push({ organizationId: o.id, nome: o.nome, conta, emails });
+  }
+  return lista;
+}
+async function marcarLembrete(organizationId, agora = /* @__PURE__ */ new Date()) {
+  await supabaseServer.from("organizations").update({ lembrete_enviado_em: agora.toISOString() }).eq("id", organizationId);
+}
+var fmtData = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "America/Sao_Paulo" });
+function emailDeLembrete(c, env) {
+  const base2 = siteUrl2(env);
+  const ate = c.conta.ate ? fmtData.format(new Date(c.conta.ate)) : "";
+  const dias2 = c.conta.dias_restantes ?? 0;
+  const quando = dias2 === 0 ? "hoje" : dias2 === 1 ? "amanh\xE3" : `em ${dias2} dias`;
+  const empresa = escapeHtml(c.nome);
+  if (c.conta.situacao === "avaliacao") {
+    return {
+      subject: `Seus dias gr\xE1tis no Stok A\xED terminam ${quando}`,
+      html: layoutEmail({
+        titulo: `A avalia\xE7\xE3o da ${empresa} termina ${quando}.`,
+        corpo: p(`At\xE9 <strong>${ate}</strong> a conta tem tudo liberado. Depois disso ela pede um plano para continuar \u2014 nada \xE9 apagado: materiais, estoques e hist\xF3rico ficam guardados.`) + p("D\xE1 para assinar com cart\xE3o (cobran\xE7a autom\xE1tica) ou pagar o per\xEDodo por Pix ou boleto, em Configura\xE7\xF5es \u2192 Plano e assinatura."),
+        botao: { rotulo: "Escolher um plano", url: `${base2}/` }
+      })
+    };
+  }
+  if (c.conta.situacao === "carencia") {
+    return {
+      subject: `Stok A\xED: pagamento pendente \u2014 a conta da ${c.nome} trava ${quando}`,
+      html: layoutEmail({
+        titulo: `O pagamento do plano ${NOME_DO_PLANO[c.conta.plano]} n\xE3o foi confirmado.`,
+        corpo: p(`A conta continua funcionando at\xE9 <strong>${ate}</strong>. Depois disso ela trava at\xE9 o pagamento entrar \u2014 sem apagar nada.`) + p("Se paga por cart\xE3o, confira com o banco; se paga por Pix ou boleto, gere um novo em Configura\xE7\xF5es \u2192 Plano e assinatura."),
+        botao: { rotulo: "Regularizar agora", url: `${base2}/` }
+      })
+    };
+  }
+  return {
+    subject: `Stok A\xED: o plano da ${c.nome} vence ${quando}`,
+    html: layoutEmail({
+      titulo: `O plano ${NOME_DO_PLANO[c.conta.plano]} vence ${quando} (${ate}).`,
+      corpo: p("Como o pagamento \xE9 por Pix ou boleto, a renova\xE7\xE3o \xE9 manual: gere o pagamento do pr\xF3ximo per\xEDodo em Configura\xE7\xF5es \u2192 Plano e assinatura. Pagando antes de vencer, o per\xEDodo novo come\xE7a onde o atual termina \u2014 nada se perde.") + p(`Depois do vencimento a conta ainda funciona por 2 dias; ent\xE3o trava at\xE9 o pagamento entrar.`),
+      botao: { rotulo: "Renovar o plano", url: `${base2}/` }
+    })
+  };
+}
+
+// src/server/evolution.ts
+function evolutionConfigurada(env = process.env) {
+  return Boolean(env.EVOLUTION_URL && env.EVOLUTION_API_KEY && env.EVOLUTION_INSTANCE);
+}
+function base(env) {
+  return (env.EVOLUTION_URL ?? "").replace(/\/+$/, "");
+}
+async function evo(caminho, init2 = {}, env = process.env) {
+  if (!evolutionConfigurada(env)) throw new Error("Evolution API n\xE3o configurada (EVOLUTION_URL, EVOLUTION_API_KEY, EVOLUTION_INSTANCE).");
+  const r = await fetch(`${base(env)}${caminho}`, {
+    ...init2,
+    headers: { apikey: env.EVOLUTION_API_KEY, "Content-Type": "application/json", ...init2.headers }
+  });
+  const texto6 = await r.text();
+  let corpo = null;
+  try {
+    corpo = texto6 ? JSON.parse(texto6) : null;
+  } catch {
+    corpo = { raw: texto6 };
+  }
+  if (!r.ok) throw new Error(`Evolution ${init2.method ?? "GET"} ${caminho}: ${corpo?.response?.message ?? corpo?.message ?? corpo?.error ?? `HTTP ${r.status}`}`);
+  return corpo;
+}
+function normalizarTelefone(v) {
+  const d = String(v ?? "").replace(/\D/g, "");
+  if (!d) return null;
+  const comDdi = d.length <= 11 ? `55${d}` : d;
+  return /^\d{12,15}$/.test(comDdi) ? comDdi : null;
+}
+function variantesDoTelefone(telefone) {
+  const m = /^55(\d{2})(\d{8,9})$/.exec(telefone);
+  if (!m) return [telefone];
+  const [, ddd, local] = m;
+  if (local.length === 9 && local.startsWith("9")) return [telefone, `55${ddd}${local.slice(1)}`];
+  if (local.length === 8) return [telefone, `55${ddd}9${local}`];
+  return [telefone];
+}
+async function enviarTexto(telefone, texto6, instancia, env = process.env) {
+  const inst = instancia || env.EVOLUTION_INSTANCE;
+  await evo(`/message/sendText/${encodeURIComponent(inst)}`, { method: "POST", body: JSON.stringify({ number: telefone, text: texto6 }) }, env);
+}
+async function estadoDaInstancia(instancia, env = process.env) {
+  const inst = instancia || env.EVOLUTION_INSTANCE;
+  const r = await evo(`/instance/connectionState/${encodeURIComponent(inst)}`, {}, env);
+  return r.instance?.state ?? r.state ?? "desconhecido";
+}
+function lerEvento(body) {
+  if (!body || typeof body !== "object") return null;
+  const evento = String(body.event ?? "").toLowerCase().replace(/_/g, ".");
+  if (evento !== "messages.upsert") return null;
+  const dados = Array.isArray(body.data) ? body.data[0] : body.data;
+  if (!dados?.key) return null;
+  if (dados.key.fromMe) return null;
+  const jid = String(dados.key.remoteJid ?? "");
+  if (!jid.endsWith("@s.whatsapp.net")) return null;
+  const telefone = normalizarTelefone(jid.split("@")[0]);
+  if (!telefone) return null;
+  const m = dados.message ?? {};
+  let texto6 = null;
+  let tipo = "outro";
+  if (typeof m.conversation === "string") {
+    texto6 = m.conversation;
+    tipo = "texto";
+  } else if (m.extendedTextMessage?.text) {
+    texto6 = String(m.extendedTextMessage.text);
+    tipo = "texto";
+  } else if (m.imageMessage) {
+    texto6 = m.imageMessage.caption ? String(m.imageMessage.caption) : null;
+    tipo = "imagem";
+  } else if (m.audioMessage) {
+    tipo = "audio";
+  } else if (m.documentMessage) {
+    texto6 = m.documentMessage.caption ? String(m.documentMessage.caption) : null;
+    tipo = "documento";
+  }
+  return { instancia: String(body.instance ?? ""), telefone, nome: dados.pushName ? String(dados.pushName) : null, texto: texto6?.trim() || null, tipo, idMensagem: dados.key.id ? String(dados.key.id) : null };
+}
+
+// src/server/claude.ts
+var MODELO_PADRAO = "claude-sonnet-5";
+function chave(env) {
+  return String(env.ANTHROPIC_API_KEY ?? "").trim();
+}
+function claudeConfigurado(env = process.env) {
+  return chave(env) !== "";
+}
+async function chamar(args) {
+  const modelo = args.env.ASSISTENTE_MODELO || MODELO_PADRAO;
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": chave(args.env), "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: modelo, max_tokens: args.maxTokens, system: args.system, messages: args.messages, tools: args.tools.length ? args.tools : void 0 })
+  });
+  const corpo = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(`Anthropic ${r.status}: ${corpo?.error?.message ?? "falha"}`);
+  return corpo;
+}
+async function conversar(args) {
+  const env = args.env ?? process.env;
+  if (!claudeConfigurado(env)) throw new Error("ANTHROPIC_API_KEY n\xE3o configurada.");
+  const messages = [...args.historico];
+  const uso = { tokens_entrada: 0, tokens_saida: 0, modelo: env.ASSISTENTE_MODELO || MODELO_PADRAO };
+  const chamadas = [];
+  let texto6 = "";
+  for (let rodada = 0; rodada < (args.maxRodadas ?? 6); rodada++) {
+    const resposta = await chamar({ system: args.system, messages, tools: args.tools, env, maxTokens: args.maxTokens ?? 700 });
+    uso.tokens_entrada += resposta.usage?.input_tokens ?? 0;
+    uso.tokens_saida += resposta.usage?.output_tokens ?? 0;
+    if (resposta.model) uso.modelo = resposta.model;
+    const textos = resposta.content.filter((b) => b.type === "text").map((b) => b.text.trim()).filter(Boolean);
+    const usos = resposta.content.filter((b) => b.type === "tool_use");
+    if (textos.length) texto6 = textos.join("\n");
+    if (resposta.stop_reason !== "tool_use" || usos.length === 0) break;
+    messages.push({ role: "assistant", content: resposta.content });
+    const resultados = [];
+    for (const u of usos) {
+      let saida;
+      let erro = false;
+      try {
+        saida = await args.executar(u.name, u.input ?? {});
+      } catch (e) {
+        saida = `Erro: ${e.message}`;
+        erro = true;
+      }
+      chamadas.push({ name: u.name, input: u.input ?? {}, resultado: saida });
+      resultados.push({ type: "tool_result", tool_use_id: u.id, content: saida, is_error: erro || void 0 });
+    }
+    messages.push({ role: "user", content: resultados });
+  }
+  return { texto: texto6, uso, chamadas };
+}
+
+// src/server/assistente.ts
+import bcrypt from "bcryptjs";
+
+// src/server/acessos.ts
+function ehAdmin(role) {
+  return ADMIN_ROLES.includes(role);
+}
+async function acessosDoUsuario(db, userId, role) {
+  if (ehAdmin(role)) return null;
+  const { data: data2, error } = await db.from("estoque_user_warehouses").select("warehouse_id, nivel").eq("user_id", userId);
+  if (error) throw error;
+  const mapa = /* @__PURE__ */ new Map();
+  for (const a of data2 || []) mapa.set(a.warehouse_id, a.nivel);
+  return mapa;
+}
+function podeVer(acessos, warehouseId) {
+  return acessos === null || acessos.has(warehouseId);
+}
+function podeOperar(acessos, warehouseId) {
+  return acessos === null || acessos.get(warehouseId) === "OPERA";
 }
 
 // src/server/estoque.ts
@@ -1095,35 +1589,35 @@ function depositosDaUnidade(depositos, unitId) {
 async function depositosDaOrg(db, opcoes = {}) {
   let q = db.from("warehouses").select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade, units!inner(ativo)").eq("ativo", true);
   if (!opcoes.incluirUnidadesInativas) q = q.eq("units.ativo", true);
-  const { data, error } = await q.order("nome", { ascending: true });
+  const { data: data2, error } = await q.order("nome", { ascending: true });
   if (error) throw error;
-  return (data || []).map(({ units, ...d }) => d);
+  return (data2 || []).map(({ units, ...d }) => d);
 }
 async function unidadesDaOrg(db) {
-  const { data, error } = await db.from("units").select("id, nome, slug, ativo").order("nome", { ascending: true });
+  const { data: data2, error } = await db.from("units").select("id, nome, slug, ativo").order("nome", { ascending: true });
   if (error) throw error;
-  return data || [];
+  return data2 || [];
 }
 async function saldosDaOrg(db) {
   const porMaterial = /* @__PURE__ */ new Map();
   const PAGINA = 1e3;
   for (let de = 0; ; de += PAGINA) {
-    const { data, error } = await db.from("stock_balances").select("material_id, warehouse_id, saldo").range(de, de + PAGINA - 1);
+    const { data: data2, error } = await db.from("stock_balances").select("material_id, warehouse_id, saldo").range(de, de + PAGINA - 1);
     if (error) throw error;
-    for (const linha of data || []) {
+    for (const linha of data2 || []) {
       const atual = porMaterial.get(linha.material_id) || {};
       atual[linha.warehouse_id] = Number(linha.saldo);
       porMaterial.set(linha.material_id, atual);
     }
-    if (!data || data.length < PAGINA) break;
+    if (!data2 || data2.length < PAGINA) break;
   }
   return porMaterial;
 }
 async function saldosDoMaterial(db, materialId) {
-  const { data, error } = await db.from("stock_balances").select("warehouse_id, saldo").eq("material_id", materialId);
+  const { data: data2, error } = await db.from("stock_balances").select("warehouse_id, saldo").eq("material_id", materialId);
   if (error) throw error;
   const saldos = {};
-  for (const linha of data || []) saldos[linha.warehouse_id] = Number(linha.saldo);
+  for (const linha of data2 || []) saldos[linha.warehouse_id] = Number(linha.saldo);
   return saldos;
 }
 async function gravarSaldos(db, materialId, novos) {
@@ -1141,30 +1635,693 @@ function totalDosDepositos(saldos) {
   return arredondar(Object.values(saldos).reduce((s, v) => s + Number(v), 0));
 }
 
-// src/server/acessos.ts
-function ehAdmin(role) {
-  return ADMIN_ROLES.includes(role);
+// src/shared/cotacoes.ts
+var moeda = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+function formatarMoeda(v) {
+  return v === null || v === void 0 || !Number.isFinite(v) ? "\u2014" : moeda.format(v);
 }
-async function acessosDoUsuario(db, userId, role) {
-  if (ehAdmin(role)) return null;
-  const { data, error } = await db.from("estoque_user_warehouses").select("warehouse_id, nivel").eq("user_id", userId);
-  if (error) throw error;
-  const mapa = /* @__PURE__ */ new Map();
-  for (const a of data || []) mapa.set(a.warehouse_id, a.nivel);
-  return mapa;
+function qtd(v) {
+  return Number.isInteger(v) ? String(v) : v.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
 }
-function podeVer(acessos, warehouseId) {
-  return acessos === null || acessos.has(warehouseId);
+function listarItens(itens) {
+  return itens.map((i) => `${i.n}) ${qtd(i.quantidade)} ${i.unidade} \u2014 ${i.descricao}`).join("\n");
 }
-function podeOperar(acessos, warehouseId) {
-  return acessos === null || acessos.get(warehouseId) === "OPERA";
+function mensagemDeCotacao(args) {
+  const linhas = [
+    `Ol\xE1${args.contato ? `, ${args.contato}` : ""}! \u{1F44B}`,
+    `Aqui \xE9 o assistente de compras da ${args.empresa} (pelo Stok A\xED).`,
+    "",
+    `Precisamos de cota\xE7\xE3o para "${args.titulo}":`,
+    listarItens(args.itens),
+    ""
+  ];
+  if (args.entrega) linhas.push(`Entrega em: ${args.entrega}`);
+  if (args.observacoes) linhas.push(args.observacoes);
+  if (args.entrega || args.observacoes) linhas.push("");
+  linhas.push("Pode responder por aqui com o pre\xE7o unit\xE1rio de cada item (pelo n\xFAmero) e o prazo de entrega? Obrigado!");
+  return linhas.join("\n");
+}
+function totalDaResposta(itens, precos) {
+  let total = 0;
+  let itensCotados = 0;
+  for (const item of itens) {
+    const p2 = precos.find((x) => x.n === item.n);
+    if (!p2 || !p2.disponivel || p2.preco_unitario === null) continue;
+    total += item.quantidade * p2.preco_unitario;
+    itensCotados += 1;
+  }
+  return { total: Math.round(total * 100) / 100, itensCotados };
+}
+function mensagemDePedido(args) {
+  const linhas = [];
+  let total = 0;
+  for (const item of args.itens) {
+    const p2 = args.precos.find((x) => x.n === item.n);
+    if (!p2 || !p2.disponivel || p2.preco_unitario === null) continue;
+    const sub = item.quantidade * p2.preco_unitario;
+    total += sub;
+    linhas.push(`${item.n}) ${qtd(item.quantidade)} ${item.unidade} \u2014 ${item.descricao} \u2014 ${formatarMoeda(p2.preco_unitario)} = ${formatarMoeda(sub)}`);
+  }
+  const partes = [
+    `Ol\xE1${args.contato ? `, ${args.contato}` : ""}! A ${args.empresa} fechou o pedido "${args.titulo}" com voc\xEAs: \u2705`,
+    "",
+    ...linhas,
+    `Total: ${formatarMoeda(Math.round(total * 100) / 100)}`,
+    ""
+  ];
+  if (args.entrega) partes.push(`Entrega em: ${args.entrega}`);
+  partes.push(`Por favor, entregue com a nota fiscal em nome da ${args.empresa}.`);
+  if (args.observacoes) partes.push(args.observacoes);
+  partes.push("", "Qualquer d\xFAvida, responda por aqui. Obrigado!");
+  return partes.join("\n");
 }
 
-// src/server/app.ts
-var ESTOQUE_USERS = "estoque_users";
-var JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error("[Server] JWT_SECRET n\xE3o definido \u2014 configure essa vari\xE1vel de ambiente antes de subir o servidor.");
+// src/server/cotacoes.ts
+async function fornecedorPeloTelefone(telefone, instancia) {
+  const { data: fornecedores } = await supabaseServer.from("fornecedores").select("id, nome, contato, whatsapp, organization_id, organizations(nome, whatsapp_instancia)").in("whatsapp", variantesDoTelefone(telefone)).eq("ativo", true);
+  if (!fornecedores?.length) return null;
+  const candidatos = fornecedores.filter((f2) => !instancia || !f2.organizations?.whatsapp_instancia || f2.organizations.whatsapp_instancia === instancia);
+  if (!candidatos.length) return null;
+  const { data: respostas } = await supabaseServer.from("cotacao_fornecedores").select("cotacao_id, fornecedor_id, status, precos, conversa, enviada_em, cotacoes!inner(id, titulo, itens, entrega, criado_por, status)").in("fornecedor_id", candidatos.map((f2) => f2.id)).in("status", ["enviada", "respondida", "sem_estoque", "pedido"]).in("cotacoes.status", ["aberta", "encerrada"]).order("enviada_em", { ascending: false }).limit(5);
+  const lista = respostas ?? [];
+  const r = lista.find((x) => x.cotacoes.status === "aberta") ?? lista[0];
+  if (!r) return null;
+  const f = candidatos.find((x) => x.id === r.fornecedor_id);
+  return {
+    fornecedor: { id: f.id, nome: f.nome, contato: f.contato, whatsapp: f.whatsapp },
+    organization_id: f.organization_id,
+    organizacao: f.organizations?.nome ?? "a empresa",
+    cotacao: { id: r.cotacoes.id, titulo: r.cotacoes.titulo, itens: r.cotacoes.itens ?? [], entrega: r.cotacoes.entrega, criado_por: r.cotacoes.criado_por },
+    resposta: { status: r.status, precos: Array.isArray(r.precos) ? r.precos : [], conversa: Array.isArray(r.conversa) ? r.conversa : [] },
+    instancia: f.organizations?.whatsapp_instancia ?? null
+  };
+}
+async function enviarCotacao(organizationId, empresa, cotacao, instancia, apenas) {
+  const db = scopedDb(organizationId);
+  let q = db.from("cotacao_fornecedores").select("fornecedor_id, status, conversa, fornecedores(nome, contato, whatsapp)").eq("cotacao_id", cotacao.id).in("status", ["pendente", "erro", "enviada"]);
+  if (apenas?.length) q = q.in("fornecedor_id", apenas);
+  const { data: linhas } = await q;
+  let enviados = 0;
+  let falhas = 0;
+  for (const linha of linhas ?? []) {
+    const f = linha.fornecedores;
+    const texto6 = mensagemDeCotacao({ empresa, contato: f.contato, titulo: cotacao.titulo, itens: cotacao.itens, entrega: cotacao.entrega, observacoes: cotacao.observacoes });
+    const conversa = Array.isArray(linha.conversa) ? linha.conversa : [];
+    try {
+      await enviarTexto(f.whatsapp, texto6, instancia);
+      conversa.push({ de: "nos", texto: texto6, em: (/* @__PURE__ */ new Date()).toISOString() });
+      await db.from("cotacao_fornecedores").update({ status: "enviada", enviada_em: (/* @__PURE__ */ new Date()).toISOString(), erro: null, conversa }).eq("cotacao_id", cotacao.id).eq("fornecedor_id", linha.fornecedor_id);
+      enviados += 1;
+    } catch (e) {
+      await db.from("cotacao_fornecedores").update({ status: "erro", erro: String(e.message).slice(0, 300) }).eq("cotacao_id", cotacao.id).eq("fornecedor_id", linha.fornecedor_id);
+      falhas += 1;
+    }
+  }
+  return { enviados, falhas };
+}
+var FERRAMENTAS = [
+  {
+    name: "registrar_precos",
+    description: 'Registra o que o fornecedor informou, item por item (pelo n\xFAmero do item). Chame sempre que a mensagem trouxer pre\xE7o, prazo ou "n\xE3o tenho" de algum item. Pode chamar com s\xF3 os itens mencionados; os outros ficam como estavam.',
+    input_schema: {
+      type: "object",
+      properties: {
+        itens: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              n: { type: "integer", description: "N\xFAmero do item na lista" },
+              preco_unitario: { type: "number", description: "Pre\xE7o por unidade, em reais. Se o fornecedor deu o total do item, divida pela quantidade." },
+              disponivel: { type: "boolean", description: "false se ele disse que n\xE3o tem / n\xE3o trabalha com o item" },
+              prazo: { type: "string", description: 'Prazo de entrega como ele disse ("2 dias", "sexta")' },
+              observacao: { type: "string", description: "Condi\xE7\xE3o relevante: marca, m\xEDnimo, pagamento, frete" }
+            },
+            required: ["n"]
+          }
+        }
+      },
+      required: ["itens"]
+    }
+  }
+];
+function precosAtuais(itens, precos) {
+  return itens.map((i) => {
+    const p2 = precos.find((x) => x.n === i.n);
+    if (!p2) return `${i.n}) ${i.descricao}: sem resposta`;
+    if (!p2.disponivel) return `${i.n}) ${i.descricao}: n\xE3o tem`;
+    return `${i.n}) ${i.descricao}: ${p2.preco_unitario === null ? "sem pre\xE7o" : formatarMoeda(p2.preco_unitario) + "/" + i.unidade}${p2.prazo ? `, prazo ${p2.prazo}` : ""}`;
+  }).join("\n");
+}
+function systemPromptDoFornecedor(ctx) {
+  return [
+    `Voc\xEA \xE9 o assistente de compras da ${ctx.organizacao}, falando pelo WhatsApp com o fornecedor ${ctx.fornecedor.nome}${ctx.fornecedor.contato ? ` (${ctx.fornecedor.contato})` : ""} sobre a cota\xE7\xE3o "${ctx.cotacao.titulo}".`,
+    `Itens pedidos:
+${listarItens(ctx.cotacao.itens)}`,
+    `O que j\xE1 est\xE1 registrado:
+${precosAtuais(ctx.cotacao.itens, ctx.resposta.precos)}`,
+    'Sua \xFAnica tarefa: quando ele informar pre\xE7o, prazo ou "n\xE3o tenho", registrar com registrar_precos (pelo n\xFAmero do item). Depois responda curto e educado, em portugu\xEAs do Brasil, como uma mensagem de WhatsApp de 1 a 3 linhas.',
+    "Se ainda faltar pre\xE7o de algum item, agrade\xE7a e pergunte s\xF3 o que falta, citando o n\xFAmero. Se estiver tudo respondido, agrade\xE7a e diga que a empresa vai avaliar e retorna por aqui.",
+    "Voc\xEA N\xC3O negocia, N\xC3O aceita nem recusa pre\xE7o, N\xC3O confirma compra, N\xC3O inventa dado. Se ele perguntar algo que voc\xEA n\xE3o sabe (pagamento, CNPJ, endere\xE7o exato, quantidade diferente), diga que a empresa retorna com isso.",
+    "Se a mensagem n\xE3o for sobre a cota\xE7\xE3o, responda em uma linha e volte ao assunto."
+  ].join("\n");
+}
+async function responderFornecedor(ctx, texto6, tipo) {
+  const db = scopedDb(ctx.organization_id);
+  const conversa = [...ctx.resposta.conversa];
+  let precos = [...ctx.resposta.precos];
+  let resposta;
+  let avisar = false;
+  if (tipo !== "texto" || !texto6) {
+    conversa.push({ de: "fornecedor", texto: `[${tipo}]`, em: (/* @__PURE__ */ new Date()).toISOString() });
+    resposta = tipo === "imagem" || tipo === "documento" ? "Obrigado! Por aqui ainda n\xE3o consigo ler imagens e arquivos \u2014 pode me passar os pre\xE7os em texto, pelo n\xFAmero de cada item?" : "Pode escrever os pre\xE7os em texto, pelo n\xFAmero de cada item? Obrigado!";
+  } else if (ctx.resposta.status === "pedido") {
+    conversa.push({ de: "fornecedor", texto: texto6, em: (/* @__PURE__ */ new Date()).toISOString() });
+    resposta = `Obrigado! J\xE1 repassei para a ${ctx.organizacao}.`;
+    avisar = true;
+  } else {
+    conversa.push({ de: "fornecedor", texto: texto6, em: (/* @__PURE__ */ new Date()).toISOString() });
+    if (!claudeConfigurado()) {
+      resposta = "Obrigado! A empresa vai avaliar e retorna por aqui.";
+    } else {
+      const historico = conversa.slice(-10).map((f) => ({ role: f.de === "nos" ? "assistant" : "user", content: f.texto }));
+      while (historico.length && historico[0].role === "assistant") historico.shift();
+      try {
+        const r = await conversar({
+          system: systemPromptDoFornecedor(ctx),
+          historico,
+          tools: FERRAMENTAS,
+          maxTokens: 400,
+          executar: async (name, input) => {
+            if (name !== "registrar_precos") return "Ferramenta desconhecida.";
+            const lidos = Array.isArray(input.itens) ? input.itens : [];
+            for (const it of lidos) {
+              const n = Number(it.n);
+              if (!ctx.cotacao.itens.some((i) => i.n === n)) continue;
+              const preco = it.preco_unitario === void 0 || it.preco_unitario === null ? null : Number(it.preco_unitario);
+              const novo = {
+                n,
+                preco_unitario: preco !== null && Number.isFinite(preco) && preco >= 0 ? Math.round(preco * 100) / 100 : null,
+                disponivel: it.disponivel === void 0 ? true : Boolean(it.disponivel),
+                prazo: it.prazo ? String(it.prazo).slice(0, 80) : null,
+                observacao: it.observacao ? String(it.observacao).slice(0, 200) : null
+              };
+              precos = [...precos.filter((p2) => p2.n !== n), novo].sort((a, b) => a.n - b.n);
+              avisar = true;
+            }
+            return `Registrado. Situa\xE7\xE3o agora:
+${precosAtuais(ctx.cotacao.itens, precos)}`;
+          }
+        });
+        resposta = r.texto || "Obrigado! A empresa vai avaliar e retorna por aqui.";
+      } catch (e) {
+        console.error("[cotacao] IA:", e.message);
+        resposta = "Obrigado! Recebi sua mensagem; a empresa vai avaliar e retorna por aqui.";
+      }
+    }
+  }
+  conversa.push({ de: "nos", texto: resposta, em: (/* @__PURE__ */ new Date()).toISOString() });
+  const { total, itensCotados } = totalDaResposta(ctx.cotacao.itens, precos);
+  if (ctx.resposta.status === "pedido") {
+    await db.from("cotacao_fornecedores").update({ conversa: conversa.slice(-30) }).eq("cotacao_id", ctx.cotacao.id).eq("fornecedor_id", ctx.fornecedor.id);
+    return { texto: resposta, precos, total: itensCotados > 0 ? total : null, status: "pedido", avisar, recado: texto6 ?? `[${tipo}]` };
+  }
+  const semNada = precos.length > 0 && precos.every((p2) => !p2.disponivel);
+  const status = semNada ? "sem_estoque" : precos.length > 0 ? "respondida" : "enviada";
+  await db.from("cotacao_fornecedores").update({ precos, total: itensCotados > 0 ? total : null, status, respondida_em: precos.length > 0 ? (/* @__PURE__ */ new Date()).toISOString() : null, conversa: conversa.slice(-30) }).eq("cotacao_id", ctx.cotacao.id).eq("fornecedor_id", ctx.fornecedor.id);
+  return { texto: resposta, precos, total: itensCotados > 0 ? total : null, status, avisar };
+}
+async function avisarQuemPediu(ctx, r) {
+  if (!ctx.cotacao.criado_por) return;
+  const { data: u } = await supabaseServer.from("estoque_users").select("whatsapp").eq("id", ctx.cotacao.criado_por).maybeSingle();
+  if (!u?.whatsapp) return;
+  const { itensCotados } = totalDaResposta(ctx.cotacao.itens, r.precos);
+  const texto6 = r.status === "pedido" ? `\u{1F4AC} ${ctx.fornecedor.nome}, sobre o pedido "${ctx.cotacao.titulo}": "${(r.recado ?? "").slice(0, 500)}"` : r.status === "sem_estoque" ? `\u{1F4E9} ${ctx.fornecedor.nome} respondeu a cota\xE7\xE3o "${ctx.cotacao.titulo}": n\xE3o tem os itens.` : `\u{1F4E9} ${ctx.fornecedor.nome} respondeu a cota\xE7\xE3o "${ctx.cotacao.titulo}": ${itensCotados} de ${ctx.cotacao.itens.length} item(ns), total ${formatarMoeda(r.total)}. Compare em Compras \u2192 Cota\xE7\xF5es.`;
+  try {
+    await enviarTexto(u.whatsapp, texto6, ctx.instancia);
+  } catch (e) {
+    console.error("[cotacao] aviso:", e.message);
+  }
+}
+async function fecharPedido(organizationId, empresa, cotacaoId, fornecedorId, observacoes, instancia) {
+  const db = scopedDb(organizationId);
+  const { data: c } = await db.from("cotacoes").select("id, titulo, itens, entrega, status").eq("id", cotacaoId).maybeSingle();
+  if (!c) throw new Error("Cota\xE7\xE3o n\xE3o encontrada.");
+  if (c.status !== "aberta") throw new Error("Esta cota\xE7\xE3o j\xE1 foi encerrada.");
+  const { data: linha } = await db.from("cotacao_fornecedores").select("status, precos, conversa, fornecedores(nome, contato, whatsapp)").eq("cotacao_id", cotacaoId).eq("fornecedor_id", fornecedorId).maybeSingle();
+  if (!linha) throw new Error("Este fornecedor n\xE3o est\xE1 nesta cota\xE7\xE3o.");
+  const precos = Array.isArray(linha.precos) ? linha.precos : [];
+  const { total, itensCotados } = totalDaResposta(c.itens ?? [], precos);
+  if (itensCotados === 0) throw new Error("Este fornecedor ainda n\xE3o passou pre\xE7o.");
+  const f = linha.fornecedores;
+  const texto6 = mensagemDePedido({ empresa, contato: f.contato, titulo: c.titulo, itens: c.itens ?? [], precos, entrega: c.entrega, observacoes });
+  await enviarTexto(f.whatsapp, texto6, instancia);
+  const conversa = Array.isArray(linha.conversa) ? linha.conversa : [];
+  conversa.push({ de: "nos", texto: texto6, em: (/* @__PURE__ */ new Date()).toISOString() });
+  const agora = (/* @__PURE__ */ new Date()).toISOString();
+  await db.from("cotacao_fornecedores").update({ status: "pedido", conversa: conversa.slice(-30) }).eq("cotacao_id", cotacaoId).eq("fornecedor_id", fornecedorId);
+  await db.from("cotacoes").update({ status: "encerrada", encerrada_em: agora, pedido: { fornecedor_id: fornecedorId, total, enviado_em: agora } }).eq("id", cotacaoId);
+  return { texto: texto6, total };
+}
+
+// src/server/assistente.ts
+var OPERACOES_WHATSAPP = ["SAIDA", "CONSUMO", "TRANSFERENCIA", "ENTRADA", "DEVOLUCAO"];
+var NOME_DA_OPERACAO_WHATSAPP = { SAIDA: "sa\xEDda", CONSUMO: "consumo", TRANSFERENCIA: "transfer\xEAncia", ENTRADA: "entrada", DEVOLUCAO: "devolu\xE7\xE3o de empr\xE9stimo" };
+function operacoesPadrao(role) {
+  return ehAdmin(role) ? ["SAIDA", "CONSUMO", "TRANSFERENCIA", "ENTRADA", "DEVOLUCAO"] : ["SAIDA", "CONSUMO", "TRANSFERENCIA", "DEVOLUCAO"];
+}
+function ehOperacaoWhatsapp(s) {
+  return typeof s === "string" && OPERACOES_WHATSAPP.includes(s);
+}
+function operacoesDoUsuario(role, lista) {
+  if (!Array.isArray(lista)) return operacoesPadrao(role);
+  return lista.filter(ehOperacaoWhatsapp);
+}
+function lerConfirmacao(texto6) {
+  const t = texto6.trim().toLowerCase();
+  const m = t.match(/^(sim|s|confirmo|confirmar|ok|pode|isso)(?:[\s,.]+(\d{4,6}))?[.!]*$/);
+  if (m) return { confirma: true, nega: false, pin: m[2] ?? null };
+  if (/^(n[aã]o|n|cancela|cancelar|deixa|esquece|para)[.!]*$/.test(t)) return { confirma: false, nega: true, pin: null };
+  return { confirma: false, nega: false, pin: null };
+}
+async function falantePeloTelefone(telefone) {
+  const { data: data2 } = await supabaseServer.from("estoque_users").select("id, nome, matricula, role, organization_id, whatsapp_operacoes, whatsapp_pin, ativo, organizations(nome)").in("whatsapp", variantesDoTelefone(telefone)).limit(1).maybeSingle();
+  if (!data2 || data2.ativo === false) return null;
+  return {
+    id: Number(data2.id),
+    nome: data2.nome,
+    matricula: data2.matricula,
+    role: data2.role,
+    organization_id: data2.organization_id,
+    organizacao: data2.organizations?.nome ?? "sua empresa",
+    operacoes: operacoesDoUsuario(data2.role, data2.whatsapp_operacoes),
+    temPin: Boolean(data2.whatsapp_pin),
+    pinHash: data2.whatsapp_pin ?? null
+  };
+}
+async function montarContexto(falante) {
+  const db = scopedDb(falante.organization_id);
+  const [acessos, todos, unidades, saldos, materiaisRes] = await Promise.all([
+    acessosDoUsuario(db, falante.id, falante.role),
+    depositosDaOrg(db),
+    unidadesDaOrg(db),
+    saldosDaOrg(db),
+    db.from("materials").select("id, nome, unidade_medida, estoque_minimo").order("nome")
+  ]);
+  const depositos = todos.filter((d) => d.ativo && podeVer(acessos, d.id));
+  const visiveis = new Set(depositos.map((d) => d.id));
+  const materiais = (materiaisRes.data || []).map((m) => {
+    const s = saldos.get(m.id) || {};
+    return { id: m.id, nome: m.nome, unidade_medida: m.unidade_medida, estoque_minimo: Number(m.estoque_minimo), saldos: Object.fromEntries(Object.entries(s).filter(([id]) => visiveis.has(id))) };
+  });
+  return { db, falante, acessos, depositos, unidades: unidades.map((u) => ({ id: u.id, nome: u.nome })), materiais };
+}
+function normalizar(s) {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+}
+function acharMateriais(lista, busca) {
+  const palavras = normalizar(busca).split(/\s+/).filter(Boolean);
+  if (!palavras.length) return [];
+  const exato = lista.filter((m) => normalizar(m.nome) === normalizar(busca));
+  if (exato.length) return exato;
+  return lista.filter((m) => {
+    const n = normalizar(m.nome);
+    return palavras.every((p2) => n.includes(p2));
+  });
+}
+function acharDepositoPorNome(lista, busca) {
+  if (!busca) return [];
+  const b = normalizar(busca);
+  const exato = lista.filter((d) => normalizar(d.nome) === b);
+  if (exato.length) return exato;
+  return lista.filter((d) => normalizar(d.nome).includes(b) || b.includes(normalizar(d.nome)));
+}
+var PROPOSTA_MINUTOS = 10;
+async function proporMovimentacao(ctx, input) {
+  const operacao = String(input.operacao ?? "").toUpperCase();
+  if (!ehOperacaoWhatsapp(operacao) || operacao === "DEVOLUCAO") return { ok: false, erro: "Opera\xE7\xE3o inv\xE1lida. Use SAIDA, CONSUMO, TRANSFERENCIA ou ENTRADA." };
+  if (!ctx.falante.operacoes.includes(operacao)) return { ok: false, erro: `${ctx.falante.nome} n\xE3o pode registrar ${NOME_DA_OPERACAO_WHATSAPP[operacao]} pelo WhatsApp. Pe\xE7a ao administrador ou use o painel.` };
+  const quantidade = arredondar(Number(input.quantidade));
+  if (!Number.isFinite(quantidade) || quantidade <= 0) return { ok: false, erro: "Informe uma quantidade maior que zero." };
+  const achados = acharMateriais(ctx.materiais, String(input.material ?? ""));
+  if (achados.length === 0) return { ok: false, erro: `N\xE3o achei nenhum material parecido com "${input.material}". Pe\xE7a para a pessoa dizer o nome como est\xE1 no cadastro.` };
+  if (achados.length > 1) return { ok: false, erro: `Mais de um material combina com "${input.material}": ${achados.map((m) => m.nome).join("; ")}. Pergunte qual.` };
+  const material = achados[0];
+  const operaveis = ctx.depositos.filter((d) => d.modo === "almoxarifado" && podeOperar(ctx.acessos, d.id));
+  const escolher = (busca, papel) => {
+    const lista = busca ? acharDepositoPorNome(operaveis, String(busca)) : operaveis;
+    if (lista.length === 1) return { ok: true, dep: lista[0] };
+    if (lista.length === 0) return { ok: false, erro: busca ? `N\xE3o achei um estoque "${busca}" que ${ctx.falante.nome} opere. Estoques dela: ${operaveis.map((d) => d.nome).join("; ") || "nenhum"}.` : `${ctx.falante.nome} n\xE3o opera nenhum estoque de almoxarifado.` };
+    return { ok: false, erro: `Qual estoque de ${papel}? ${lista.map((d) => d.nome).join("; ")}.` };
+  };
+  let origem = null;
+  let destino = null;
+  if (operacao === "ENTRADA") {
+    const r = escolher(input.estoque_destino ?? input.estoque, "destino");
+    if (!r.ok) return r;
+    destino = r.dep;
+  } else {
+    const r = escolher(input.estoque_origem ?? input.estoque, "origem");
+    if (!r.ok) return r;
+    origem = r.dep;
+    if (operacao === "TRANSFERENCIA") {
+      const candidatos = ctx.depositos.filter((d) => d.unit_id === origem.unit_id && d.id !== origem.id && d.modo !== "patrimonio");
+      const lista = input.estoque_destino ? acharDepositoPorNome(candidatos, String(input.estoque_destino)) : candidatos;
+      if (lista.length === 0) return { ok: false, erro: `N\xE3o achei um estoque de destino "${input.estoque_destino ?? ""}" na unidade de ${origem.nome}. Op\xE7\xF5es: ${candidatos.map((d) => d.nome).join("; ") || "nenhuma"}.` };
+      if (lista.length > 1) return { ok: false, erro: `Qual estoque de destino? ${lista.map((d) => d.nome).join("; ")}.` };
+      destino = lista[0];
+    }
+  }
+  const lado = origem ?? destino;
+  if (!operacaoPermitida(lado, operacao)) return { ok: false, erro: `A opera\xE7\xE3o ${NOME_DA_OPERACAO_WHATSAPP[operacao]} est\xE1 desligada em ${lado.nome}.` };
+  const saldoOrigem = origem ? Number(material.saldos[origem.id] ?? 0) : null;
+  if (origem && saldoOrigem !== null && saldoOrigem < quantidade) return { ok: false, erro: `${material.nome} tem s\xF3 ${saldoOrigem} ${material.unidade_medida} em ${origem.nome}; n\xE3o d\xE1 para tirar ${quantidade}.` };
+  const nomeOp = NOME_DA_OPERACAO_WHATSAPP[operacao];
+  const resumo = operacao === "TRANSFERENCIA" ? `Transferir ${quantidade} ${material.unidade_medida} de ${material.nome} de ${origem.nome} para ${destino.nome}` : operacao === "ENTRADA" ? `Dar entrada de ${quantidade} ${material.unidade_medida} de ${material.nome} em ${destino.nome}` : `Registrar ${nomeOp} de ${quantidade} ${material.unidade_medida} de ${material.nome} de ${origem.nome}`;
+  const justificativa = String(input.justificativa ?? "").trim().slice(0, 200) || `${nomeOp} registrada pelo WhatsApp`;
+  return {
+    ok: true,
+    proposta: {
+      tipo: "movimentacao",
+      resumo,
+      dados: { operacao, material_id: material.id, material_nome: material.nome, unidade_medida: material.unidade_medida, quantidade, origem_id: origem?.id ?? null, destino_id: destino?.id ?? null, origem_nome: origem?.nome ?? null, destino_nome: destino?.nome ?? null, justificativa },
+      expira_em: new Date(Date.now() + PROPOSTA_MINUTOS * 6e4).toISOString()
+    }
+  };
+}
+async function proporDevolucao(ctx, input) {
+  if (!ctx.falante.operacoes.includes("DEVOLUCAO")) return { ok: false, erro: `${ctx.falante.nome} n\xE3o pode registrar devolu\xE7\xF5es pelo WhatsApp.` };
+  const { data: data2 } = await ctx.db.from("loans").select("id, warehouse_id, material_id, tomador_nome, tomador_referencia, quantidade, quantidade_devolvida, materials(nome, unidade_medida)").eq("tipo", "emprestimo").is("devolvido_em", null).is("encerrado_em", null);
+  const abertos = (data2 || []).filter((e2) => podeOperar(ctx.acessos, e2.warehouse_id));
+  const quem = normalizar(String(input.tomador ?? ""));
+  const material = normalizar(String(input.material ?? ""));
+  const lista = abertos.filter((e2) => (!quem || normalizar(e2.tomador_nome).includes(quem) || normalizar(e2.tomador_referencia ?? "").includes(quem)) && (!material || normalizar(e2.materials?.nome ?? "").includes(material)));
+  if (lista.length === 0) return { ok: false, erro: quem ? `N\xE3o achei retirada pendente de "${input.tomador}"${material ? ` com ${input.material}` : ""}.` : "Diga quem est\xE1 devolvendo." };
+  if (lista.length > 1) return { ok: false, erro: `Mais de uma retirada pendente: ${lista.map((e2) => `${e2.tomador_nome} \u2014 ${e2.materials?.nome} (${Number(e2.quantidade) - Number(e2.quantidade_devolvida)})`).join("; ")}. Pergunte qual (pessoa + material).` };
+  const e = lista[0];
+  const falta = arredondar(Number(e.quantidade) - Number(e.quantidade_devolvida));
+  const estoque = ctx.depositos.find((d) => d.id === e.warehouse_id);
+  return {
+    ok: true,
+    proposta: {
+      tipo: "devolucao",
+      resumo: `Registrar a devolu\xE7\xE3o de ${falta} ${e.materials?.unidade_medida ?? ""} de ${e.materials?.nome} por ${e.tomador_nome} em ${estoque?.nome ?? "estoque"}`,
+      dados: { loan_id: e.id, warehouse_id: e.warehouse_id, material_id: e.material_id, quantidade: falta, tomador_nome: e.tomador_nome },
+      expira_em: new Date(Date.now() + PROPOSTA_MINUTOS * 6e4).toISOString()
+    }
+  };
+}
+async function executarProposta(falante, proposta) {
+  const db = scopedDb(falante.organization_id);
+  const d = proposta.dados;
+  const nomeDe = async (id) => (await depositosDaOrg(db)).find((x) => x.id === id)?.nome ?? id;
+  if (proposta.tipo === "movimentacao") {
+    const atuais = await saldosDoMaterial(db, Number(d.material_id));
+    const lados = { origem_id: d.origem_id ?? void 0, destino_id: d.destino_id ?? void 0 };
+    const calculo = calcularMovimento(atuais, { ...lados, quantidade: Number(d.quantidade), rotulo: NOME_DA_OPERACAO_WHATSAPP[d.operacao], nomeDe: (id) => (id === d.origem_id ? d.origem_nome : d.destino_nome) ?? id });
+    if (!calculo.ok) return `N\xE3o deu: ${calculo.erro}`;
+    await gravarSaldos(db, Number(d.material_id), calculo.novos);
+    await db.from("material_movements").insert({
+      material_id: d.material_id,
+      tipo_operacao: d.operacao,
+      quantidade: d.quantidade,
+      warehouse_origem_id: d.origem_id ?? null,
+      warehouse_destino_id: d.destino_id ?? null,
+      funcionario_matricula: falante.matricula,
+      justificativa: `${d.justificativa} (via WhatsApp)`
+    });
+    const onde = d.origem_id ? `${d.origem_nome}: ${calculo.novos[d.origem_id]}` : `${d.destino_nome}: ${calculo.novos[d.destino_id]}`;
+    return `\u2705 ${proposta.resumo}. Saldo agora \u2014 ${onde} ${d.unidade_medida}${d.destino_id && d.origem_id ? `; ${d.destino_nome}: ${calculo.novos[d.destino_id]} ${d.unidade_medida}` : ""}.`;
+  }
+  if (proposta.tipo === "devolucao") {
+    const { data: emp } = await db.from("loans").select("*").eq("id", d.loan_id).maybeSingle();
+    if (!emp || emp.devolvido_em) return "Essa retirada j\xE1 foi devolvida.";
+    const falta = arredondar(Number(emp.quantidade) - Number(emp.quantidade_devolvida));
+    const atuais = await saldosDoMaterial(db, emp.material_id);
+    const calculo = calcularMovimento(atuais, { destino_id: emp.warehouse_id, quantidade: falta, rotulo: "esta devolu\xE7\xE3o", nomeDe: (id) => id });
+    if (!calculo.ok) return `N\xE3o deu: ${calculo.erro}`;
+    const agora = (/* @__PURE__ */ new Date()).toISOString();
+    await db.from("loans").update({ quantidade_devolvida: Number(emp.quantidade), devolvido_em: agora, devolucao_matricula: falante.matricula }).eq("id", emp.id);
+    await gravarSaldos(db, emp.material_id, calculo.novos);
+    await db.from("material_movements").insert({ material_id: emp.material_id, tipo_operacao: "DEVOLUCAO_EMPRESTIMO", quantidade: falta, warehouse_origem_id: null, warehouse_destino_id: emp.warehouse_id, funcionario_matricula: falante.matricula, justificativa: `Devolu\xE7\xE3o de ${emp.tomador_nome} (via WhatsApp)` });
+    return `\u2705 ${proposta.resumo}. Saldo em ${await nomeDe(emp.warehouse_id)}: ${calculo.novos[emp.warehouse_id]}.`;
+  }
+  return "N\xE3o sei executar isso.";
+}
+var FERRAMENTAS2 = [
+  {
+    name: "consultar_saldo",
+    description: "Saldo de um material nos estoques que a pessoa enxerga. Use quando perguntarem quanto tem, onde est\xE1, se tem.",
+    input_schema: { type: "object", properties: { material: { type: "string", description: "Nome (ou parte) do material" } }, required: ["material"] }
+  },
+  {
+    name: "listar_pendencias",
+    description: "O que precisa de aten\xE7\xE3o: materiais sem estoque ou abaixo do m\xEDnimo e empr\xE9stimos atrasados, nos estoques da pessoa.",
+    input_schema: { type: "object", properties: {} }
+  },
+  {
+    name: "listar_estoques",
+    description: "Os estoques (dep\xF3sitos) que a pessoa v\xEA e quais ela opera, com o modo de cada um.",
+    input_schema: { type: "object", properties: {} }
+  },
+  {
+    name: "propor_movimentacao",
+    description: 'Prepara uma movimenta\xE7\xE3o (SAIDA, CONSUMO, TRANSFERENCIA ou ENTRADA) para a pessoa confirmar. NUNCA executa: devolve o resumo que deve ser apresentado pedindo "SIM". Se faltar dado (material amb\xEDguo, estoque), devolve o que perguntar.',
+    input_schema: {
+      type: "object",
+      properties: {
+        operacao: { type: "string", enum: ["SAIDA", "CONSUMO", "TRANSFERENCIA", "ENTRADA"] },
+        material: { type: "string" },
+        quantidade: { type: "number" },
+        estoque_origem: { type: "string", description: "De onde sai (sa\xEDda, consumo, transfer\xEAncia). Opcional se a pessoa opera um s\xF3." },
+        estoque_destino: { type: "string", description: "Para onde vai (transfer\xEAncia, entrada)." },
+        justificativa: { type: "string", description: "Motivo, se a pessoa disse (obra, cliente, NF)." }
+      },
+      required: ["operacao", "material", "quantidade"]
+    }
+  },
+  {
+    name: "propor_devolucao",
+    description: 'Prepara a devolu\xE7\xE3o de um empr\xE9stimo pendente (quem pegou devolveu) para a pessoa confirmar com "SIM".',
+    input_schema: { type: "object", properties: { tomador: { type: "string", description: "Quem est\xE1 devolvendo" }, material: { type: "string" } } }
+  }
+];
+async function executarFerramenta(ctx, name, input, guardar) {
+  if (name === "consultar_saldo") {
+    const achados = acharMateriais(ctx.materiais, String(input.material ?? ""));
+    if (achados.length === 0) return `Nenhum material parecido com "${input.material}".`;
+    return achados.slice(0, 5).map((m) => {
+      const porEstoque = ctx.depositos.map((d) => `${d.nome}: ${m.saldos[d.id] ?? 0}`).join(", ");
+      const total = Object.values(m.saldos).reduce((s, v) => s + Number(v), 0);
+      return `${m.nome} \u2014 ${porEstoque}. Total ${arredondar(total)} ${m.unidade_medida}${m.estoque_minimo ? ` (m\xEDnimo ${m.estoque_minimo})` : ""}.`;
+    }).join("\n");
+  }
+  if (name === "listar_estoques") {
+    return ctx.depositos.map((d) => `${d.nome} (${d.modo}${podeOperar(ctx.acessos, d.id) ? ", opera" : ", s\xF3 consulta"})`).join("; ") || "Nenhum estoque vis\xEDvel.";
+  }
+  if (name === "listar_pendencias") {
+    const faltando = ctx.materiais.map((m) => {
+      const saldo_unidade = Object.values(m.saldos).reduce((s, v) => s + Number(v), 0);
+      const status = stockStatus({ saldo_unidade, saldos_unidade: m.saldos, estoque_minimo: m.estoque_minimo }, "empresa");
+      return { m, status, saldo_unidade };
+    }).filter((x) => x.status === "RUPTURA" || x.status === "ABAIXO").slice(0, 15).map((x) => `${x.m.nome}: ${arredondar(x.saldo_unidade)} ${x.m.unidade_medida} (m\xEDnimo ${x.m.estoque_minimo})${x.status === "RUPTURA" ? " \u2014 SEM ESTOQUE" : ""}`);
+    const { data: emp } = await ctx.db.from("loans").select("tomador_nome, prazo_em, quantidade, quantidade_devolvida, warehouse_id, materials(nome)").eq("tipo", "emprestimo").is("devolvido_em", null).is("encerrado_em", null);
+    const agora = Date.now();
+    const atrasados = (emp || []).filter((e) => podeVer(ctx.acessos, e.warehouse_id) && e.prazo_em && new Date(e.prazo_em).getTime() < agora).map((e) => `${e.tomador_nome} \u2014 ${Number(e.quantidade) - Number(e.quantidade_devolvida)} de ${e.materials?.nome} (venceu ${new Date(e.prazo_em).toLocaleString("pt-BR")})`);
+    return `Abaixo do m\xEDnimo (${faltando.length}): ${faltando.join("; ") || "nada"}.
+Empr\xE9stimos atrasados (${atrasados.length}): ${atrasados.join("; ") || "nenhum"}.`;
+  }
+  if (name === "propor_movimentacao" || name === "propor_devolucao") {
+    const r = name === "propor_movimentacao" ? await proporMovimentacao(ctx, input) : await proporDevolucao(ctx, input);
+    if (!r.ok) return r.erro;
+    guardar(r.proposta);
+    return `PROPOSTA PRONTA: "${r.proposta.resumo}". Apresente exatamente isso \xE0 pessoa e pe\xE7a que responda SIM para confirmar${ctx.falante.temPin ? ' (com o PIN: "SIM 1234")' : ""}. N\xE3o diga que j\xE1 foi registrado.`;
+  }
+  return "Ferramenta desconhecida.";
+}
+function systemPrompt(ctx, pendente) {
+  const hoje = (/* @__PURE__ */ new Date()).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  return [
+    `Voc\xEA \xE9 o assistente do Stok A\xED (sistema de controle de estoque) no WhatsApp, falando com ${ctx.falante.nome} (${ctx.falante.role === "CEO" ? "CEO" : ehAdmin(ctx.falante.role) ? "administrador" : "operador"}) da empresa ${ctx.falante.organizacao}. Hoje \xE9 ${hoje}.`,
+    "Responda curto, em portugu\xEAs do Brasil, como uma mensagem de WhatsApp: sem markdown pesado, no m\xE1ximo umas 6 linhas, n\xFAmeros claros. Use as ferramentas para tudo que \xE9 dado \u2014 nunca invente saldo, nome de material ou estoque.",
+    `Estoques que a pessoa v\xEA: ${ctx.depositos.map((d) => `${d.nome} [${d.modo}${podeOperar(ctx.acessos, d.id) ? ", opera" : ", consulta"}]`).join("; ") || "nenhum"}.`,
+    `Opera\xE7\xF5es que ela pode registrar pelo WhatsApp: ${ctx.falante.operacoes.map((o) => NOME_DA_OPERACAO_WHATSAPP[o]).join(", ") || "nenhuma (s\xF3 consulta)"}. Fora disso, diga que \xE9 s\xF3 pelo painel ou com o administrador.`,
+    'Grava\xE7\xE3o (sa\xEDda, consumo, transfer\xEAncia, entrada, devolu\xE7\xE3o): voc\xEA N\xC3O tem como registrar nem preparar nada sozinha \u2014 s\xF3 a ferramenta propor_movimentacao/propor_devolucao prepara. Chame-a sempre que a pessoa disser uma movimenta\xE7\xE3o; s\xF3 depois de ela devolver PROPOSTA PRONTA apresente o resumo e pe\xE7a SIM. Nunca escreva "confirma", "SIM" ou "registrado" sem isso. Quem grava \xE9 o sistema, quando a pessoa responde SIM; quem avisa que gravou tamb\xE9m \xE9 o sistema \u2014 nunca voc\xEA. Se a ferramenta devolver d\xFAvida (material amb\xEDguo, estoque), pergunte \xE0 pessoa.',
+    pendente ? `H\xE1 uma a\xE7\xE3o esperando confirma\xE7\xE3o: "${pendente.resumo}". Se a pessoa mudar de assunto, atenda; se quiser cancelar, diga que pode responder N\xC3O.` : "",
+    "Nunca revele dados de outros estoques ou empresas. Se perguntarem algo fora de estoque, responda em uma linha e volte ao assunto.",
+    "Se perguntarem o que voc\xEA faz: consulta saldo, onde est\xE1 cada material e o que est\xE1 faltando; registra o que estiver liberado acima, sempre pedindo SIM. S\xF3 isso \u2014 cadastro, ajuste e relat\xF3rios s\xE3o no painel.",
+    `Suporte: se a pessoa relatar problema com o sistema (algo n\xE3o funciona, erro, senha, acesso, plano, cobran\xE7a, cadastro) ou pedir ajuda com o pr\xF3prio Stok A\xED, n\xE3o chute causa nem prometa conserto. Diga em uma linha que isso \xE9 com a equipe do Stok A\xED, que l\xEA este mesmo n\xFAmero e responde por aqui${ehAdmin(ctx.falante.role) ? "; voc\xEA v\xEA o estado da conex\xE3o e o simulador em Configura\xE7\xF5es \u2192 Stok A\xED no WhatsApp" : "; o administrador da sua empresa tamb\xE9m pode ajudar"}. Depois volte ao estoque.`
+  ].filter(Boolean).join("\n");
+}
+var LIMITE_MENSAGENS_MES = 1e3;
+var SEM_PENDENCIA_PARA_CONFIRMAR = 'N\xE3o h\xE1 nada esperando confirma\xE7\xE3o (ou j\xE1 passaram os 10 minutos). Diga de novo o que quer registrar \u2014 ex.: "saiu 2 sacos de cimento do Central".';
+function pediuConfirmacaoSemProposta(texto6, nova, pendente) {
+  if (nova || pendente) return false;
+  return /\bSIM\b/.test(texto6) || /\bconfirma\b/i.test(texto6) || /registrad[ao]\b/i.test(texto6);
+}
+var MENSAGEM_PARA_DESCONHECIDO = [
+  "Ol\xE1! Aqui \xE9 o assistente do Stok A\xED.",
+  "Se voc\xEA j\xE1 usa o sistema, pe\xE7a ao administrador da sua empresa para colocar este WhatsApp no seu usu\xE1rio (Usu\xE1rios \u2192 editar \u2192 WhatsApp) \u2014 a\xED eu te reconhe\xE7o.",
+  "Se quer conhecer o Stok A\xED ou falar com a equipe, pode escrever aqui mesmo: uma pessoa responde por este n\xFAmero."
+].join("\n\n");
+async function carregarConversa(telefone) {
+  const { data: data2 } = await supabaseServer.from("whatsapp_conversas").select("id, mensagens, pendente").eq("telefone", telefone).maybeSingle();
+  if (!data2) return { mensagens: [], pendente: null };
+  const pendente = data2.pendente;
+  return { id: data2.id, mensagens: Array.isArray(data2.mensagens) ? data2.mensagens : [], pendente: pendente && new Date(pendente.expira_em).getTime() > Date.now() ? pendente : null };
+}
+async function salvarConversa(falante, telefone, c) {
+  const mensagens = c.mensagens.slice(-12);
+  await supabaseServer.from("whatsapp_conversas").upsert({ organization_id: falante.organization_id, user_id: falante.id, telefone, mensagens, pendente: c.pendente, atualizado_em: (/* @__PURE__ */ new Date()).toISOString() }, { onConflict: "telefone" });
+}
+async function registrar(args) {
+  try {
+    await supabaseServer.from("whatsapp_mensagens").insert({ organization_id: args.organizationId, user_id: args.userId, telefone: args.telefone, direcao: args.direcao, texto: args.texto.slice(0, 4e3), tokens_entrada: args.uso?.tokens_entrada ?? null, tokens_saida: args.uso?.tokens_saida ?? null, modelo: args.uso?.modelo ?? null });
+  } catch (e) {
+    console.error("[whatsapp] n\xE3o registrou mensagem:", e.message);
+  }
+}
+async function jaAvisamosHoje(telefone) {
+  const desde = new Date(Date.now() - 24 * 60 * 6e4).toISOString();
+  const { count } = await supabaseServer.from("whatsapp_mensagens").select("*", { count: "exact", head: true }).eq("telefone", telefone).eq("direcao", "saida").is("organization_id", null).gte("criado_em", desde);
+  return (count ?? 0) > 0;
+}
+async function mensagensNoMes(organizationId) {
+  const inicio = /* @__PURE__ */ new Date();
+  inicio.setDate(1);
+  inicio.setHours(0, 0, 0, 0);
+  const { count } = await supabaseServer.from("whatsapp_mensagens").select("*", { count: "exact", head: true }).eq("organization_id", organizationId).eq("direcao", "entrada").gte("criado_em", inicio.toISOString());
+  return count ?? 0;
+}
+async function responder(telefone, texto6, tipo = "texto", instancia = null) {
+  const falante = await falantePeloTelefone(telefone);
+  if (!falante) {
+    const fornecedor = await fornecedorPeloTelefone(telefone, instancia);
+    if (fornecedor) {
+      await registrar({ organizationId: fornecedor.organization_id, userId: null, telefone, direcao: "entrada", texto: texto6 ?? `[${tipo}]` });
+      const r = await responderFornecedor(fornecedor, texto6, tipo);
+      await registrar({ organizationId: fornecedor.organization_id, userId: null, telefone, direcao: "saida", texto: r.texto });
+      if (r.avisar) await avisarQuemPediu(fornecedor, r);
+      return { texto: r.texto, falante: null };
+    }
+    await registrar({ organizationId: null, userId: null, telefone, direcao: "entrada", texto: texto6 ?? `[${tipo}]` });
+    if (await jaAvisamosHoje(telefone)) return { texto: null, falante: null };
+    await registrar({ organizationId: null, userId: null, telefone, direcao: "saida", texto: MENSAGEM_PARA_DESCONHECIDO });
+    return { texto: MENSAGEM_PARA_DESCONHECIDO, falante: null };
+  }
+  await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: "entrada", texto: texto6 ?? `[${tipo}]` });
+  const conta = await contaDaOrg(falante.organization_id);
+  if (conta.situacao === "bloqueada") return { texto: `A conta da ${falante.organizacao} est\xE1 bloqueada (plano vencido). O CEO precisa regularizar em Configura\xE7\xF5es \u2192 Plano e assinatura.`, falante };
+  if (!planoLibera(conta.plano, "whatsapp")) return { texto: `O Stok A\xED no WhatsApp faz parte do plano Empresarial. A ${falante.organizacao} est\xE1 no ${NOME_DO_PLANO[conta.plano]} \u2014 fale com o CEO da conta para mudar.`, falante };
+  if (await mensagensNoMes(falante.organization_id) > LIMITE_MENSAGENS_MES) return { texto: `A ${falante.organizacao} chegou ao limite de ${LIMITE_MENSAGENS_MES} mensagens neste m\xEAs. Use o painel ou fale com a gente.`, falante };
+  if (tipo !== "texto" || !texto6) {
+    return { texto: tipo === "audio" ? "Por enquanto entendo s\xF3 texto \u2014 pode escrever?" : tipo === "imagem" || tipo === "documento" ? "Ainda n\xE3o leio fotos e arquivos por aqui. Escreva o que precisa, ou registre pelo painel." : "N\xE3o entendi. Pode escrever?", falante };
+  }
+  const conversa = await carregarConversa(telefone);
+  if (conversa.pendente) {
+    const c = lerConfirmacao(texto6);
+    if (c.confirma) {
+      if (falante.temPin) {
+        if (!c.pin) return { texto: `Para confirmar, responda SIM seguido do seu PIN (ex.: "SIM 1234").`, falante };
+        if (!await bcrypt.compare(c.pin, falante.pinHash)) return { texto: 'PIN incorreto. Tente de novo: "SIM 1234".', falante };
+      }
+      const proposta = conversa.pendente;
+      conversa.pendente = null;
+      let resultado;
+      try {
+        resultado = await executarProposta(falante, proposta);
+      } catch (e) {
+        console.error("[whatsapp] executar:", e.message);
+        resultado = "Deu erro ao registrar. Tente pelo painel ou mais tarde.";
+      }
+      conversa.mensagens.push({ role: "user", content: texto6 }, { role: "assistant", content: resultado });
+      await salvarConversa(falante, telefone, conversa);
+      await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: "saida", texto: resultado });
+      return { texto: resultado, falante };
+    }
+    if (c.nega) {
+      conversa.pendente = null;
+      const r = "Cancelado. Nada foi registrado.";
+      conversa.mensagens.push({ role: "user", content: texto6 }, { role: "assistant", content: r });
+      await salvarConversa(falante, telefone, conversa);
+      await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: "saida", texto: r });
+      return { texto: r, falante };
+    }
+  } else {
+    const c = lerConfirmacao(texto6);
+    if (c.confirma || c.nega) {
+      const r = c.confirma ? SEM_PENDENCIA_PARA_CONFIRMAR : "N\xE3o havia nada pendente. Se quiser, diga o que precisa.";
+      conversa.mensagens.push({ role: "user", content: texto6 }, { role: "assistant", content: r });
+      await salvarConversa(falante, telefone, conversa);
+      await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: "saida", texto: r });
+      return { texto: r, falante };
+    }
+  }
+  if (!claudeConfigurado()) return { texto: "O assistente ainda n\xE3o est\xE1 ligado neste servidor. Use o painel por enquanto.", falante };
+  const ctx = await montarContexto(falante);
+  let novaProposta = null;
+  const historico = [...conversa.mensagens.map((m) => ({ role: m.role, content: m.content })), { role: "user", content: texto6 }];
+  let resposta;
+  let uso;
+  let erro;
+  let ferramentas = [];
+  try {
+    const executar = (name, input) => executarFerramenta(ctx, name, input, (p2) => {
+      novaProposta = p2;
+    });
+    let r = await conversar({ system: systemPrompt(ctx, conversa.pendente), historico, tools: FERRAMENTAS2, executar });
+    if (pediuConfirmacaoSemProposta(r.texto, novaProposta, conversa.pendente)) {
+      const segunda = await conversar({
+        system: systemPrompt(ctx, conversa.pendente),
+        historico: [...historico, { role: "assistant", content: r.texto }, { role: "user", content: "[sistema] Voc\xEA pediu confirma\xE7\xE3o sem chamar propor_movimentacao/propor_devolucao. Chame a ferramenta agora com o que a pessoa disse; se faltar dado, pergunte." }],
+        tools: FERRAMENTAS2,
+        executar
+      });
+      segunda.uso.tokens_entrada += r.uso.tokens_entrada;
+      segunda.uso.tokens_saida += r.uso.tokens_saida;
+      segunda.chamadas.unshift(...r.chamadas);
+      r = segunda;
+      if (pediuConfirmacaoSemProposta(r.texto, novaProposta, conversa.pendente)) r = { ...r, texto: 'N\xE3o consegui preparar essa movimenta\xE7\xE3o. Me diga o material, a quantidade e o estoque \u2014 ex.: "saiu 2 sacos de cimento do Central".' };
+    }
+    resposta = r.texto || "N\xE3o entendi. Pode dizer de outro jeito?";
+    uso = r.uso;
+    ferramentas = r.chamadas.map((c) => c.name);
+  } catch (e) {
+    console.error("[whatsapp] IA:", e.message);
+    erro = String(e.message).slice(0, 300);
+    resposta = "Tive um problema para responder agora. Tente de novo em instantes ou use o painel.";
+  }
+  if (novaProposta) {
+    conversa.pendente = novaProposta;
+    if (!/\bsim\b/i.test(resposta)) resposta += `
+
+Responda SIM para confirmar${falante.temPin ? ' (com o PIN: "SIM 1234")' : ""}.`;
+  }
+  conversa.mensagens.push({ role: "user", content: texto6 }, { role: "assistant", content: resposta, ...erro ? { erro } : {}, ...ferramentas.length ? { ferramentas } : {} });
+  await salvarConversa(falante, telefone, conversa);
+  await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: "saida", texto: resposta, uso });
+  return { texto: resposta, falante, uso, erro };
+}
+
+// src/server/mail.ts
+import nodemailer from "nodemailer";
+function configuracaoSmtp(env = process.env) {
+  const brevo = Boolean(env.BREVO_SMTP_LOGIN && env.BREVO_SMTP_KEY);
+  const host = env.SMTP_HOST || (brevo ? "smtp-relay.brevo.com" : "");
+  const user = env.SMTP_USER || env.BREVO_SMTP_LOGIN || "";
+  const pass = env.SMTP_PASS || env.BREVO_SMTP_KEY || "";
+  if (!host || !user || !pass) return null;
+  const port = Number(env.SMTP_PORT) || (env.SMTP_HOST ? 465 : 2525);
+  return { host, port, secure: port === 465, auth: { user, pass } };
+}
+function remetente(env = process.env) {
+  return env.SMTP_FROM_EMAIL || env.SMTP_USER || "noreply@stokai.app";
+}
+function destinatarioAdmin(env = process.env) {
+  return env.ADMIN_EMAIL || remetente(env);
+}
+function destinatarioDemo(env = process.env) {
+  return env.DEMO_EMAIL || destinatarioAdmin(env);
 }
 var transporter = null;
 async function getTransporter() {
@@ -1174,14 +2331,499 @@ async function getTransporter() {
   transporter = nodemailer.createTransport(config);
   return transporter;
 }
+
+// src/server/rotinas.ts
+var DIA_MS5 = 24 * 60 * 60 * 1e3;
+var valido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e || "").trim().toLowerCase());
+async function emailsDosAdministradores(organizationId) {
+  const { data: data2 } = await supabaseServer.from("estoque_users").select("email, role").eq("organization_id", organizationId).in("role", ["CEO", "ADMINISTRADOR", "ADMINISTRATIVO"]).eq("ativo", true);
+  const pessoas = data2 || [];
+  const doCeo = pessoas.filter((x) => x.role === "CEO" && valido(x.email)).map((x) => String(x.email).trim().toLowerCase());
+  if (doCeo.length) return doCeo;
+  return pessoas.filter((x) => valido(x.email)).map((x) => String(x.email).trim().toLowerCase());
+}
+async function whatsappsDosAdministradores(organizationId) {
+  const { data: data2 } = await supabaseServer.from("estoque_users").select("whatsapp").eq("organization_id", organizationId).in("role", ["CEO", "ADMINISTRADOR", "ADMINISTRATIVO"]).eq("ativo", true).not("whatsapp", "is", null);
+  return (data2 || []).map((x) => x.whatsapp);
+}
+async function pendenciasDaOrg(organizationId, agora = /* @__PURE__ */ new Date()) {
+  const db = scopedDb(organizationId);
+  const [depositos, saldos, { data: materiais }, { data: emprestimos }, { data: lotes }] = await Promise.all([
+    depositosDaOrg(db),
+    saldosDaOrg(db),
+    db.from("materials").select("id, nome, unidade_medida, estoque_minimo").order("nome"),
+    db.from("loans").select("tomador_nome, prazo_em, quantidade, quantidade_devolvida, materials(nome)").eq("tipo", "emprestimo").is("devolvido_em", null).is("encerrado_em", null),
+    db.from("lots").select("lote, validade, quantidade, warehouses(nome), materials(nome)").gt("quantidade", 0).not("validade", "is", null).lte("validade", new Date(agora.getTime() + 30 * DIA_MS5).toISOString().slice(0, 10)).order("validade")
+  ]);
+  const ativos = new Set(depositos.filter((d) => d.ativo).map((d) => d.id));
+  const faltando = [];
+  for (const m of materiais || []) {
+    const s = saldos.get(m.id) ?? {};
+    const saldos_unidade = Object.fromEntries(Object.entries(s).filter(([id]) => ativos.has(id)));
+    const saldo = Object.values(saldos_unidade).reduce((a, v) => a + Number(v), 0);
+    const status = stockStatus({ saldo_unidade: saldo, saldos_unidade, estoque_minimo: Number(m.estoque_minimo) }, "empresa");
+    if (status === "RUPTURA" || status === "ABAIXO") faltando.push({ nome: m.nome, saldo: arredondar(saldo), minimo: Number(m.estoque_minimo), unidade: m.unidade_medida, semEstoque: status === "RUPTURA" });
+  }
+  const atrasados = (emprestimos || []).filter((e) => e.prazo_em && new Date(e.prazo_em).getTime() < agora.getTime()).map((e) => ({ tomador: e.tomador_nome, material: e.materials?.nome ?? "", quantidade: arredondar(Number(e.quantidade) - Number(e.quantidade_devolvida)), venceuEm: e.prazo_em }));
+  const vencendo = (lotes || []).map((l) => ({ material: l.materials?.nome ?? "", lote: l.lote, validade: l.validade, quantidade: Number(l.quantidade), estoque: l.warehouses?.nome ?? "" }));
+  return { faltando, atrasados, vencendo };
+}
+var fmtData2 = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "America/Sao_Paulo" });
+function data(iso) {
+  return fmtData2.format(new Date(iso.length === 10 ? `${iso}T12:00:00` : iso));
+}
+function textoDoAvisoDiario(empresa, pend) {
+  if (!pend.faltando.length && !pend.atrasados.length && !pend.vencendo.length) return null;
+  const partes = [`\u2600\uFE0F Bom dia! Pend\xEAncias de hoje na ${empresa}:`];
+  if (pend.faltando.length) {
+    partes.push("", `\u{1F4E6} Abaixo do m\xEDnimo (${pend.faltando.length}):`);
+    for (const f of pend.faltando.slice(0, 10)) partes.push(`\u2022 ${f.nome}: ${f.saldo} ${f.unidade} (m\xEDn. ${f.minimo})${f.semEstoque ? " \u2014 SEM ESTOQUE" : ""}`);
+    if (pend.faltando.length > 10) partes.push(`\u2022 \u2026e mais ${pend.faltando.length - 10}`);
+  }
+  if (pend.atrasados.length) {
+    partes.push("", `\u23F0 Empr\xE9stimos atrasados (${pend.atrasados.length}):`);
+    for (const a of pend.atrasados.slice(0, 10)) partes.push(`\u2022 ${a.tomador} \u2014 ${a.quantidade} de ${a.material} (venceu ${data(a.venceuEm)})`);
+  }
+  if (pend.vencendo.length) {
+    partes.push("", `\u{1F5D3}\uFE0F Vencendo em 30 dias (${pend.vencendo.length}):`);
+    for (const v of pend.vencendo.slice(0, 10)) partes.push(`\u2022 ${v.material} lote ${v.lote}: ${v.quantidade} em ${v.estoque}, vence ${data(v.validade)}`);
+  }
+  partes.push("", 'Pergunte "o que est\xE1 faltando?" por aqui, ou veja em Alertas no painel.');
+  return partes.join("\n");
+}
+async function avisosDoDiaPorWhatsapp(agora = /* @__PURE__ */ new Date()) {
+  if (!evolutionConfigurada()) return { organizacoes: 0, mensagens: 0 };
+  const { data: orgs } = await supabaseServer.from("organizations").select("id, nome, whatsapp_instancia, ativo").eq("ativo", true);
+  let organizacoes = 0;
+  let mensagens = 0;
+  for (const o of orgs || []) {
+    try {
+      const conta = await contaDaOrg(o.id);
+      if (conta.situacao === "bloqueada" || !planoLibera(conta.plano, "whatsapp")) continue;
+      const numeros = await whatsappsDosAdministradores(o.id);
+      if (!numeros.length) continue;
+      const texto6 = textoDoAvisoDiario(o.nome, await pendenciasDaOrg(o.id, agora));
+      if (!texto6) continue;
+      organizacoes++;
+      for (const n of numeros) {
+        try {
+          await enviarTexto(n, texto6, o.whatsapp_instancia ?? null);
+          mensagens++;
+        } catch (e) {
+          console.error(`[avisos] ${o.nome} \u2192 ${n}:`, e.message);
+        }
+      }
+    } catch (e) {
+      console.error(`[avisos] ${o.nome}:`, e.message);
+    }
+  }
+  return { organizacoes, mensagens };
+}
+var NOME_DO_TIPO = {
+  ENTRADA: "Entradas",
+  SAIDA: "Sa\xEDdas",
+  CONSUMO: "Consumos",
+  TRANSFERENCIA: "Transfer\xEAncias",
+  AJUSTE: "Ajustes",
+  EMPRESTIMO: "Empr\xE9stimos",
+  DEVOLUCAO_EMPRESTIMO: "Devolu\xE7\xF5es",
+  ENTREGA: "Entregas"
+};
+async function resumoSemanalDaOrg(organizationId, agora = /* @__PURE__ */ new Date()) {
+  const db = scopedDb(organizationId);
+  const de = new Date(agora.getTime() - 7 * DIA_MS5);
+  const { data: movs } = await db.from("material_movements").select("tipo_operacao, quantidade, materials(nome, unidade_medida)").gte("created_at", de.toISOString()).lt("created_at", agora.toISOString()).limit(5e3);
+  const porTipo = {};
+  const consumo = /* @__PURE__ */ new Map();
+  for (const m of movs || []) {
+    porTipo[m.tipo_operacao] = (porTipo[m.tipo_operacao] ?? 0) + 1;
+    if (m.tipo_operacao === "SAIDA" || m.tipo_operacao === "CONSUMO" || m.tipo_operacao === "ENTREGA") {
+      const nome = m.materials?.nome ?? "?";
+      const atual = consumo.get(nome) ?? { nome, quantidade: 0, unidade: m.materials?.unidade_medida ?? "" };
+      atual.quantidade = arredondar(atual.quantidade + Number(m.quantidade));
+      consumo.set(nome, atual);
+    }
+  }
+  const maisConsumidos = [...consumo.values()].sort((a, b) => b.quantidade - a.quantidade).slice(0, 5);
+  return { de: de.toISOString(), ate: agora.toISOString(), movimentos: (movs || []).length, porTipo, maisConsumidos, pendencias: await pendenciasDaOrg(organizationId, agora) };
+}
+function emailDoResumoSemanal(empresa, r, env = process.env) {
+  const lista = (itens) => itens.length ? `<ul style="margin:0 0 12px;padding-left:20px">${itens.map((i) => `<li>${i}</li>`).join("")}</ul>` : "";
+  const tipos = Object.entries(r.porTipo).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${escapeHtml(NOME_DO_TIPO[t] ?? t)}: <strong>${n}</strong>`).join(" \xB7 ");
+  const corpo = p(`Entre ${data(r.de)} e ${data(r.ate)}, a <strong>${escapeHtml(empresa)}</strong> registrou <strong>${r.movimentos}</strong> movimenta\xE7\xE3o(\xF5es).${tipos ? ` ${tipos}.` : ""}`) + (r.maisConsumidos.length ? p("<strong>O que mais saiu:</strong>") + lista(r.maisConsumidos.map((m) => `${escapeHtml(m.nome)} \u2014 ${m.quantidade} ${escapeHtml(m.unidade)}`)) : "") + (r.pendencias.faltando.length ? p(`<strong>Abaixo do m\xEDnimo (${r.pendencias.faltando.length}):</strong>`) + lista(r.pendencias.faltando.slice(0, 15).map((f) => `${escapeHtml(f.nome)}: ${f.saldo} ${escapeHtml(f.unidade)} (m\xEDn. ${f.minimo})${f.semEstoque ? " \u2014 <strong>sem estoque</strong>" : ""}`)) : p("Nenhum material abaixo do m\xEDnimo. \u{1F44F}")) + (r.pendencias.atrasados.length ? p(`<strong>Empr\xE9stimos atrasados (${r.pendencias.atrasados.length}):</strong>`) + lista(r.pendencias.atrasados.slice(0, 15).map((a) => `${escapeHtml(a.tomador)} \u2014 ${a.quantidade} de ${escapeHtml(a.material)}, venceu ${data(a.venceuEm)}`)) : "") + (r.pendencias.vencendo.length ? p(`<strong>Vencendo em 30 dias (${r.pendencias.vencendo.length}):</strong>`) + lista(r.pendencias.vencendo.slice(0, 15).map((v) => `${escapeHtml(v.material)} lote ${escapeHtml(v.lote)}: ${v.quantidade} em ${escapeHtml(v.estoque)}, vence ${data(v.validade)}`)) : "");
+  return {
+    subject: `Resumo da semana \u2014 ${empresa}`,
+    html: layoutEmail({ titulo: "Sua semana no estoque", corpo, botao: { rotulo: "Abrir o painel", url: `${siteUrl2(env)}/entrar` }, observacao: "Voc\xEA recebe este resumo toda segunda-feira porque o plano da sua empresa inclui relat\xF3rios autom\xE1ticos. Para parar, fale com a gente." })
+  };
+}
+async function resumosSemanais(agora = /* @__PURE__ */ new Date()) {
+  const t = await getTransporter();
+  if (!t) return { organizacoes: 0, enviados: 0 };
+  const { data: orgs } = await supabaseServer.from("organizations").select("id, nome, ativo").eq("ativo", true);
+  let organizacoes = 0;
+  let enviados = 0;
+  for (const o of orgs || []) {
+    try {
+      const conta = await contaDaOrg(o.id);
+      if (conta.situacao === "bloqueada" || !planoLibera(conta.plano, "relatorios-automaticos")) continue;
+      const emails = await emailsDosAdministradores(o.id);
+      if (!emails.length) continue;
+      const r = await resumoSemanalDaOrg(o.id, agora);
+      if (r.movimentos === 0 && !r.pendencias.faltando.length && !r.pendencias.atrasados.length && !r.pendencias.vencendo.length) continue;
+      organizacoes++;
+      const { subject, html } = emailDoResumoSemanal(o.nome, r);
+      await t.sendMail({ from: remetente(), to: emails.join(", "), subject, html });
+      enviados++;
+    } catch (e) {
+      console.error(`[resumo] ${o.nome}:`, e.message);
+    }
+  }
+  return { organizacoes, enviados };
+}
+async function vigiarWhatsapp() {
+  if (!evolutionConfigurada()) return { estado: null, avisou: false };
+  let estado;
+  try {
+    estado = await estadoDaInstancia();
+  } catch (e) {
+    estado = `erro: ${String(e.message).slice(0, 120)}`;
+  }
+  if (estado === "open") return { estado, avisou: false };
+  const t = await getTransporter();
+  if (!t) return { estado, avisou: false };
+  try {
+    await t.sendMail({
+      from: remetente(),
+      to: destinatarioAdmin(),
+      subject: `\u26A0\uFE0F WhatsApp do Stok A\xED fora do ar (${estado})`,
+      html: layoutEmail({
+        titulo: "O WhatsApp do Stok A\xED n\xE3o est\xE1 conectado",
+        corpo: p(`A verifica\xE7\xE3o di\xE1ria encontrou a inst\xE2ncia <strong>${escapeHtml(process.env.EVOLUTION_INSTANCE ?? "")}</strong> no estado <strong>${escapeHtml(estado)}</strong>. Enquanto isso, a equipe dos clientes e os fornecedores n\xE3o recebem resposta.`) + p("Abra o painel da Evolution e reconecte o n\xFAmero (QR code). Depois, confira em Configura\xE7\xF5es \u2192 Stok A\xED no WhatsApp.")
+      })
+    });
+    return { estado, avisou: true };
+  } catch (e) {
+    console.error("[vigiar whatsapp] e-mail:", e.message);
+    return { estado, avisou: false };
+  }
+}
+
+// src/server/erros.ts
+import * as Sentry from "@sentry/node";
+function errosConfigurados(env = process.env) {
+  return Boolean(env.SENTRY_DSN);
+}
+var iniciado = false;
+function iniciarErros(env = process.env) {
+  if (iniciado || !errosConfigurados(env)) return;
+  iniciado = true;
+  Sentry.init({
+    dsn: env.SENTRY_DSN,
+    environment: env.VERCEL_ENV ?? env.NODE_ENV ?? "development",
+    release: env.VERCEL_GIT_COMMIT_SHA,
+    // Cada console.error das rotas vira um evento: é assim que o código já reporta o que deu errado.
+    integrations: [Sentry.captureConsoleIntegration({ levels: ["error"] })],
+    tracesSampleRate: 0,
+    sendDefaultPii: false
+  });
+}
+
+// src/server/notafiscal.ts
+function configuracaoNfse(env = process.env) {
+  if ((env.NFSE_PROVEDOR ?? "focus") !== "focus") return null;
+  const token = (env.FOCUS_NFE_TOKEN ?? "").trim();
+  const cnpj = (env.NFSE_PRESTADOR_CNPJ ?? "").replace(/\D/g, "");
+  const im = (env.NFSE_PRESTADOR_IM ?? "").trim();
+  const mun = (env.NFSE_CODIGO_MUNICIPIO ?? "").replace(/\D/g, "");
+  const item = (env.NFSE_ITEM_LISTA_SERVICO ?? "").trim();
+  const aliquota = Number(env.NFSE_ALIQUOTA ?? "");
+  if (!token || cnpj.length !== 14 || !im || mun.length !== 7 || !item || !Number.isFinite(aliquota)) return null;
+  return {
+    token,
+    base: (env.FOCUS_NFE_AMBIENTE ?? "homologacao") === "producao" ? "https://api.focusnfe.com.br" : "https://homologacao.focusnfe.com.br",
+    prestador: { cnpj, inscricao_municipal: im, codigo_municipio: mun },
+    item_lista_servico: item,
+    codigo_tributario_municipio: (env.NFSE_CODIGO_TRIBUTARIO_MUNICIPIO ?? "").trim() || null,
+    aliquota,
+    optante_simples_nacional: (env.NFSE_OPTANTE_SIMPLES ?? "true") !== "false",
+    natureza_operacao: (env.NFSE_NATUREZA_OPERACAO ?? "1").trim()
+  };
+}
+function nfseConfigurada(env) {
+  return configuracaoNfse(env) !== null;
+}
+function discriminacao(pg) {
+  const fmt = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "America/Sao_Paulo" });
+  const plano = pg.plano ? NOME_DO_PLANO[pg.plano] : "assinatura";
+  const ciclo = pg.ciclo ? ` (${NOME_DO_CICLO[pg.ciclo].toLowerCase()})` : "";
+  const periodo = pg.periodo_de && pg.periodo_ate ? `, per\xEDodo de ${fmt.format(new Date(pg.periodo_de))} a ${fmt.format(new Date(pg.periodo_ate))}` : "";
+  const metodo = pg.metodo === "cartao" ? "cart\xE3o" : pg.metodo;
+  return `Licen\xE7a de uso do Stok A\xED (software de controle de estoque) \u2014 plano ${plano}${ciclo}${periodo}. Pagamento por ${metodo}, Mercado Pago #${pg.mp_payment_id ?? pg.id}.`;
+}
+function corpoDaNfse(pg, cfg, agora = /* @__PURE__ */ new Date()) {
+  const pagador = pg.pagador ?? {};
+  const doc = String(pagador.doc ?? "").replace(/\D/g, "");
+  if (!pagador.nome || doc.length !== 11 && doc.length !== 14) return null;
+  const tomador = { razao_social: pagador.nome, email: pagador.email ?? void 0 };
+  if (doc.length === 14) tomador.cnpj = doc;
+  else tomador.cpf = doc;
+  const e = pagador.endereco;
+  if (e?.cep && e.rua && e.numero && e.bairro && e.uf) {
+    tomador.endereco = { logradouro: e.rua, numero: e.numero, bairro: e.bairro, uf: e.uf, cep: String(e.cep).replace(/\D/g, "") };
+  }
+  return {
+    data_emissao: agora.toISOString(),
+    natureza_operacao: cfg.natureza_operacao,
+    optante_simples_nacional: cfg.optante_simples_nacional,
+    prestador: cfg.prestador,
+    tomador,
+    servico: {
+      aliquota: cfg.aliquota,
+      discriminacao: discriminacao(pg),
+      iss_retido: "false",
+      item_lista_servico: cfg.item_lista_servico,
+      ...cfg.codigo_tributario_municipio ? { codigo_tributario_municipio: cfg.codigo_tributario_municipio } : {},
+      valor_servicos: Math.round(Number(pg.valor) * 100) / 100
+    }
+  };
+}
+async function focus(cfg, caminho, init2 = {}) {
+  const r = await fetch(`${cfg.base}${caminho}`, {
+    ...init2,
+    headers: { Authorization: `Basic ${Buffer.from(`${cfg.token}:`).toString("base64")}`, "Content-Type": "application/json", ...init2.headers }
+  });
+  const texto6 = await r.text();
+  let corpo = null;
+  try {
+    corpo = texto6 ? JSON.parse(texto6) : null;
+  } catch {
+    corpo = { raw: texto6 };
+  }
+  return { status: r.status, corpo };
+}
+function traduzirFocus(status, corpo) {
+  const s = String(corpo?.status ?? "");
+  if (s === "autorizado") return { situacao: "emitida", numero: corpo?.numero ?? null, url: corpo?.url ?? corpo?.url_danfse ?? corpo?.caminho_xml_nota_fiscal ?? null };
+  if (s === "processando_autorizacao" || status === 202) return { situacao: "processando" };
+  if (s === "erro_autorizacao" || status >= 400) {
+    const erros = Array.isArray(corpo?.erros) ? corpo.erros.map((e) => e?.mensagem ?? e?.codigo ?? "").filter(Boolean).join("; ") : "";
+    return { situacao: "erro", erro: erros || corpo?.mensagem || corpo?.mensagem_sefaz || corpo?.codigo || `HTTP ${status}` };
+  }
+  if (s === "cancelado") return { situacao: "erro", erro: "nota cancelada no provedor" };
+  return { situacao: "processando" };
+}
+async function emitirNota(pg, cfg = configuracaoNfse()) {
+  if (!cfg) return null;
+  if (pg.status !== "aprovado") return null;
+  const ref = pg.nf_ref ?? pg.id;
+  let r;
+  if (!pg.nf_ref) {
+    const corpo = corpoDaNfse(pg, cfg);
+    if (!corpo) {
+      await supabaseServer.from("pagamentos").update({ nf_status: "erro", nf_erro: "sem CPF/CNPJ ou nome do tomador" }).eq("id", pg.id);
+      return { situacao: "erro", erro: "sem CPF/CNPJ ou nome do tomador" };
+    }
+    const resp = await focus(cfg, `/v2/nfse?ref=${encodeURIComponent(ref)}`, { method: "POST", body: JSON.stringify(corpo) });
+    r = traduzirFocus(resp.status, resp.corpo);
+  } else {
+    const resp = await focus(cfg, `/v2/nfse/${encodeURIComponent(ref)}`);
+    r = traduzirFocus(resp.status, resp.corpo);
+  }
+  await supabaseServer.from("pagamentos").update({
+    nf_ref: ref,
+    nf_status: r.situacao === "emitida" ? "emitida" : r.situacao === "erro" ? "erro" : "pendente",
+    nf_numero: r.numero ?? pg.nf_numero ?? null,
+    nf_url: r.url ?? pg.nf_url ?? null,
+    nf_erro: r.situacao === "erro" ? r.erro ?? null : null,
+    updated_at: (/* @__PURE__ */ new Date()).toISOString()
+  }).eq("id", pg.id);
+  return r;
+}
+async function pagamentosSemNota(limite = 50) {
+  const { data: data2, error } = await supabaseServer.from("pagamentos").select("*").eq("status", "aprovado").or("nf_status.is.null,nf_status.eq.pendente").order("data", { ascending: true }).limit(limite);
+  if (error) throw error;
+  return data2 || [];
+}
+function emailDaNota(pg, empresa) {
+  const email = String(pg.pagador?.email ?? "").trim();
+  if (!email || !pg.nf_url) return null;
+  const fmt = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "America/Sao_Paulo" });
+  return {
+    subject: `Nota fiscal do Stok A\xED \u2014 ${pg.plano ? NOME_DO_PLANO[pg.plano] : "assinatura"}${pg.nf_numero ? ` n\xBA ${pg.nf_numero}` : ""}`,
+    html: layoutEmail({
+      titulo: `Sua nota fiscal est\xE1 pronta.`,
+      corpo: p(`Obrigado, <strong>${escapeHtml(empresa)}</strong>. A nota fiscal de servi\xE7o do seu pagamento foi emitida.`) + tabela([
+        ["Plano", pg.plano ? `${NOME_DO_PLANO[pg.plano]}${pg.ciclo ? ` (${NOME_DO_CICLO[pg.ciclo].toLowerCase()})` : ""}` : null],
+        ["Valor", formatarPreco(Number(pg.valor))],
+        ["Per\xEDodo", pg.periodo_de && pg.periodo_ate ? `${fmt.format(new Date(pg.periodo_de))} a ${fmt.format(new Date(pg.periodo_ate))}` : null],
+        ["Nota n\xBA", pg.nf_numero ?? null]
+      ]),
+      botao: { rotulo: "Abrir a nota fiscal", url: pg.nf_url },
+      observacao: "A nota tamb\xE9m fica dispon\xEDvel em Configura\xE7\xF5es \u2192 Plano e assinatura, na lista de cobran\xE7as."
+    })
+  };
+}
+
+// src/shared/recibo.ts
+var fmtData3 = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "America/Sao_Paulo" });
+var fmtDataHora = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Sao_Paulo" });
+function numeroDoRecibo(pg) {
+  const d = new Date(pg.data);
+  const ano = d.getUTCFullYear();
+  const mes = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dia = String(d.getUTCDate()).padStart(2, "0");
+  return `R-${ano}-${mes}${dia}-${pg.id.replace(/-/g, "").slice(-4).toUpperCase()}`;
+}
+function descricaoDoRecibo(pg) {
+  const plano = pg.plano ? `Plano ${NOME_DO_PLANO[pg.plano]}` : "Assinatura";
+  const ciclo = pg.ciclo ? ` (${NOME_DO_CICLO[pg.ciclo].toLowerCase()})` : "";
+  const periodo = pg.periodo_de && pg.periodo_ate ? ` \u2014 per\xEDodo de ${fmtData3.format(new Date(pg.periodo_de))} a ${fmtData3.format(new Date(pg.periodo_ate))}` : "";
+  return `${plano}${ciclo} do ${PRODUTO.nome}${periodo}`;
+}
+function formatarDoc(doc) {
+  const d = String(doc ?? "").replace(/\D/g, "");
+  if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+  if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
+  return d || null;
+}
+function mascararDoc(doc) {
+  const f = formatarDoc(doc);
+  if (!f) return null;
+  const d = f.replace(/\D/g, "");
+  if (d.length === 11) return `***.${d.slice(3, 6)}.${d.slice(6, 9)}-**`;
+  if (d.length === 14) return `**.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-**`;
+  return f;
+}
+function linhaDoEmitente(nome, doc) {
+  const m = mascararDoc(doc);
+  if (!m) return nome;
+  const tipo = String(doc ?? "").replace(/\D/g, "").length === 14 ? "CNPJ" : "CPF";
+  return `${nome} \xB7 ${tipo} ${m}`;
+}
+function dadosDoRecibo(pg, empresa, emitente2) {
+  const pagador = pg.pagador ?? {};
+  return {
+    numero: numeroDoRecibo(pg),
+    emitente: emitente2,
+    pagador: { nome: pagador.nome && pagador.nome.trim() || empresa, doc: formatarDoc(pagador.doc), email: pagador.email?.trim() || null },
+    descricao: descricaoDoRecibo(pg),
+    valor: Number(pg.valor),
+    metodo: NOME_DO_METODO[pg.metodo] ?? pg.metodo,
+    data: fmtDataHora.format(new Date(pg.data)),
+    transacao: pg.mp_payment_id ?? pg.mp_authorized_payment_id ?? null
+  };
+}
+
+// src/server/recibo.ts
+function emitente(env = process.env) {
+  return linhaDoEmitente((env.RECIBO_EMITENTE ?? "").trim() || PRODUTO.nome, env.RECIBO_EMITENTE_DOC);
+}
+function dadosDoRecibo2(pg, empresa, env) {
+  return dadosDoRecibo(pg, empresa, emitente(env));
+}
+function emailDeRecibo(pg, empresa, env, para) {
+  const r = dadosDoRecibo2(pg, empresa, env);
+  const to = (para ?? "").trim().toLowerCase() || r.pagador.email;
+  if (!to) return null;
+  return {
+    to,
+    subject: `Recibo ${r.numero} \u2014 ${PRODUTO.nome}`,
+    html: layoutEmail({
+      titulo: `Recibo ${r.numero}`,
+      corpo: p(`Recebemos de <strong>${escapeHtml(r.pagador.nome)}</strong>${r.pagador.doc ? ` (${escapeHtml(r.pagador.doc)})` : ""} a import\xE2ncia de <strong>${escapeHtml(formatarPreco(r.valor))}</strong> referente a ${escapeHtml(r.descricao)}.`) + tabela([
+        ["Valor", formatarPreco(r.valor)],
+        ["Forma de pagamento", r.metodo],
+        ["Data", r.data],
+        ["Transa\xE7\xE3o (Mercado Pago)", r.transacao],
+        ["Emitido por", r.emitente]
+      ]),
+      observacao: "Este recibo comprova o pagamento e n\xE3o substitui nota fiscal. Ele tamb\xE9m fica dispon\xEDvel em PDF em Configura\xE7\xF5es \u2192 Plano e assinatura, na lista de cobran\xE7as."
+    })
+  };
+}
+
+// src/server/pagador.ts
+function texto5(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+function digitos(v) {
+  return texto5(v).replace(/\D/g, "");
+}
+function cpfValido(cpf) {
+  const d = cpf.replace(/\D/g, "");
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const dv = (n) => {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += Number(d[i]) * (n + 1 - i);
+    const r = s * 10 % 11;
+    return r === 10 ? 0 : r;
+  };
+  return dv(9) === Number(d[9]) && dv(10) === Number(d[10]);
+}
+function cnpjValido(cnpj) {
+  const d = cnpj.replace(/\D/g, "");
+  if (d.length !== 14 || /^(\d)\1{13}$/.test(d)) return false;
+  const calc = (tam) => {
+    const pesos = tam === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    let s = 0;
+    for (let i = 0; i < tam; i++) s += Number(d[i]) * pesos[i];
+    const r = s % 11;
+    return r < 2 ? 0 : 11 - r;
+  };
+  return calc(12) === Number(d[12]) && calc(13) === Number(d[13]);
+}
+var UFS = /* @__PURE__ */ new Set(["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"]);
+function validarPagador(body, metodo) {
+  const b = body && typeof body === "object" ? body : {};
+  const nome = texto5(b.nome);
+  if (nome.length < 3 || nome.length > 120) return { ok: false, erro: "Informe o nome ou a raz\xE3o social (3 a 120 caracteres)." };
+  const email = texto5(b.email).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, erro: "Informe um e-mail v\xE1lido." };
+  const doc = digitos(b.doc);
+  let tipoDoc;
+  if (doc.length === 11) {
+    if (!cpfValido(doc)) return { ok: false, erro: "CPF inv\xE1lido." };
+    tipoDoc = "CPF";
+  } else if (doc.length === 14) {
+    if (!cnpjValido(doc)) return { ok: false, erro: "CNPJ inv\xE1lido." };
+    tipoDoc = "CNPJ";
+  } else {
+    return { ok: false, erro: "Informe o CPF (11 d\xEDgitos) ou o CNPJ (14 d\xEDgitos)." };
+  }
+  let endereco = null;
+  if (metodo === "boleto") {
+    const e = b.endereco && typeof b.endereco === "object" ? b.endereco : {};
+    const cep = digitos(e.cep);
+    const rua = texto5(e.rua);
+    const numero = texto5(e.numero);
+    const bairro = texto5(e.bairro);
+    const cidade = texto5(e.cidade);
+    const uf = texto5(e.uf).toUpperCase();
+    if (cep.length !== 8) return { ok: false, erro: "CEP inv\xE1lido (8 d\xEDgitos)." };
+    if (rua.length < 2 || rua.length > 120) return { ok: false, erro: "Informe a rua." };
+    if (numero.length < 1 || numero.length > 20) return { ok: false, erro: "Informe o n\xFAmero." };
+    if (bairro.length < 2 || bairro.length > 80) return { ok: false, erro: "Informe o bairro." };
+    if (cidade.length < 2 || cidade.length > 80) return { ok: false, erro: "Informe a cidade." };
+    if (!UFS.has(uf)) return { ok: false, erro: "UF inv\xE1lida." };
+    endereco = { cep, rua, numero, bairro, cidade, uf };
+  }
+  return { ok: true, pagador: { nome, email, tipoDoc, doc, endereco } };
+}
+
+// src/server/app.ts
+var ESTOQUE_USERS = "estoque_users";
+var JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("[Server] JWT_SECRET n\xE3o definido \u2014 configure essa vari\xE1vel de ambiente antes de subir o servidor.");
+}
 var SUPABASE_PAGE_SIZE = 1e3;
 async function fetchAllRows(buildQuery) {
   const all = [];
   let from = 0;
   for (; ; ) {
-    const { data, error } = await buildQuery().range(from, from + SUPABASE_PAGE_SIZE - 1);
+    const { data: data2, error } = await buildQuery().range(from, from + SUPABASE_PAGE_SIZE - 1);
     if (error) throw error;
-    const batch = data || [];
+    const batch = data2 || [];
     all.push(...batch);
     if (batch.length < SUPABASE_PAGE_SIZE) break;
     from += SUPABASE_PAGE_SIZE;
@@ -1231,6 +2873,16 @@ async function withAcessos(req, res, next) {
     res.status(500).json({ error: "Erro ao carregar permiss\xF5es." });
   }
 }
+async function requireCeo(req, res, next) {
+  try {
+    const { data: data2 } = await req.db.from(ESTOQUE_USERS).select("role").eq("id", req.user.id).maybeSingle();
+    if (data2?.role !== CEO) return res.status(403).json({ error: "S\xF3 o CEO da conta pode fazer isso." });
+    next();
+  } catch (err) {
+    console.error("[requireCeo]", err.message);
+    res.status(500).json({ error: "Erro ao conferir a permiss\xE3o." });
+  }
+}
 function requireRole(allowed) {
   return (req, res, next) => {
     if (!req.user || !allowed.includes(req.user.role)) {
@@ -1242,12 +2894,13 @@ function requireRole(allowed) {
 async function verifyPassword(inputPassword, storedValue) {
   const looksHashed = /^\$2[aby]\$/.test(storedValue);
   if (looksHashed) {
-    return bcrypt.compare(inputPassword, storedValue);
+    return bcrypt2.compare(inputPassword, storedValue);
   }
   return inputPassword === storedValue;
 }
 var ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
 function createApp() {
+  iniciarErros();
   const app = express();
   if (process.env.VERCEL || process.env.TRUST_PROXY === "true") {
     app.set("trust proxy", 1);
@@ -1349,7 +3002,7 @@ function createApp() {
       }
       if (!/^\$2[aby]\$/.test(String(userRow.senha || ""))) {
         try {
-          const hash = await bcrypt.hash(senha, 10);
+          const hash = await bcrypt2.hash(senha, 10);
           const { error: upgradeError } = await supabaseServer.from(ESTOQUE_USERS).update({ senha: hash, senha_alterada_em: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", userRow.id);
           if (upgradeError) {
             console.warn("[Login] falha ao proteger senha legada:", upgradeError.message);
@@ -1385,8 +3038,8 @@ function createApp() {
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 120) return res.status(400).json({ error: "Informe um e-mail v\xE1lido." });
       if (senha.length < MIN_PASSWORD_LENGTH) return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
       if (senha.length > 200) return res.status(400).json({ error: "Senha longa demais." });
-      const hash = await bcrypt.hash(senha, 10);
-      const { data, error } = await supabaseServer.rpc("criar_organizacao", {
+      const hash = await bcrypt2.hash(senha, 10);
+      const { data: data2, error } = await supabaseServer.rpc("criar_organizacao", {
         p_empresa: empresa,
         p_nome: nome,
         p_email: email,
@@ -1397,7 +3050,7 @@ function createApp() {
         if (error.code === "23514" || /caracteres|inválido/.test(error.message)) return res.status(400).json({ error: error.message });
         throw error;
       }
-      const criado = Array.isArray(data) ? data[0] : data;
+      const criado = Array.isArray(data2) ? data2[0] : data2;
       if (!criado?.organization_id || !criado?.user_id) throw new Error("criar_organizacao n\xE3o devolveu ids.");
       const authedUser = {
         id: Number(criado.user_id),
@@ -1490,7 +3143,7 @@ function createApp() {
       if (!pedido || !tokenValido(pedido)) {
         return res.status(400).json({ error: 'Este link expirou ou j\xE1 foi usado. Pe\xE7a um novo em "Esqueci minha senha".' });
       }
-      const hash = await bcrypt.hash(senha, 10);
+      const hash = await bcrypt2.hash(senha, 10);
       const { data: usuario, error: erroUpdate } = await supabaseServer.from(ESTOQUE_USERS).update({ senha: hash, senha_alterada_em: (/* @__PURE__ */ new Date()).toISOString(), updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", pedido.user_id).eq("ativo", true).select("id, nome, matricula, role, organization_id").maybeSingle();
       if (erroUpdate) throw erroUpdate;
       if (!usuario) return res.status(400).json({ error: "Esta conta n\xE3o est\xE1 mais ativa. Procure o administrador." });
@@ -1641,9 +3294,9 @@ function createApp() {
         patch.cor_primaria = cor;
       }
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nada para alterar." });
-      const { data, error } = await req.db.from("organizations").update(patch).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
-      if (error || !data) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
+      const { data: data2, error } = await req.db.from("organizations").update(patch).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
+      if (error || !data2) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
+      res.json({ organizacao: { ...data2, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err) {
       console.error("[PATCH /api/organization] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar a organiza\xE7\xE3o." });
@@ -1660,9 +3313,9 @@ function createApp() {
       if (!Number.isFinite(tamanho) || tamanho <= 0) return res.status(400).json({ error: "Arquivo vazio." });
       if (tamanho > LOGO_MAX_BYTES) return res.status(400).json({ error: "O logo pode ter no m\xE1ximo 5 MB." });
       const caminho = `${req.user.organization_id}/logo-${Date.now()}.${ext}`;
-      const { data, error } = await supabaseServer.storage.from("logos").createSignedUploadUrl(caminho);
-      if (error || !data) throw error ?? new Error("sem URL assinada");
-      res.json({ signedUrl: data.signedUrl, token: data.token, path: caminho });
+      const { data: data2, error } = await supabaseServer.storage.from("logos").createSignedUploadUrl(caminho);
+      if (error || !data2) throw error ?? new Error("sem URL assinada");
+      res.json({ signedUrl: data2.signedUrl, token: data2.token, path: caminho });
     } catch (err) {
       console.error("[POST /api/organization/logo-upload-url] erro:", err.message);
       res.status(500).json({ error: "Erro ao preparar o envio do logo." });
@@ -1682,13 +3335,13 @@ function createApp() {
       const { data: atual } = await req.db.from("organizations").select("logo_url").eq("id", req.user.organization_id).single();
       const anterior = caminhoDoLogo(atual?.logo_url);
       const publicUrl = supabaseServer.storage.from("logos").getPublicUrl(caminho).data.publicUrl;
-      const { data, error } = await req.db.from("organizations").update({ logo_url: publicUrl }).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
-      if (error || !data) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
+      const { data: data2, error } = await req.db.from("organizations").update({ logo_url: publicUrl }).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
+      if (error || !data2) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
       if (anterior && anterior !== caminho) {
         const { error: rErr } = await supabaseServer.storage.from("logos").remove([anterior]);
         if (rErr) console.warn("[logo] n\xE3o apagou o anterior:", rErr.message);
       }
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
+      res.json({ organizacao: { ...data2, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err) {
       console.error("[POST /api/organization/logo] erro:", err.message);
       res.status(500).json({ error: "Erro ao salvar o logo." });
@@ -1698,13 +3351,13 @@ function createApp() {
     try {
       const { data: atual } = await req.db.from("organizations").select("logo_url").eq("id", req.user.organization_id).single();
       const caminho = caminhoDoLogo(atual?.logo_url);
-      const { data, error } = await req.db.from("organizations").update({ logo_url: null }).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
-      if (error || !data) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
+      const { data: data2, error } = await req.db.from("organizations").update({ logo_url: null }).eq("id", req.user.organization_id).select("id, nome, slug, cor_primaria, logo_url, plano, plano_ate").single();
+      if (error || !data2) throw error ?? new Error("organiza\xE7\xE3o n\xE3o encontrada");
       if (caminho) {
         const { error: rErr } = await supabaseServer.storage.from("logos").remove([caminho]);
         if (rErr) console.warn("[logo] n\xE3o apagou o arquivo:", rErr.message);
       }
-      res.json({ organizacao: { ...data, plano_efetivo: req.plano, conta: req.conta } });
+      res.json({ organizacao: { ...data2, plano_efetivo: req.plano, conta: req.conta } });
     } catch (err) {
       console.error("[DELETE /api/organization/logo] erro:", err.message);
       res.status(500).json({ error: "Erro ao remover o logo." });
@@ -1762,9 +3415,9 @@ function createApp() {
         const negada = negarLimite(req.plano, "unidades", count ?? 0);
         if (negada) return res.status(negada.status).json(negada.body);
       }
-      const { data, error } = await req.db.from("units").update(patch).eq("id", req.params.id).select("id, nome, slug, ativo").single();
-      if (error || !data) return res.status(404).json({ error: "Unidade n\xE3o encontrada." });
-      res.json({ unidade: data });
+      const { data: data2, error } = await req.db.from("units").update(patch).eq("id", req.params.id).select("id, nome, slug, ativo").single();
+      if (error || !data2) return res.status(404).json({ error: "Unidade n\xE3o encontrada." });
+      res.json({ unidade: data2 });
     } catch (err) {
       console.error("[PATCH /api/units/:id] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar unidade." });
@@ -1801,12 +3454,12 @@ function createApp() {
         if ((lotes ?? 0) > 0) return res.status(409).json({ error: `H\xE1 ${lotes} lote(s) com saldo neste estoque. Zere-os antes de mudar o modo ou desativar.` });
         if ((itens ?? 0) > 0) return res.status(409).json({ error: `H\xE1 ${itens} item(ns) de patrim\xF4nio ativos neste estoque. D\xEA baixa antes de mudar o modo ou desativar.` });
       }
-      const { data, error } = await req.db.from("warehouses").update(patch).eq("id", atual.id).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade").single();
+      const { data: data2, error } = await req.db.from("warehouses").update(patch).eq("id", atual.id).select("id, nome, tipo, unit_id, ativo, modo, prazo_padrao_horas, operacoes_permitidas, exige_assinatura, dias_aviso_validade").single();
       if (error) {
         if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe um estoque com esse nome nesta unidade." });
         throw error;
       }
-      res.json({ deposito: data });
+      res.json({ deposito: data2 });
     } catch (err) {
       console.error("[PATCH /api/warehouses/:id] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar estoque." });
@@ -1850,12 +3503,12 @@ function createApp() {
       const nome = String(req.body?.nome ?? "").trim();
       if (nome.length < 1 || nome.length > 60) return res.status(400).json({ error: "Informe o nome da categoria (at\xE9 60 caracteres)." });
       const { data: ultima } = await req.db.from("categories").select("ordem").order("ordem", { ascending: false }).limit(1).maybeSingle();
-      const { data, error } = await req.db.from("categories").insert({ nome, ordem: (ultima?.ordem ?? 0) + 1 }).select("id, nome, ordem").single();
+      const { data: data2, error } = await req.db.from("categories").insert({ nome, ordem: (ultima?.ordem ?? 0) + 1 }).select("id, nome, ordem").single();
       if (error) {
         if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe uma categoria com esse nome." });
         throw error;
       }
-      res.status(201).json({ categoria: data });
+      res.status(201).json({ categoria: data2 });
     } catch (err) {
       console.error("[POST /api/categorias] erro:", err.message);
       res.status(500).json({ error: "Erro ao criar categoria." });
@@ -1877,7 +3530,7 @@ function createApp() {
         patch.ordem = ordem;
       }
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nada para alterar." });
-      const { data, error } = await req.db.from("categories").update(patch).eq("id", atual.id).select("id, nome, ordem").single();
+      const { data: data2, error } = await req.db.from("categories").update(patch).eq("id", atual.id).select("id, nome, ordem").single();
       if (error) {
         if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe uma categoria com esse nome." });
         throw error;
@@ -1886,7 +3539,7 @@ function createApp() {
         const { error: erroMat } = await req.db.from("materials").update({ categoria: patch.nome }).eq("categoria", atual.nome);
         if (erroMat) throw erroMat;
       }
-      res.json({ categoria: data });
+      res.json({ categoria: data2 });
     } catch (err) {
       console.error("[PATCH /api/categorias/:id] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar categoria." });
@@ -2054,9 +3707,9 @@ function createApp() {
         updates.validade_troca_dias = troca.dias;
       }
       if (fator_multiplicador !== void 0) updates.fator_multiplicador = fator_multiplicador;
-      const { data, error } = await req.db.from("materials").update(updates).eq("id", id).select().single();
+      const { data: data2, error } = await req.db.from("materials").update(updates).eq("id", id).select().single();
       if (error) throw error;
-      res.json(data);
+      res.json(data2);
     } catch (err) {
       console.error("[PUT /api/materials/:id] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar material." });
@@ -2172,7 +3825,7 @@ function createApp() {
       res.status(500).json({ error: "Erro ao unificar materiais." });
     }
   });
-  async function avisarMinimo(plano, material, saldosNovos, saldosAntes, depositosDaUnidadeDela, resumo) {
+  async function avisarMinimo(plano, organizationId, material, saldosNovos, saldosAntes, depositosDaUnidadeDela, resumo) {
     if (!planoLibera(plano, "alertas-por-email")) return;
     const saldos_unidade = {};
     for (const d of depositosDaUnidadeDela) saldos_unidade[d.id] = Number(saldosNovos[d.id] ?? saldosAntes[d.id] ?? 0);
@@ -2183,10 +3836,12 @@ function createApp() {
     try {
       const t = await getTransporter();
       if (!t) return;
+      const para = await emailsDosAdministradores(organizationId);
+      if (!para.length) return;
       const linhas = depositosDaUnidadeDela.map((d) => `${d.nome}: ${saldos_unidade[d.id]} ${material.unidade_medida}`).join("<br/>");
       await t.sendMail({
         from: remetente(),
-        to: destinatarioAdmin(),
+        to: para.join(", "),
         subject: `${semEstoque ? "Sem estoque" : "Estoque abaixo do m\xEDnimo"}: ${material.nome}`,
         html: `<p>O material <strong>${material.nome}</strong> ${semEstoque ? "est\xE1 <strong>sem estoque</strong> em todos os estoques da unidade." : "est\xE1 com o saldo da unidade <strong>abaixo do estoque m\xEDnimo</strong>."}</p><p>${linhas}<br/><strong>Total: ${stockTotal(campos)} ${material.unidade_medida}</strong><br/>Estoque m\xEDnimo: ${material.estoque_minimo} ${material.unidade_medida}</p><p>${resumo}</p>`
       });
@@ -2235,9 +3890,9 @@ function createApp() {
       const gravacoesDeLote = [];
       const origemValidade = estoque.modo === "validade" && (operacao === "SAIDA" || operacao === "CONSUMO" || operacao === "TRANSFERENCIA");
       const lotesDoOrigem = async () => {
-        const { data, error } = await req.db.from("lots").select("id, lote, validade, quantidade").eq("warehouse_id", estoque.id).eq("material_id", material_id);
+        const { data: data2, error } = await req.db.from("lots").select("id, lote, validade, quantidade").eq("warehouse_id", estoque.id).eq("material_id", material_id);
         if (error) throw error;
-        return data || [];
+        return data2 || [];
       };
       let consumos = [];
       if (origemValidade) {
@@ -2312,7 +3967,7 @@ function createApp() {
         funcionario_matricula: req.user.matricula,
         justificativa: `${String(justificativa).trim()}${detalheLotes}`
       });
-      await avisarMinimo(req.plano, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Opera\xE7\xE3o: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Respons\xE1vel: ${req.user.nome}`);
+      await avisarMinimo(req.plano, req.user.organization_id, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Opera\xE7\xE3o: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Respons\xE1vel: ${req.user.nome}`);
       res.json({ success: true, material_id, saldos: calculo.novos, lotes: consumos });
     } catch (err) {
       console.error("[POST /api/estoques/:id/movimentacoes] erro:", err.message);
@@ -2322,10 +3977,10 @@ function createApp() {
   app.get("/api/estoques/:id/emprestimos", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       if (!podeVer(req.acessos ?? null, req.params.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este estoque." });
-      const { data, error } = await req.db.from("loans").select("*, materials(nome, unidade_medida)").eq("warehouse_id", req.params.id).order("retirado_em", { ascending: false }).limit(300);
+      const { data: data2, error } = await req.db.from("loans").select("*, materials(nome, unidade_medida)").eq("warehouse_id", req.params.id).order("retirado_em", { ascending: false }).limit(300);
       if (error) throw error;
       res.json({
-        emprestimos: (data || []).map(({ materials: mat, ...e }) => ({ ...e, material_nome: mat?.nome ?? "Material removido", unidade_medida: mat?.unidade_medida ?? "" }))
+        emprestimos: (data2 || []).map(({ materials: mat, ...e }) => ({ ...e, material_nome: mat?.nome ?? "Material removido", unidade_medida: mat?.unidade_medida ?? "" }))
       });
     } catch (err) {
       console.error("[GET /api/estoques/:id/emprestimos] erro:", err.message);
@@ -2370,7 +4025,7 @@ function createApp() {
         funcionario_matricula: req.user.matricula,
         justificativa: `Retirada por ${r.tomador_nome}${r.tomador_referencia ? ` (${r.tomador_referencia})` : ""} \u2014 prazo ${r.prazo_horas} h`
       });
-      await avisarMinimo(req.plano, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user.nome}`);
+      await avisarMinimo(req.plano, req.user.organization_id, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user.nome}`);
       res.status(201).json({ emprestimo: { ...emprestimo, material_nome: material.nome, unidade_medida: material.unidade_medida }, saldos: calculo.novos });
     } catch (err) {
       console.error("[POST /api/estoques/:id/emprestimos] erro:", err.message);
@@ -2415,9 +4070,9 @@ function createApp() {
   app.get("/api/estoques/:id/entregas", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       if (!podeVer(req.acessos ?? null, req.params.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este estoque." });
-      const { data, error } = await req.db.from("loans").select(selecionarEntrega).eq("warehouse_id", req.params.id).eq("tipo", "entrega").order("retirado_em", { ascending: false }).limit(500);
+      const { data: data2, error } = await req.db.from("loans").select(selecionarEntrega).eq("warehouse_id", req.params.id).eq("tipo", "entrega").order("retirado_em", { ascending: false }).limit(500);
       if (error) throw error;
-      res.json({ entregas: (data || []).map(comMaterial) });
+      res.json({ entregas: (data2 || []).map(comMaterial) });
     } catch (err) {
       console.error("[GET /api/estoques/:id/entregas] erro:", err.message);
       res.status(500).json({ error: "Erro ao carregar entregas." });
@@ -2469,7 +4124,7 @@ function createApp() {
       if (!podeOperar(req.acessos ?? null, estoque.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem permiss\xE3o para operar este estoque." });
       const r = await registrarEntrega(req, estoque, req.body);
       if (r.status === 201 && r.material) {
-        await avisarMinimo(req.plano, r.material, r.saldosNovos, r.saldosAntes, depositos.filter((d) => d.unit_id === estoque.unit_id), `Entrega em ${estoque.nome} | Registrou: ${req.user.nome}`);
+        await avisarMinimo(req.plano, req.user.organization_id, r.material, r.saldosNovos, r.saldosAntes, depositos.filter((d) => d.unit_id === estoque.unit_id), `Entrega em ${estoque.nome} | Registrou: ${req.user.nome}`);
       }
       res.status(r.status).json(r.body);
     } catch (err) {
@@ -2543,9 +4198,9 @@ function createApp() {
   app.get("/api/estoques/:id/patrimonio", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
     try {
       if (!podeVer(req.acessos ?? null, req.params.id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este estoque." });
-      const { data, error } = await req.db.from("assets").select(selecionarItem).eq("warehouse_id", req.params.id).order("codigo", { ascending: true });
+      const { data: data2, error } = await req.db.from("assets").select(selecionarItem).eq("warehouse_id", req.params.id).order("codigo", { ascending: true });
       if (error) throw error;
-      res.json({ itens: (data || []).map(itemComMaterial) });
+      res.json({ itens: (data2 || []).map(itemComMaterial) });
     } catch (err) {
       console.error("[GET /api/estoques/:id/patrimonio] erro:", err.message);
       res.status(500).json({ error: "Erro ao carregar itens." });
@@ -2649,36 +4304,69 @@ function createApp() {
       const { data: item } = await req.db.from("assets").select("id, warehouse_id").eq("id", req.params.id).maybeSingle();
       if (!item) return res.status(404).json({ error: "Item n\xE3o encontrado." });
       if (!podeVer(req.acessos ?? null, item.warehouse_id)) return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este estoque." });
-      const { data, error } = await req.db.from("asset_events").select("*").eq("asset_id", item.id).order("created_at", { ascending: false }).limit(200);
+      const { data: data2, error } = await req.db.from("asset_events").select("*").eq("asset_id", item.id).order("created_at", { ascending: false }).limit(200);
       if (error) throw error;
-      res.json({ eventos: data || [] });
+      res.json({ eventos: data2 || [] });
     } catch (err) {
       console.error("[GET /api/patrimonio/:id/eventos] erro:", err.message);
       res.status(500).json({ error: "Erro ao carregar hist\xF3rico do item." });
     }
   });
   const resumoDaAssinatura = async (organizationId) => {
-    const [c, assinatura, pagamentos] = await Promise.all([contaDe(organizationId), assinaturaAtual(organizationId), pagamentosDe(organizationId)]);
+    const pendenteAntes = await avulsoPendente(organizationId);
+    if (pendenteAntes && mpConfigurado()) {
+      try {
+        const atualizado = await atualizarAvulso(pendenteAntes);
+        if (atualizado.status === "aprovado") await cuidarDaNota(atualizado);
+      } catch (e) {
+        console.warn("[resumo] n\xE3o conferiu o avulso pendente:", e.message);
+      }
+    }
+    const [c, assinatura, pagamentos, pendente] = await Promise.all([contaDe(organizationId), assinaturaAtual(organizationId), pagamentosDe(organizationId), avulsoPendente(organizationId)]);
     return {
       organizacao: c?.organizacao ?? null,
       conta: c?.conta ?? null,
       assinatura,
       pagamentos,
+      // Um Pix/boleto gerado e ainda válido: a tela reabre o QR Code em vez de gerar outro.
+      pendente_avulso: pendente,
+      // Pix e boleto exigem o access token (é a API de pagamentos).
+      avulso_disponivel: mpConfigurado(),
+      // Só se promete nota fiscal quando há emissor configurado (exige CNPJ e inscrição municipal).
+      nf_configurada: nfseConfigurada(),
+      // Quem assina o recibo (não fiscal) que o cliente baixa em PDF.
+      emitente: emitente(),
       // O que dá para assinar agora: por plano e ciclo, se existe caminho (plano no painel ou API configurada).
       disponivel: Object.fromEntries(CICLOS.map((ciclo) => [ciclo, mpConfigurado() || PLANOS.some((p2) => mpPlanId(p2, ciclo))])),
       modo_teste: modoTeste(),
-      avaliacao_dias: AVALIACAO_DIAS
+      avaliacao_dias: AVALIACAO_DIAS,
+      // Com a chave pública, o cartão é digitado dentro do site (Checkout Transparente).
+      mp_public_key: mpPublicKey()
     };
   };
   app.get("/api/assinatura", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      res.json(await resumoDaAssinatura(req.user.organization_id));
+      const [{ data: eu }, { data: ceo }, { data: admins }] = await Promise.all([
+        req.db.from(ESTOQUE_USERS).select("email, role").eq("id", req.user.id).maybeSingle(),
+        req.db.from(ESTOQUE_USERS).select("id, nome, email").eq("role", CEO).maybeSingle(),
+        req.db.from(ESTOQUE_USERS).select("id, nome, email, role").in("role", ADMIN_ROLES.filter((r) => r !== CEO)).eq("ativo", true).order("nome")
+      ]);
+      res.json({
+        ...await resumoDaAssinatura(req.user.organization_id),
+        meu_email: eu?.email ?? null,
+        // Quem manda na cobrança — e se é quem está olhando.
+        ceo: ceo ? { id: ceo.id, nome: ceo.nome, email: ceo.email } : null,
+        sou_ceo: eu?.role === CEO,
+        // Para quem o CEO pode passar a titularidade.
+        administradores: admins || []
+      });
     } catch (err) {
       console.error("[GET /api/assinatura] erro:", err.message);
       res.status(500).json({ error: "Erro ao carregar a assinatura." });
     }
   });
-  app.post("/api/assinatura", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+  const EMAIL_SIMPLES = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  app.post("/api/assinatura", authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
     try {
       const plano = req.body?.plano;
       const ciclo = req.body?.ciclo ?? "mensal";
@@ -2686,18 +4374,206 @@ function createApp() {
       if (!CICLOS.includes(ciclo)) return res.status(400).json({ error: "Ciclo inv\xE1lido: mensal ou anual." });
       if (!mpPlanId(plano, ciclo) && !mpConfigurado()) return res.status(503).json({ error: "Pagamento ainda n\xE3o configurado para este ciclo. Fale com a gente." });
       const { data: eu } = await req.db.from(ESTOQUE_USERS).select("email").eq("id", req.user.id).maybeSingle();
-      const email = String(eu?.email || "").trim().toLowerCase();
+      const informado = String(req.body?.payer_email || "").trim().toLowerCase();
+      const email = EMAIL_SIMPLES.test(informado) ? informado : String(eu?.email || "").trim().toLowerCase();
       if (!email) return res.status(400).json({ error: "Cadastre um e-mail no seu usu\xE1rio antes de assinar: \xE9 para onde v\xE3o os recibos." });
+      const cardTokenId = String(req.body?.card_token_id || "").trim();
+      if (cardTokenId) {
+        if (!mpConfigurado()) return res.status(503).json({ error: "Pagamento ainda n\xE3o configurado no servidor." });
+        if (!/^[A-Za-z0-9_-]{8,120}$/.test(cardTokenId)) return res.status(400).json({ error: "Cart\xE3o inv\xE1lido. Tente de novo." });
+        const r2 = await assinarComCartao({ organizationId: req.user.organization_id, plano, ciclo, payerEmail: email, cardTokenId, trocar: Boolean(req.body?.trocar) });
+        const autorizada = r2.assinatura?.status === "autorizada";
+        console.info(`[assinatura] ${req.user.organization_id} \u2192 ${plano}/${ciclo} pelo cart\xE3o no site: ${autorizada ? "autorizada" : r2.assinatura?.status ?? r2.motivo}`);
+        return res.json({ autorizada, ...await resumoDaAssinatura(req.user.organization_id) });
+      }
       const r = await iniciarAssinatura({ organizationId: req.user.organization_id, plano, ciclo, payerEmail: email, trocar: Boolean(req.body?.trocar) });
       console.info(`[assinatura] ${req.user.organization_id} \u2192 ${plano}/${ciclo} (${r.assinatura.mp_plan_id ? "plano do painel" : "API"})`);
       res.json({ url: r.url, valor: precoDo(plano, ciclo) });
     } catch (err) {
       if (err instanceof ErroDeAssinatura) return res.status(err.status).json({ error: err.message });
+      if (err instanceof ErroDoMercadoPago) {
+        console.warn("[POST /api/assinatura] MP recusou:", err.message);
+        return res.status(402).json({ error: mensagemParaOPagador(err) });
+      }
       console.error("[POST /api/assinatura] erro:", err.message);
       res.status(500).json({ error: "N\xE3o foi poss\xEDvel iniciar a assinatura." });
     }
   });
-  app.post("/api/assinatura/cancelar", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+  async function enviarRecibo(pg) {
+    if (pg.recibo_enviado_em) return;
+    try {
+      const t = await getTransporter();
+      if (!t) return;
+      const { data: org } = await supabaseServer.from("organizations").select("nome").eq("id", pg.organization_id).maybeSingle();
+      const email = emailDeRecibo(pg, org?.nome ?? "sua empresa");
+      if (!email) return;
+      await t.sendMail({ from: remetente(), to: email.to, subject: email.subject, html: email.html });
+      await supabaseServer.from("pagamentos").update({ recibo_enviado_em: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", pg.id);
+    } catch (e) {
+      console.error(`[recibo] pagamento ${pg.id}:`, e.message);
+    }
+  }
+  async function cuidarDaNota(pg) {
+    if (!pg || pg.status !== "aprovado") return;
+    await enviarRecibo(pg);
+    if (pg.nf_status === "emitida" || !nfseConfigurada()) return;
+    try {
+      const r = await emitirNota(pg);
+      if (r?.situacao === "emitida") {
+        const { data: atual } = await supabaseServer.from("pagamentos").select("*").eq("id", pg.id).maybeSingle();
+        const { data: org } = await supabaseServer.from("organizations").select("nome").eq("id", pg.organization_id).maybeSingle();
+        const email = atual ? emailDaNota(atual, org?.nome ?? "sua empresa") : null;
+        const t = await getTransporter();
+        if (t && email) await t.sendMail({ from: remetente(), to: String(atual.pagador?.email), subject: email.subject, html: email.html });
+      }
+    } catch (e) {
+      console.error(`[nota fiscal] pagamento ${pg.id}:`, e.message);
+    }
+  }
+  app.post("/api/assinatura/avulso", authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
+    try {
+      if (!mpConfigurado()) return res.status(503).json({ error: "Pagamento ainda n\xE3o configurado no servidor." });
+      const plano = req.body?.plano;
+      const ciclo = req.body?.ciclo ?? "mensal";
+      const metodo = req.body?.metodo;
+      if (!ehPlano(plano)) return res.status(400).json({ error: "Escolha o plano." });
+      if (!CICLOS.includes(ciclo)) return res.status(400).json({ error: "Ciclo inv\xE1lido: mensal ou anual." });
+      if (metodo !== "pix" && metodo !== "boleto") return res.status(400).json({ error: "Meio de pagamento inv\xE1lido: pix ou boleto." });
+      const v = validarPagador(req.body?.pagador, metodo);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const valor = modoTeste() && plano === "essencial" && ciclo === "mensal" ? 0.5 : precoDo(plano, ciclo);
+      const pedido = await criarAvulso({ organizationId: req.user.organization_id, plano, ciclo, metodo, pagador: v.pagador, valor });
+      console.info(`[avulso] ${req.user.organization_id} \u2192 ${plano}/${ciclo} por ${metodo}: pedido ${pedido.id} (MP ${pedido.mp_payment_id})`);
+      res.status(201).json({ pagamento: pedido });
+    } catch (err) {
+      if (err instanceof ErroDoMercadoPago) {
+        console.warn("[POST /api/assinatura/avulso] MP recusou:", err.message);
+        return res.status(402).json({ error: `O Mercado Pago n\xE3o gerou o pagamento: ${err.corpo?.message ?? "tente de novo."}` });
+      }
+      console.error("[POST /api/assinatura/avulso] erro:", err.message);
+      res.status(500).json({ error: "N\xE3o foi poss\xEDvel gerar o pagamento." });
+    }
+  });
+  app.get("/api/assinatura/avulso/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: data2 } = await req.db.from("pagamentos").select("*").eq("id", req.params.id).maybeSingle();
+      if (!data2) return res.status(404).json({ error: "Pagamento n\xE3o encontrado." });
+      let pedido = data2;
+      if (pedido.status === "pendente" && pedido.mp_payment_id && mpConfigurado()) {
+        pedido = await atualizarAvulso(pedido);
+        if (pedido.status === "aprovado") await cuidarDaNota(pedido);
+      }
+      res.json({ pagamento: pedido, conta: (await contaDe(req.user.organization_id))?.conta ?? null });
+    } catch (err) {
+      console.error("[GET /api/assinatura/avulso/:id] erro:", err.message);
+      res.status(500).json({ error: "N\xE3o foi poss\xEDvel consultar o pagamento." });
+    }
+  });
+  app.get("/api/cron/lembretes", async (req, res) => {
+    const segredo = process.env.CRON_SECRET;
+    if (!segredo || req.header("authorization") !== `Bearer ${segredo}`) return res.status(401).json({ error: "N\xE3o autorizado." });
+    try {
+      const t = await getTransporter();
+      const contas = await contasParaLembrar();
+      let enviados = 0;
+      for (const c of contas) {
+        if (t) {
+          const { subject, html } = emailDeLembrete(c);
+          try {
+            await t.sendMail({ from: remetente(), to: c.emails.join(", "), subject, html });
+            enviados++;
+          } catch (e) {
+            console.error(`[lembretes] ${c.nome}: falha ao enviar:`, e.message);
+            continue;
+          }
+        }
+        await marcarLembrete(c.organizationId);
+      }
+      let avulsos = 0;
+      if (mpConfigurado()) {
+        for (const pg of await avulsosPendentes()) {
+          try {
+            const atualizado = await atualizarAvulso(pg);
+            if (atualizado.status === "aprovado") {
+              await cuidarDaNota(atualizado);
+              avulsos++;
+            }
+          } catch (e) {
+            console.warn(`[lembretes] avulso ${pg.id}:`, e.message);
+          }
+        }
+      }
+      let notas = 0;
+      const { data: semRecibo } = await supabaseServer.from("pagamentos").select("*").eq("status", "aprovado").is("recibo_enviado_em", null).order("data", { ascending: true }).limit(50);
+      for (const pg of semRecibo || []) await enviarRecibo(pg);
+      if (nfseConfigurada()) {
+        for (const pg of await pagamentosSemNota()) {
+          await cuidarDaNota(pg);
+          notas++;
+        }
+      }
+      const whatsapp = await vigiarWhatsapp();
+      const avisos = await avisosDoDiaPorWhatsapp();
+      const hoje = /* @__PURE__ */ new Date();
+      const segunda = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "America/Sao_Paulo" }).format(hoje) === "Mon";
+      const resumos = segunda ? await resumosSemanais(hoje) : { organizacoes: 0, enviados: 0 };
+      console.info(`[lembretes] ${contas.length} conta(s) para lembrar, ${enviados} e-mail(s) enviado(s), ${notas} nota(s) verificada(s), whatsapp ${whatsapp.estado ?? "n/a"}, ${avisos.mensagens} aviso(s), ${resumos.enviados} resumo(s).`);
+      res.json({ contas: contas.length, enviados, notas, avulsos_aprovados: avulsos, whatsapp, avisos, resumos });
+    } catch (err) {
+      console.error("[GET /api/cron/lembretes] erro:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/assinatura/transferir", authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
+    try {
+      const paraId = Number(req.body?.user_id);
+      if (!Number.isInteger(paraId) || paraId === req.user.id) return res.status(400).json({ error: "Escolha outro administrador." });
+      const { data: alvo } = await req.db.from(ESTOQUE_USERS).select("id, nome, email, role, ativo").eq("id", paraId).maybeSingle();
+      if (!alvo || !alvo.ativo || !ADMIN_ROLES.includes(alvo.role) || alvo.role === CEO) return res.status(400).json({ error: "A titularidade s\xF3 pode ir para um administrador ativo." });
+      if (!alvo.email) return res.status(400).json({ error: `${alvo.nome} precisa ter um e-mail cadastrado antes: \xE9 para onde v\xE3o recibos e notas.` });
+      const { error: e1 } = await req.db.from(ESTOQUE_USERS).update({ role: "ADMINISTRADOR", updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", req.user.id);
+      if (e1) throw e1;
+      const { error: e2 } = await req.db.from(ESTOQUE_USERS).update({ role: CEO, updated_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", alvo.id);
+      if (e2) {
+        await req.db.from(ESTOQUE_USERS).update({ role: CEO }).eq("id", req.user.id);
+        throw e2;
+      }
+      console.info(`[CEO] ${req.user.organization_id}: titularidade de ${req.user.matricula} para ${alvo.nome} (#${alvo.id})`);
+      res.json({ ok: true, ceo: { id: alvo.id, nome: alvo.nome, email: alvo.email } });
+    } catch (err) {
+      console.error("[POST /api/assinatura/transferir] erro:", err.message);
+      res.status(500).json({ error: "N\xE3o foi poss\xEDvel transferir a titularidade." });
+    }
+  });
+  app.post("/api/assinatura/pagamentos/:id/recibo", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: data2 } = await req.db.from("pagamentos").select("*").eq("id", req.params.id).maybeSingle();
+      if (!data2) return res.status(404).json({ error: "Pagamento n\xE3o encontrado." });
+      const pg = data2;
+      if (pg.status !== "aprovado") return res.status(409).json({ error: "S\xF3 pagamentos aprovados t\xEAm recibo." });
+      const t = await getTransporter();
+      if (!t) return res.status(503).json({ error: "O envio de e-mail n\xE3o est\xE1 configurado no servidor." });
+      const para = String(req.body?.email ?? "").trim().toLowerCase();
+      if (para && !EMAIL_SIMPLES.test(para)) return res.status(400).json({ error: "E-mail inv\xE1lido." });
+      const { data: org } = await supabaseServer.from("organizations").select("nome").eq("id", pg.organization_id).maybeSingle();
+      const email = emailDeRecibo(pg, org?.nome ?? "sua empresa", void 0, para || null);
+      if (!email) return res.status(400).json({ error: "Este pagamento n\xE3o tem e-mail de pagador. Informe para quem enviar." });
+      await t.sendMail({ from: remetente(), to: email.to, subject: email.subject, html: email.html });
+      await supabaseServer.from("pagamentos").update({ recibo_enviado_em: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", pg.id);
+      res.json({ ok: true, para: email.to });
+    } catch (err) {
+      console.error("[POST /api/assinatura/pagamentos/:id/recibo] erro:", err.message);
+      res.status(500).json({ error: "N\xE3o foi poss\xEDvel enviar o recibo." });
+    }
+  });
+  app.get("/api/assinatura/diagnostico", authenticate, withTenant, requireRole(ADMIN_ROLES), async (_req, res) => {
+    try {
+      res.json(await diagnostico());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  app.post("/api/assinatura/cancelar", authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
     try {
       await cancelarAssinatura2(req.user.organization_id);
       res.json(await resumoDaAssinatura(req.user.organization_id));
@@ -2707,12 +4583,30 @@ function createApp() {
       res.status(500).json({ error: "N\xE3o foi poss\xEDvel cancelar a assinatura." });
     }
   });
-  app.post("/api/assinatura/sincronizar", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+  app.post("/api/assinatura/sincronizar", authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
     try {
+      if (!mpConfigurado()) return res.status(503).json({ error: "Pagamento ainda n\xE3o configurado no servidor (MP_ACCESS_TOKEN)." });
       const id = String(req.body?.preapproval_id ?? "").trim();
-      if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return res.status(400).json({ error: "Assinatura inv\xE1lida." });
-      const pre = await buscarAssinatura(id);
-      const r = await aplicarPreapproval(pre, { organizationId: req.user.organization_id });
+      let r;
+      if (id) {
+        if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return res.status(400).json({ error: "Assinatura inv\xE1lida." });
+        r = await aplicarPreapproval(await buscarAssinatura(id), { organizationId: req.user.organization_id });
+      } else {
+        const pendente = await avulsoPendente(req.user.organization_id);
+        if (pendente) {
+          const atualizado = await atualizarAvulso(pendente);
+          if (atualizado.status === "aprovado") {
+            await cuidarDaNota(atualizado);
+            return res.json(await resumoDaAssinatura(req.user.organization_id));
+          }
+        }
+        const { data: admins } = await req.db.from(ESTOQUE_USERS).select("email").in("role", ADMIN_ROLES);
+        r = await procurarEAplicar(req.user.organization_id, (admins || []).map((a) => String(a.email || "")));
+        if (!r.casou) {
+          const nada = pendente ? `O ${pendente.metodo === "pix" ? "Pix" : "boleto"} gerado ainda n\xE3o foi confirmado pelo banco (${detalheDoPagamento(pendente.detalhe) ?? "aguardando pagamento"}). Assim que entrar, a conta libera sozinha.` : "N\xE3o encontramos pagamento novo: nenhuma assinatura de cart\xE3o ativa no Mercado Pago e nenhum Pix/boleto pendente.";
+          return res.status(409).json({ error: `${nada} Detalhe: ${r.motivo ?? ""}`.trim() });
+        }
+      }
       if (!r.casou) return res.status(409).json({ error: r.motivo ?? "A assinatura n\xE3o corresponde a esta conta." });
       res.json(await resumoDaAssinatura(req.user.organization_id));
     } catch (err) {
@@ -2735,15 +4629,17 @@ function createApp() {
       return res.status(401).json({ error: "Assinatura do webhook inv\xE1lida." });
     }
     if (valida === null) console.warn("[webhook MP] MP_WEBHOOK_SECRET n\xE3o configurado \u2014 evento aceito sem conferir a assinatura.");
-    res.status(200).json({ ok: true });
     try {
       const r = await tratarEvento(tipo, id);
       const casou = "casou" in r ? r.casou : true;
       await registrarEvento({ tipo, mpId: id, organizationId: "organizationId" in r ? r.organizationId : null, tratado: casou, erro: "motivo" in r ? r.motivo ?? null : null, payload: req.body });
+      if ("pagamento" in r) await cuidarDaNota(r.pagamento);
       if (!("ignorado" in r)) console.info(`[webhook MP] ${tipo} ${id}: ${casou ? "aplicado" : `n\xE3o casou (${r.motivo})`}`);
+      res.status(200).json({ ok: true, aplicado: casou });
     } catch (err) {
       console.error("[webhook MP] erro:", err.message);
       await registrarEvento({ tipo, mpId: id, organizationId: null, tratado: false, erro: err.message, payload: req.body });
+      res.status(500).json({ error: "Falha ao processar; o Mercado Pago pode reenviar." });
     }
   });
   app.post("/api/materials/bulk-recount", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
@@ -2840,9 +4736,9 @@ function createApp() {
   async function loadTickets(db, onlyMatricula) {
     let query = db.from("support_tickets").select("*, materiais:support_ticket_materials(id, material_id, material_nome)").order("created_at", { ascending: false });
     if (onlyMatricula) query = query.eq("autor_matricula", onlyMatricula);
-    const { data, error } = await query;
+    const { data: data2, error } = await query;
     if (error) throw error;
-    return data || [];
+    return data2 || [];
   }
   app.get("/api/support", authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
     try {
@@ -2862,9 +4758,9 @@ function createApp() {
       if (!ADMIN_ROLES.includes(req.user.role) && ticket.autor_matricula !== req.user.matricula) {
         return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este chamado." });
       }
-      const { data, error } = await req.db.from("support_ticket_comments").select("*").eq("ticket_id", id).order("created_at", { ascending: true });
+      const { data: data2, error } = await req.db.from("support_ticket_comments").select("*").eq("ticket_id", id).order("created_at", { ascending: true });
       if (error) throw error;
-      res.json({ comments: data || [] });
+      res.json({ comments: data2 || [] });
     } catch (err) {
       console.error("[GET /api/support/:id/comments] erro:", err.message);
       res.status(500).json({ error: "Erro ao carregar mensagens do chamado." });
@@ -2923,7 +4819,7 @@ function createApp() {
       if (!ADMIN_ROLES.includes(req.user.role) && ticket.autor_matricula !== req.user.matricula) {
         return res.status(403).json({ error: "Voc\xEA n\xE3o tem acesso a este chamado." });
       }
-      const { data, error } = await req.db.from("support_ticket_comments").insert({
+      const { data: data2, error } = await req.db.from("support_ticket_comments").insert({
         ticket_id: id,
         autor_matricula: req.user.matricula,
         autor_nome: req.user.nome,
@@ -2931,7 +4827,7 @@ function createApp() {
       }).select().single();
       if (error) throw error;
       await req.db.from("support_tickets").update({ status: "EM_ANALISE" }).eq("id", id).in("status", ["RESOLVIDO", "RECUSADO"]);
-      res.status(201).json({ comment: data });
+      res.status(201).json({ comment: data2 });
     } catch (err) {
       console.error("[POST /api/support/:id/comments] erro:", err.message);
       res.status(500).json({ error: "Erro ao enviar mensagem." });
@@ -2959,9 +4855,9 @@ function createApp() {
       }
       if (resolucao !== void 0) patch.resolucao = resolucao ? String(resolucao).trim() : null;
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nada para atualizar." });
-      const { data, error } = await req.db.from("support_tickets").update(patch).eq("id", id).select().single();
+      const { data: data2, error } = await req.db.from("support_tickets").update(patch).eq("id", id).select().single();
       if (error) throw error;
-      res.json({ ticket: data });
+      res.json({ ticket: data2 });
     } catch (err) {
       console.error("[PATCH /api/support/:id] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar chamado." });
@@ -2969,13 +4865,13 @@ function createApp() {
   });
   const MANAGEABLE_ROLES = ALL_INVENTORY_ROLES;
   const MIN_PASSWORD_LENGTH = 8;
-  const USER_COLUMNS = "id, nome, email, matricula, role, created_at";
+  const USER_COLUMNS = "id, nome, email, matricula, role, created_at, whatsapp, whatsapp_operacoes";
   function assertManageable(role) {
     return !!role && MANAGEABLE_ROLES.includes(role);
   }
   app.get("/api/users", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
-      const { data, error } = await req.db.from(ESTOQUE_USERS).select(`${USER_COLUMNS}, senha`).in("role", MANAGEABLE_ROLES).order("nome", { ascending: true });
+      const { data: data2, error } = await req.db.from(ESTOQUE_USERS).select(`${USER_COLUMNS}, senha, whatsapp_pin`).in("role", MANAGEABLE_ROLES).order("nome", { ascending: true });
       if (error) throw error;
       const { data: atribuicoes, error: aErr } = await req.db.from("estoque_user_warehouses").select("user_id, warehouse_id, nivel");
       if (aErr) throw aErr;
@@ -2985,15 +4881,293 @@ function createApp() {
         lista.push({ warehouse_id: a.warehouse_id, nivel: a.nivel });
         porUsuario.set(a.user_id, lista);
       }
-      const users = (data || []).map(({ senha, ...u }) => ({
+      const users = (data2 || []).map(({ senha, whatsapp_pin, ...u }) => ({
         ...u,
         senha_em_texto_puro: !/^\$2[aby]\$/.test(String(senha || "")),
+        whatsapp_pin_definido: Boolean(whatsapp_pin),
         acessos: porUsuario.get(u.id) || []
       }));
       res.json({ users });
     } catch (err) {
       console.error("[GET /api/users] erro:", err.message);
       res.status(500).json({ error: "Erro ao carregar usu\xE1rios." });
+    }
+  });
+  function camposDoWhatsapp(body) {
+    const campos = {};
+    if (body?.whatsapp !== void 0) {
+      if (body.whatsapp === null || String(body.whatsapp).trim() === "") campos.whatsapp = null;
+      else {
+        const n = normalizarTelefone(body.whatsapp);
+        if (!n) return { ok: false, erro: "WhatsApp inv\xE1lido: use DDD + n\xFAmero, ex.: (84) 99999-9999." };
+        campos.whatsapp = n;
+      }
+    }
+    if (body?.whatsapp_operacoes !== void 0) {
+      if (body.whatsapp_operacoes === null) campos.whatsapp_operacoes = null;
+      else if (!Array.isArray(body.whatsapp_operacoes) || !body.whatsapp_operacoes.every(ehOperacaoWhatsapp)) return { ok: false, erro: "Opera\xE7\xF5es do WhatsApp inv\xE1lidas." };
+      else campos.whatsapp_operacoes = body.whatsapp_operacoes;
+    }
+    if (body?.whatsapp_pin !== void 0) {
+      const pin = String(body.whatsapp_pin ?? "").trim();
+      if (pin === "") campos.whatsapp_pin = null;
+      else if (!/^\d{4,6}$/.test(pin)) return { ok: false, erro: "O PIN do WhatsApp tem de 4 a 6 d\xEDgitos." };
+      else campos.whatsapp_pin = bcrypt2.hashSync(pin, 10);
+    }
+    return { ok: true, campos };
+  }
+  app.post("/api/webhooks/whatsapp", async (req, res) => {
+    const esperado = process.env.EVOLUTION_WEBHOOK_TOKEN;
+    if (!esperado) return res.status(503).json({ error: "Webhook do WhatsApp n\xE3o configurado (EVOLUTION_WEBHOOK_TOKEN)." });
+    if (req.query.token !== esperado) return res.status(401).json({ error: "Token inv\xE1lido." });
+    const msg = lerEvento(req.body);
+    if (!msg) return res.json({ ok: true, ignorado: true });
+    try {
+      const r = await responder(msg.telefone, msg.texto, msg.tipo, msg.instancia || null);
+      if (r.texto === null) return res.json({ ok: true, respondido: false });
+      try {
+        await enviarTexto(msg.telefone, r.texto, msg.instancia || null);
+      } catch (e) {
+        console.error("[whatsapp] n\xE3o enviou a resposta:", e.message);
+      }
+      res.json({ ok: true, respondido: true });
+    } catch (err) {
+      console.error("[webhook whatsapp] erro:", err.message);
+      res.status(500).json({ error: "Falha ao processar." });
+    }
+  });
+  app.post("/api/whatsapp/simular", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const userId = Number(req.body?.user_id);
+      const texto6 = String(req.body?.texto ?? "").trim();
+      if (!Number.isInteger(userId) || !texto6) return res.status(400).json({ error: "Informe o usu\xE1rio e o texto." });
+      const { data: u } = await req.db.from(ESTOQUE_USERS).select("id, whatsapp").eq("id", userId).maybeSingle();
+      if (!u) return res.status(404).json({ error: "Usu\xE1rio n\xE3o encontrado." });
+      if (!u.whatsapp) return res.status(400).json({ error: "Este usu\xE1rio n\xE3o tem WhatsApp cadastrado \u2014 coloque um em Usu\xE1rios para simular." });
+      const r = await responder(u.whatsapp, texto6, "texto");
+      res.json({ resposta: r.texto ?? "(sem resposta: este n\xFAmero j\xE1 recebeu o aviso hoje)", uso: r.uso ?? null, erro: r.erro ?? null });
+    } catch (err) {
+      console.error("[POST /api/whatsapp/simular] erro:", err.message);
+      res.status(500).json({ error: "N\xE3o foi poss\xEDvel simular." });
+    }
+  });
+  app.get("/api/whatsapp/status", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const inicio = /* @__PURE__ */ new Date();
+      inicio.setDate(1);
+      inicio.setHours(0, 0, 0, 0);
+      const { count } = await supabaseServer.from("whatsapp_mensagens").select("*", { count: "exact", head: true }).eq("organization_id", req.user.organization_id).eq("direcao", "entrada").gte("criado_em", inicio.toISOString());
+      let instancia = null;
+      if (evolutionConfigurada()) {
+        try {
+          instancia = await estadoDaInstancia();
+        } catch (e) {
+          instancia = `erro: ${String(e.message).slice(0, 80)}`;
+        }
+      }
+      res.json({ evolution: evolutionConfigurada(), instancia, ia: claudeConfigurado(), liberado: planoLibera(req.plano, "whatsapp"), mensagens_no_mes: count ?? 0, limite_mes: LIMITE_MENSAGENS_MES, numero: process.env.EVOLUTION_NUMERO ?? null });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  const FORNECEDOR_COLUMNS = "id, nome, whatsapp, contato, observacoes, ativo, created_at";
+  function camposDoFornecedor(body, parcial) {
+    const campos = {};
+    if (!parcial || body?.nome !== void 0) {
+      const nome = String(body?.nome ?? "").trim();
+      if (nome.length < 2 || nome.length > 80) return { ok: false, erro: "Informe o nome do fornecedor (2 a 80 caracteres)." };
+      campos.nome = nome;
+    }
+    if (!parcial || body?.whatsapp !== void 0) {
+      const n = normalizarTelefone(body?.whatsapp);
+      if (!n) return { ok: false, erro: "WhatsApp inv\xE1lido: use DDD + n\xFAmero, ex.: (84) 99999-9999." };
+      campos.whatsapp = n;
+    }
+    if (body?.contato !== void 0) campos.contato = String(body.contato ?? "").trim().slice(0, 80) || null;
+    if (body?.observacoes !== void 0) campos.observacoes = String(body.observacoes ?? "").trim().slice(0, 500) || null;
+    if (body?.ativo !== void 0) campos.ativo = Boolean(body.ativo);
+    return { ok: true, campos };
+  }
+  app.get("/api/fornecedores", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: data2, error } = await req.db.from("fornecedores").select(FORNECEDOR_COLUMNS).order("nome");
+      if (error) throw error;
+      res.json({ fornecedores: data2 ?? [] });
+    } catch (err) {
+      console.error("[GET /api/fornecedores] erro:", err.message);
+      res.status(500).json({ error: "Erro ao carregar fornecedores." });
+    }
+  });
+  app.post("/api/fornecedores", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const v = camposDoFornecedor(req.body, false);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { data: data2, error } = await req.db.from("fornecedores").insert(v.campos).select(FORNECEDOR_COLUMNS).single();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe um fornecedor com este WhatsApp." });
+        throw error;
+      }
+      res.status(201).json({ fornecedor: data2 });
+    } catch (err) {
+      console.error("[POST /api/fornecedores] erro:", err.message);
+      res.status(500).json({ error: "Erro ao cadastrar fornecedor." });
+    }
+  });
+  app.patch("/api/fornecedores/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const v = camposDoFornecedor(req.body, true);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      if (Object.keys(v.campos).length === 0) return res.status(400).json({ error: "Nada para atualizar." });
+      const { data: data2, error } = await req.db.from("fornecedores").update(v.campos).eq("id", req.params.id).select(FORNECEDOR_COLUMNS).maybeSingle();
+      if (error) {
+        if (/duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "J\xE1 existe um fornecedor com este WhatsApp." });
+        throw error;
+      }
+      if (!data2) return res.status(404).json({ error: "Fornecedor n\xE3o encontrado." });
+      res.json({ fornecedor: data2 });
+    } catch (err) {
+      console.error("[PATCH /api/fornecedores/:id] erro:", err.message);
+      res.status(500).json({ error: "Erro ao atualizar fornecedor." });
+    }
+  });
+  app.delete("/api/fornecedores/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { count } = await req.db.from("cotacao_fornecedores").select("*", { count: "exact", head: true }).eq("fornecedor_id", req.params.id);
+      if ((count ?? 0) > 0) {
+        const { error: error2 } = await req.db.from("fornecedores").update({ ativo: false }).eq("id", req.params.id);
+        if (error2) throw error2;
+        return res.json({ ok: true, inativado: true });
+      }
+      const { error } = await req.db.from("fornecedores").delete().eq("id", req.params.id);
+      if (error) throw error;
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[DELETE /api/fornecedores/:id] erro:", err.message);
+      res.status(500).json({ error: "Erro ao excluir fornecedor." });
+    }
+  });
+  const COTACAO_COLUMNS = "id, titulo, itens, entrega, observacoes, status, pedido, created_at, encerrada_em, criado_por";
+  const COTACAO_FORNECEDOR_COLUMNS = "fornecedor_id, status, enviada_em, respondida_em, erro, precos, total, conversa, fornecedores(id, nome, whatsapp, contato)";
+  async function cotacaoCompleta(db, id) {
+    const { data: c } = await db.from("cotacoes").select(COTACAO_COLUMNS).eq("id", id).maybeSingle();
+    if (!c) return null;
+    const { data: linhas } = await db.from("cotacao_fornecedores").select(COTACAO_FORNECEDOR_COLUMNS).eq("cotacao_id", id);
+    const fornecedores = (linhas ?? []).map(({ fornecedores: f, ...l }) => ({ ...l, fornecedor: f }));
+    return { ...c, fornecedores };
+  }
+  async function organizacaoParaCotar(req) {
+    const { data: data2 } = await req.db.from("organizations").select("nome, whatsapp_instancia").eq("id", req.user.organization_id).single();
+    return { nome: data2?.nome ?? "a empresa", instancia: data2?.whatsapp_instancia ?? null };
+  }
+  app.get("/api/cotacoes", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: data2, error } = await req.db.from("cotacoes").select(COTACAO_COLUMNS).order("created_at", { ascending: false }).limit(100);
+      if (error) throw error;
+      const ids = (data2 ?? []).map((c) => c.id);
+      const { data: linhas } = ids.length ? await req.db.from("cotacao_fornecedores").select("cotacao_id, fornecedor_id, status, total, fornecedores(id, nome, whatsapp, contato)").in("cotacao_id", ids) : { data: [] };
+      const porCotacao = /* @__PURE__ */ new Map();
+      for (const l of linhas ?? []) {
+        const { fornecedores: f, cotacao_id, ...resto } = l;
+        porCotacao.set(cotacao_id, [...porCotacao.get(cotacao_id) ?? [], { ...resto, fornecedor: f, precos: [], conversa: [], enviada_em: null, respondida_em: null, erro: null }]);
+      }
+      res.json({ cotacoes: (data2 ?? []).map((c) => ({ ...c, fornecedores: porCotacao.get(c.id) ?? [] })) });
+    } catch (err) {
+      console.error("[GET /api/cotacoes] erro:", err.message);
+      res.status(500).json({ error: "Erro ao carregar cota\xE7\xF5es." });
+    }
+  });
+  app.get("/api/cotacoes/:id", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const c = await cotacaoCompleta(req.db, req.params.id);
+      if (!c) return res.status(404).json({ error: "Cota\xE7\xE3o n\xE3o encontrada." });
+      res.json({ cotacao: c });
+    } catch (err) {
+      console.error("[GET /api/cotacoes/:id] erro:", err.message);
+      res.status(500).json({ error: "Erro ao carregar a cota\xE7\xE3o." });
+    }
+  });
+  app.post("/api/cotacoes", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const negada = negarRecurso(req.plano, "cotacoes");
+      if (negada) return res.status(negada.status).json(negada.body);
+      if (!evolutionConfigurada()) return res.status(503).json({ error: "O WhatsApp do Stok A\xED n\xE3o est\xE1 conectado neste servidor." });
+      const titulo = String(req.body?.titulo ?? "").trim();
+      if (titulo.length < 2 || titulo.length > 80) return res.status(400).json({ error: "D\xEA um t\xEDtulo \xE0 cota\xE7\xE3o (2 a 80 caracteres)." });
+      const brutos = Array.isArray(req.body?.itens) ? req.body.itens : [];
+      const itens = brutos.map((i, idx) => ({
+        n: idx + 1,
+        material_id: Number.isInteger(Number(i?.material_id)) && i?.material_id !== null && i?.material_id !== void 0 ? Number(i.material_id) : null,
+        descricao: String(i?.descricao ?? "").trim().slice(0, 120),
+        quantidade: Number(i?.quantidade),
+        unidade: String(i?.unidade ?? "un").trim().slice(0, 12) || "un"
+      })).filter((i) => i.descricao && Number.isFinite(i.quantidade) && i.quantidade > 0);
+      if (itens.length === 0) return res.status(400).json({ error: "Adicione pelo menos um item com quantidade." });
+      if (itens.length > 30) return res.status(400).json({ error: "No m\xE1ximo 30 itens por cota\xE7\xE3o." });
+      const fornecedorIds = Array.isArray(req.body?.fornecedores) ? req.body.fornecedores.map(String) : [];
+      if (fornecedorIds.length === 0) return res.status(400).json({ error: "Escolha pelo menos um fornecedor." });
+      const { data: fornecedores } = await req.db.from("fornecedores").select("id").in("id", fornecedorIds).eq("ativo", true);
+      if (!fornecedores?.length) return res.status(400).json({ error: "Nenhum dos fornecedores escolhidos est\xE1 ativo." });
+      const entrega = String(req.body?.entrega ?? "").trim().slice(0, 200) || null;
+      const observacoes = String(req.body?.observacoes ?? "").trim().slice(0, 500) || null;
+      const { data: c, error } = await req.db.from("cotacoes").insert({ titulo, itens, entrega, observacoes, criado_por: req.user.id }).select(COTACAO_COLUMNS).single();
+      if (error) throw error;
+      const { error: erroLinhas } = await req.db.from("cotacao_fornecedores").insert(fornecedores.map((f) => ({ cotacao_id: c.id, fornecedor_id: f.id })));
+      if (erroLinhas) throw erroLinhas;
+      const org = await organizacaoParaCotar(req);
+      const envio = await enviarCotacao(req.user.organization_id, org.nome, c, org.instancia);
+      res.status(201).json({ cotacao: await cotacaoCompleta(req.db, c.id), envio });
+    } catch (err) {
+      console.error("[POST /api/cotacoes] erro:", err.message);
+      res.status(500).json({ error: "Erro ao criar a cota\xE7\xE3o." });
+    }
+  });
+  app.post("/api/cotacoes/:id/reenviar", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const negada = negarRecurso(req.plano, "cotacoes");
+      if (negada) return res.status(negada.status).json(negada.body);
+      if (!evolutionConfigurada()) return res.status(503).json({ error: "O WhatsApp do Stok A\xED n\xE3o est\xE1 conectado neste servidor." });
+      const { data: c } = await req.db.from("cotacoes").select(COTACAO_COLUMNS).eq("id", req.params.id).maybeSingle();
+      if (!c) return res.status(404).json({ error: "Cota\xE7\xE3o n\xE3o encontrada." });
+      if (c.status !== "aberta") return res.status(400).json({ error: "Esta cota\xE7\xE3o j\xE1 foi encerrada." });
+      const apenas = Array.isArray(req.body?.fornecedores) ? req.body.fornecedores.map(String) : void 0;
+      const org = await organizacaoParaCotar(req);
+      const envio = await enviarCotacao(req.user.organization_id, org.nome, c, org.instancia, apenas);
+      res.json({ cotacao: await cotacaoCompleta(req.db, c.id), envio });
+    } catch (err) {
+      console.error("[POST /api/cotacoes/:id/reenviar] erro:", err.message);
+      res.status(500).json({ error: "Erro ao reenviar." });
+    }
+  });
+  app.post("/api/cotacoes/:id/pedido", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const negada = negarRecurso(req.plano, "cotacoes");
+      if (negada) return res.status(negada.status).json(negada.body);
+      if (!evolutionConfigurada()) return res.status(503).json({ error: "O WhatsApp do Stok A\xED n\xE3o est\xE1 conectado neste servidor." });
+      const fornecedorId = String(req.body?.fornecedor_id ?? "");
+      if (!fornecedorId) return res.status(400).json({ error: "Escolha o fornecedor." });
+      const observacoes = String(req.body?.observacoes ?? "").trim().slice(0, 500) || null;
+      const org = await organizacaoParaCotar(req);
+      let r;
+      try {
+        r = await fecharPedido(req.user.organization_id, org.nome, req.params.id, fornecedorId, observacoes, org.instancia);
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ cotacao: await cotacaoCompleta(req.db, req.params.id), pedido: r });
+    } catch (err) {
+      console.error("[POST /api/cotacoes/:id/pedido] erro:", err.message);
+      res.status(500).json({ error: "Erro ao fechar o pedido." });
+    }
+  });
+  app.post("/api/cotacoes/:id/cancelar", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: data2, error } = await req.db.from("cotacoes").update({ status: "cancelada", encerrada_em: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", req.params.id).eq("status", "aberta").select("id").maybeSingle();
+      if (error) throw error;
+      if (!data2) return res.status(400).json({ error: "S\xF3 uma cota\xE7\xE3o aberta pode ser cancelada." });
+      res.json({ cotacao: await cotacaoCompleta(req.db, req.params.id) });
+    } catch (err) {
+      console.error("[POST /api/cotacoes/:id/cancelar] erro:", err.message);
+      res.status(500).json({ error: "Erro ao cancelar." });
     }
   });
   app.post("/api/users", authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
@@ -3009,15 +5183,21 @@ function createApp() {
       const { count: pessoas } = await req.db.from(ESTOQUE_USERS).select("*", { count: "exact", head: true });
       const negada = negarLimite(req.plano, "usuarios", pessoas ?? 0);
       if (negada) return res.status(negada.status).json(negada.body);
-      const { data, error } = await req.db.from(ESTOQUE_USERS).insert({
+      const wa = camposDoWhatsapp(req.body);
+      if (!wa.ok) return res.status(400).json({ error: wa.erro });
+      const { data: data2, error } = await req.db.from(ESTOQUE_USERS).insert({
         nome: String(nome).trim(),
         matricula: String(matricula).trim(),
         email: email ? String(email).trim().toLowerCase() : null,
         role,
-        senha: await bcrypt.hash(String(senha), 10)
+        senha: await bcrypt2.hash(String(senha), 10),
+        ...wa.campos
       }).select(USER_COLUMNS).single();
-      if (error) throw error;
-      res.status(201).json({ user: data });
+      if (error) {
+        if (/whatsapp/i.test(error.message) && /duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "Este WhatsApp j\xE1 est\xE1 em outro usu\xE1rio." });
+        throw error;
+      }
+      res.status(201).json({ user: data2 });
     } catch (err) {
       console.error("[POST /api/users] erro:", err.message);
       res.status(500).json({ error: "Erro ao criar usu\xE1rio." });
@@ -3032,10 +5212,12 @@ function createApp() {
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: "Este usu\xE1rio pertence a outro sistema e n\xE3o pode ser editado aqui." });
       }
+      if (target.role === CEO && target.id !== req.user.id) return res.status(403).json({ error: "S\xF3 o CEO altera os pr\xF3prios dados." });
+      if (target.role === CEO && role !== void 0 && role !== CEO) return res.status(400).json({ error: 'O CEO n\xE3o muda de cargo por aqui: use "Transferir titularidade" em Plano e assinatura.' });
       const patch = {};
       if (nome !== void 0) patch.nome = String(nome).trim();
       if (email !== void 0) patch.email = email ? String(email).trim().toLowerCase() : null;
-      if (role !== void 0) {
+      if (role !== void 0 && !(target.role === CEO && role === CEO)) {
         if (!ASSIGNABLE_ROLES.includes(String(role))) return res.status(400).json({ error: "Perfil inv\xE1lido: use Administrador, Administrativo ou Operador." });
         if (target.id === req.user.id && !ADMIN_ROLES.includes(role)) {
           return res.status(400).json({ error: "Voc\xEA n\xE3o pode remover o seu pr\xF3prio acesso de administrador." });
@@ -3046,12 +5228,18 @@ function createApp() {
         if (String(senha).length < MIN_PASSWORD_LENGTH) {
           return res.status(400).json({ error: `A senha deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.` });
         }
-        patch.senha = await bcrypt.hash(String(senha), 10);
+        patch.senha = await bcrypt2.hash(String(senha), 10);
       }
+      const wa = camposDoWhatsapp(req.body);
+      if (!wa.ok) return res.status(400).json({ error: wa.erro });
+      Object.assign(patch, wa.campos);
       if (Object.keys(patch).length === 0) return res.status(400).json({ error: "Nada para atualizar." });
-      const { data, error } = await req.db.from(ESTOQUE_USERS).update(patch).eq("id", id).select(USER_COLUMNS).single();
-      if (error) throw error;
-      res.json({ user: data });
+      const { data: data2, error } = await req.db.from(ESTOQUE_USERS).update(patch).eq("id", id).select(USER_COLUMNS).single();
+      if (error) {
+        if (/whatsapp/i.test(error.message) && /duplicate|unique/i.test(error.message)) return res.status(409).json({ error: "Este WhatsApp j\xE1 est\xE1 em outro usu\xE1rio." });
+        throw error;
+      }
+      res.json({ user: data2 });
     } catch (err) {
       console.error("[PATCH /api/users/:id] erro:", err.message);
       res.status(500).json({ error: "Erro ao atualizar usu\xE1rio." });
@@ -3066,6 +5254,7 @@ function createApp() {
       if (!assertManageable(target.role)) {
         return res.status(403).json({ error: "Este usu\xE1rio pertence a outro sistema e n\xE3o pode ser exclu\xEDdo aqui." });
       }
+      if (target.role === CEO) return res.status(403).json({ error: "O CEO n\xE3o pode ser exclu\xEDdo. Transfira a titularidade primeiro." });
       if (ADMIN_ROLES.includes(target.role)) {
         const { count } = await req.db.from(ESTOQUE_USERS).select("id", { count: "exact", head: true }).in("role", ADMIN_ROLES);
         if ((count ?? 0) <= 1) return res.status(400).json({ error: "Este \xE9 o \xFAltimo administrador \u2014 n\xE3o \xE9 poss\xEDvel exclu\xED-lo." });

@@ -25,6 +25,7 @@ import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { enviarCotacao, fecharPedido } from './cotacoes';
 import { vigiarWhatsapp, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores } from './rotinas';
+import { iniciarErros } from './erros';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
 import { emailDeRecibo, emitente as emitenteDoRecibo } from './recibo';
 import { validarPagador } from './pagador';
@@ -229,6 +230,7 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
 
 /** Monta o app Express com todas as rotas da API, sem iniciar nenhum servidor HTTP. */
 export function createApp() {
+  iniciarErros();
   const app = express();
 
   // Atrás de um proxy (Vercel) o IP real vem em X-Forwarded-For. Mas confiar
