@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ClipboardList, Plus, WifiOff } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
@@ -7,6 +7,7 @@ import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { SegmentedControl } from '@/shared/ui/SegmentedControl';
 import { api } from '@/lib/api';
+import { useAtualizacaoAutomatica } from '@/lib/useAtualizacaoAutomatica';
 import { usePlano } from '@/features/planos/usePlano';
 import { Cadeado } from '@/features/planos/Cadeado';
 import { formatDateTime } from '@/features/estoque/utils';
@@ -42,14 +43,18 @@ export function Compras({ catalogo, unidade, depositos }: Props) {
   /** Só quando a empresa usa o próprio número: se a sessão caiu, nada sai — melhor avisar antes de montar a cotação. */
   const [whatsappDaEmpresa, setWhatsappDaEmpresa] = useState<{ instancia: string | null; estado: string | null } | null>(null);
 
-  const carregar = useCallback(async () => {
+  const buscando = useRef(false);
+  const carregar = useCallback(async (opcoes: { silencioso?: boolean } = {}) => {
+    if (buscando.current) return;
+    buscando.current = true;
     try {
       const [f, c] = await Promise.all([api.get<{ fornecedores: Fornecedor[] }>('/api/fornecedores'), api.get<{ cotacoes: Cotacao[] }>('/api/cotacoes')]);
       setFornecedores(f.fornecedores);
       setCotacoes(c.cotacoes);
     } catch (err: any) {
-      toast.error(err.message || 'Erro ao carregar compras.');
+      if (!opcoes.silencioso) toast.error(err.message || 'Erro ao carregar compras.');
     } finally {
+      buscando.current = false;
       setLoading(false);
     }
   }, []);
@@ -57,6 +62,11 @@ export function Compras({ catalogo, unidade, depositos }: Props) {
   useEffect(() => {
     carregar();
   }, [carregar]);
+  // Fornecedor responde pelo WhatsApp a qualquer hora: a lista acompanha sozinha.
+  const emSegundoPlano = useCallback(() => {
+    carregar({ silencioso: true });
+  }, [carregar]);
+  useAtualizacaoAutomatica(emSegundoPlano, 30_000);
 
   useEffect(() => {
     api

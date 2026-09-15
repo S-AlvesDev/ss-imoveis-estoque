@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAtualizacaoAutomatica } from '@/lib/useAtualizacaoAutomatica';
 import { api, ApiError } from '@/lib/api';
 import type { Conta } from '@/shared/planos';
 import { useUnidade } from '@/store/unidade';
@@ -62,7 +63,12 @@ export function useEstoqueData() {
   const setUnidade = useUnidade((s) => s.setUnidade);
   const setOrganizacao = useMarca((s) => s.setOrganizacao);
 
-  const refetch = useCallback(async () => {
+  // Uma busca de cada vez: aba voltando ao foco no meio de um carregamento
+  // não pode empilhar pedidos, senão a tela pisca com respostas fora de ordem.
+  const buscando = useRef(false);
+  const refetch = useCallback(async (opcoes: { silencioso?: boolean } = {}) => {
+    if (buscando.current) return;
+    buscando.current = true;
     try {
       const result = await api.get<EstoqueResposta>('/api/data');
       setData({ ...VAZIO, ...result });
@@ -75,8 +81,11 @@ export function useEstoqueData() {
         setBloqueio(err.body.conta ?? { situacao: 'bloqueada', renovacao: null, plano: 'avaliacao', ate: null, dias_restantes: 0 });
         return;
       }
-      toast.error(err.message || 'Erro ao carregar dados do estoque.');
+      // Atualização de fundo que falha (queda de rede, servidor reiniciando)
+      // não vira aviso: a tela continua com o que tinha e tenta de novo.
+      if (!opcoes.silencioso) toast.error(err.message || 'Erro ao carregar dados do estoque.');
     } finally {
+      buscando.current = false;
       setLoading(false);
     }
   }, [setOrganizacao]);
@@ -84,6 +93,12 @@ export function useEstoqueData() {
   useEffect(() => {
     refetch();
   }, [refetch]);
+
+  // A tela se atualiza sozinha: intervalo, foco e volta da internet.
+  const emSegundoPlano = useCallback(() => {
+    refetch({ silencioso: true });
+  }, [refetch]);
+  useAtualizacaoAutomatica(emSegundoPlano);
 
   // Só se opera em unidade ativa. As desativadas continuam no payload para a
   // tela de Configurações poder mostrá-las e reativá-las.
