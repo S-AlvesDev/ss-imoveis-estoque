@@ -12,6 +12,7 @@
  */
 
 import nodemailer from 'nodemailer';
+import { PRODUTO } from '../shared/produto';
 
 type Ambiente = Record<string, string | undefined>;
 
@@ -36,16 +37,27 @@ export function configuracaoSmtp(env: Ambiente = process.env): ConfiguracaoSmtp 
 }
 
 /**
- * O remetente. Provedores como a Hostinger só aceitam enviar como a própria
- * caixa autenticada, então o padrão é o usuário do SMTP.
+ * O remetente, com nome: na caixa de entrada aparece "Stok Aí", não
+ * "team". Provedores como a Hostinger só aceitam enviar como a própria
+ * caixa autenticada, então o endereço é sempre o do SMTP.
+ *
+ * Quem já escreveu o nome na variável (`Fulano <a@b.com>`) manda nela.
  */
 export function remetente(env: Ambiente = process.env): string {
+  const endereco = enderecoDoRemetente(env);
+  if (endereco.includes('<')) return endereco;
+  const nome = env.SMTP_FROM_NOME || PRODUTO.nome;
+  return `"${nome.replace(/"/g, '')}" <${endereco}>`;
+}
+
+/** O endereço puro, sem nome — é o que serve como destinatário de fallback. */
+function enderecoDoRemetente(env: Ambiente): string {
   return env.SMTP_FROM_EMAIL || env.SMTP_USER || 'noreply@stokai.app';
 }
 
 /** Quem recebe alertas de estoque e chamados: o administrador. */
 export function destinatarioAdmin(env: Ambiente = process.env): string {
-  return env.ADMIN_EMAIL || remetente(env);
+  return env.ADMIN_EMAIL || enderecoDoRemetente(env);
 }
 
 /** Quem recebe pedidos de demonstração: o comercial, ou o administrador. */

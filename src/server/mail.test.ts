@@ -36,9 +36,14 @@ describe('configuracaoSmtp', () => {
 describe('endereços', () => {
   const hostinger = { SMTP_USER: 'contato@stokai.app' };
 
-  it('remetente é a caixa autenticada quando não há SMTP_FROM_EMAIL', () => {
-    expect(remetente(hostinger)).toBe('contato@stokai.app');
-    expect(remetente({ ...hostinger, SMTP_FROM_EMAIL: 'noreply@stokai.app' })).toBe('noreply@stokai.app');
+  it('remetente é a caixa autenticada, com o nome do produto na frente', () => {
+    expect(remetente(hostinger)).toBe('"Stok Aí" <contato@stokai.app>');
+    expect(remetente({ ...hostinger, SMTP_FROM_EMAIL: 'noreply@stokai.app' })).toBe('"Stok Aí" <noreply@stokai.app>');
+  });
+
+  it('nome próprio manda; endereço já formatado passa intacto', () => {
+    expect(remetente({ ...hostinger, SMTP_FROM_NOME: 'Compras Horizonte' })).toBe('"Compras Horizonte" <contato@stokai.app>');
+    expect(remetente({ ...hostinger, SMTP_FROM_EMAIL: 'Suporte <ajuda@stokai.app>' })).toBe('Suporte <ajuda@stokai.app>');
   });
 
   it('administrador recebe na própria caixa se ADMIN_EMAIL não existir', () => {
