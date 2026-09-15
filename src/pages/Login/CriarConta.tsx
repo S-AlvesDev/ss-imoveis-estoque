@@ -79,6 +79,11 @@ export function CriarConta() {
           </div>
         </div>
         <p className="text-[11px] text-[var(--text-muted)]">Você entra pelo e-mail. Os funcionários que você cadastrar entram por matrícula.</p>
+        <p className="text-[11px] text-[var(--text-muted)]">
+          Ao criar a conta, você aceita os{' '}
+          <a href={ROTAS.termos} target="_blank" rel="noopener noreferrer" className="font-semibold text-[var(--brand)] hover:underline">termos de uso</a> e a{' '}
+          <a href={ROTAS.privacidade} target="_blank" rel="noopener noreferrer" className="font-semibold text-[var(--brand)] hover:underline">política de privacidade</a>.
+        </p>
         <Button type="submit" fullWidth size="lg" loading={loading} icon={!loading ? <ArrowRight size={16} /> : undefined}>
           Criar conta e entrar
         </Button>

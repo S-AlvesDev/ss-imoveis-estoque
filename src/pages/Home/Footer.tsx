@@ -6,8 +6,8 @@ import { Container } from './ui';
 
 /**
  * Só o que existe de verdade: as seções da página, entrar, criar conta, o
- * WhatsApp e o formulário. Política, termos, redes e endereço entram quando
- * existirem — um rodapé com link para lugar nenhum é pior que um rodapé curto.
+ * WhatsApp, o formulário, os termos e a privacidade. Redes e endereço entram
+ * quando existirem — um rodapé com link para lugar nenhum é pior que um curto.
  */
 export function Footer({ onDemo }: { onDemo: () => void }) {
   const ano = new Date().getFullYear();
@@ -48,6 +48,12 @@ export function Footer({ onDemo }: { onDemo: () => void }) {
           <button type="button" onClick={onDemo} className={`${link} w-fit text-left`}>
             Solicitar demonstração
           </button>
+          <Link href={ROTAS.termos} className={link}>
+            Termos de uso
+          </Link>
+          <Link href={ROTAS.privacidade} className={link}>
+            Privacidade
+          </Link>
         </nav>
       </Container>
       <Container className="mt-10 flex flex-col gap-2 border-t border-[var(--linha)] pt-6 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">

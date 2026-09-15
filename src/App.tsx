@@ -20,6 +20,7 @@ import { Admin } from '@/pages/Admin/Admin';
 import { Alertas } from '@/pages/Alertas/Alertas';
 import { Suporte } from '@/pages/Suporte/Suporte';
 import { Compras } from '@/pages/Compras/Compras';
+import { Legal } from '@/pages/Legal/Legal';
 import { Usuarios } from '@/pages/Usuarios/Usuarios';
 import { Ajuda } from '@/pages/Ajuda/Ajuda';
 import { Configuracoes } from '@/pages/Configuracoes/Configuracoes';
@@ -224,11 +225,13 @@ export default function App() {
   // Entrou (ou já estava) em /entrar ou /criar-conta: a URL volta para a raiz,
   // para um F5 não reabrir a tela de login por cima do painel.
   useEffect(() => {
-    if (user && path !== ROTAS.home && path !== ROTAS.assinaturaRetorno) navigate(ROTAS.home, { replace: true });
+    if (user && path !== ROTAS.home && path !== ROTAS.assinaturaRetorno && path !== ROTAS.termos && path !== ROTAS.privacidade) navigate(ROTAS.home, { replace: true });
   }, [user, path, navigate]);
 
   let tela: React.ReactNode;
-  if (user && path === ROTAS.assinaturaRetorno) tela = <RetornoAssinatura />;
+  if (path === ROTAS.termos) tela = <Legal documento="termos" />;
+  else if (path === ROTAS.privacidade) tela = <Legal documento="privacidade" />;
+  else if (user && path === ROTAS.assinaturaRetorno) tela = <RetornoAssinatura />;
   else if (user) tela = <InventoryApp role={user.role} />;
   else if (path === ROTAS.entrar) tela = <Login modo="entrar" />;
   else if (path === ROTAS.criarConta) tela = <Login modo="criar" />;
