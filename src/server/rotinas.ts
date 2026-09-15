@@ -17,7 +17,7 @@ import { getTransporter, remetente, destinatarioAdmin } from './mail';
 import { escapeHtml, layoutEmail, p } from './email-layout';
 import { siteUrl } from './senha';
 import { contaDaOrg } from './planos';
-import { planoLibera } from '../shared/planos';
+import { planoLibera, DIAS_PARA_APAGAR } from '../shared/planos';
 import { stockStatus } from '../features/estoque/utils';
 
 const DIA_MS = 24 * 60 * 60 * 1000;
@@ -254,4 +254,34 @@ export async function vigiarWhatsapp(): Promise<{ estado: string | null; avisou:
     console.error('[vigiar whatsapp] e-mail:', e.message);
     return { estado, avisou: false };
   }
+}
+
+// ---------------------------------------------------------------------------
+//  Contas encerradas: apagar quando o prazo dos termos vence
+// ---------------------------------------------------------------------------
+
+/**
+ * Os termos prometem 90 dias para exportar e depois o apagamento. Passado
+ * o prazo, a função do banco derruba tudo na ordem certa (migração 026).
+ * Devolve o nome das organizações apagadas — o cron registra no log.
+ */
+export async function apagarContasVencidas(agora: Date = new Date()): Promise<string[]> {
+  const limite = new Date(agora.getTime() - DIAS_PARA_APAGAR * DIA_MS).toISOString();
+  const { data, error } = await supabaseServer.from('organizations').select('id, nome, encerrada_em').not('encerrada_em', 'is', null).lte('encerrada_em', limite);
+  if (error) {
+    console.error('[apagar contas] leitura:', error.message);
+    return [];
+  }
+  const apagadas: string[] = [];
+  for (const o of (data || []) as Array<{ id: string; nome: string }>) {
+    try {
+      const { error: erro } = await supabaseServer.rpc('apagar_organizacao', { p_org: o.id });
+      if (erro) throw new Error(erro.message);
+      apagadas.push(o.nome);
+      console.info(`[apagar contas] "${o.nome}" apagada — 90 dias desde o encerramento.`);
+    } catch (e: any) {
+      console.error(`[apagar contas] "${o.nome}":`, e.message);
+    }
+  }
+  return apagadas;
 }

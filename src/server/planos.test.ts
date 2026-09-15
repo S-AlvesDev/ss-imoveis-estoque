@@ -2,8 +2,26 @@ import { describe, it, expect, vi } from 'vitest';
 
 // O módulo do servidor importa o cliente do Supabase, que exige URL no import. Aqui só as regras puras interessam.
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
-import { DEFINICOES, PLANOS, planoEfetivo, definicaoDe, planoLibera, limiteDo, cabeMaisUm, planoMinimoPara, planoMinimoParaLimite, descreverLimite, mensagemDeRecurso, mensagemDeLimite, formatarPreco } from '../shared/planos';
+import { DEFINICOES, PLANOS, planoEfetivo, definicaoDe, planoLibera, limiteDo, cabeMaisUm, planoMinimoPara, planoMinimoParaLimite, descreverLimite, mensagemDeRecurso, mensagemDeLimite, formatarPreco, situacaoDaConta } from '../shared/planos';
 import { negarRecurso, negarLimite } from './planos';
+
+describe('conta encerrada', () => {
+  const base = { plano: 'empresarial', plano_ate: '2030-01-01T00:00:00Z', avaliacao_ate: null, cobranca: 'cartao' };
+  it('encerrada manda em tudo: nem plano pago segura', () => {
+    const c = situacaoDaConta({ ...base, encerrada_em: '2026-09-15T12:00:00Z' }, new Date('2026-09-20T12:00:00Z'));
+    expect(c.situacao).toBe('encerrada');
+    expect(c.plano).toBe('avaliacao');
+    // 90 dias de prazo: encerrou em 15/09, apaga em 14/12; faltam 85.
+    expect(c.ate?.slice(0, 10)).toBe('2026-12-14');
+    expect(c.dias_restantes).toBe(85);
+  });
+  it('passado o prazo, zera os dias (o cron é quem apaga)', () => {
+    expect(situacaoDaConta({ ...base, encerrada_em: '2026-01-01T12:00:00Z' }, new Date('2026-09-20T12:00:00Z')).dias_restantes).toBe(0);
+  });
+  it('sem encerramento, nada muda', () => {
+    expect(situacaoDaConta({ ...base, encerrada_em: null }, new Date('2026-09-20T12:00:00Z')).situacao).toBe('assinada');
+  });
+});
 
 describe('catálogo de planos', () => {
   it('tem os três planos do PDF, com os preços e limites combinados', () => {

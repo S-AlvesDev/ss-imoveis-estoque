@@ -24,6 +24,9 @@ interface Props {
   catalogo: Material[];
   fornecedores: Fornecedor[];
   unidade: Unidade | null;
+  /** Já vem montada de outro lugar (ex.: "cotar o que falta", em Alertas). */
+  itensIniciais?: Array<{ material_id: number | null; descricao: string; quantidade: number; unidade: string }>;
+  tituloInicial?: string;
 }
 
 let proximaChave = 1;
@@ -34,7 +37,7 @@ const linhaVazia = (): Linha => ({ chave: proximaChave++, material_id: null, des
  * fornecedores e onde entregar. Ao confirmar, o servidor manda a mesma
  * mensagem para cada fornecedor e a tela passa a acompanhar as respostas.
  */
-export function NovaCotacao({ open, onClose, onCriada, catalogo, fornecedores, unidade }: Props) {
+export function NovaCotacao({ open, onClose, onCriada, catalogo, fornecedores, unidade, itensIniciais, tituloInicial }: Props) {
   const [titulo, setTitulo] = useState('');
   const [linhas, setLinhas] = useState<Linha[]>([linhaVazia()]);
   const [escolhidos, setEscolhidos] = useState<string[]>([]);
@@ -46,14 +49,14 @@ export function NovaCotacao({ open, onClose, onCriada, catalogo, fornecedores, u
 
   useEffect(() => {
     if (!open) return;
-    setTitulo('');
-    setLinhas([linhaVazia()]);
+    setTitulo(tituloInicial ?? '');
+    setLinhas(itensIniciais?.length ? itensIniciais.map((i) => ({ ...linhaVazia(), material_id: i.material_id, descricao: i.descricao, quantidade: String(i.quantidade), unidade: i.unidade })) : [linhaVazia()]);
     setEscolhidos(fornecedores.filter((f) => f.ativo).map((f) => f.id));
     setEntrega(unidade ? unidade.nome : '');
     setObservacoes('');
     setBusca('');
     setLinhaBuscando(null);
-  }, [open, fornecedores, unidade]);
+  }, [open, fornecedores, unidade, itensIniciais, tituloInicial]);
 
   const sugestoes = useMemo(() => {
     const q = busca.trim().toLowerCase();

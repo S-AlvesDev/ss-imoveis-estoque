@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, CheckSquare, Clock, FileDown, Merge, Pencil, Plus, Search, ShieldAlert, SlidersHorizontal, Trash2, X } from 'lucide-react';
+import { Check, CheckSquare, Clock, FileDown, Merge, Pencil, Plus, Search, ShieldAlert, SlidersHorizontal, Trash2, Upload, X } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { EmptyState } from '@/shared/ui/EmptyState';
 import { Button } from '@/shared/ui/Button';
@@ -11,6 +11,7 @@ import { MaterialsTable } from '@/features/estoque/MaterialsTable';
 import { ManageModal } from './ManageModal';
 import { BulkMinimoModal } from './BulkMinimoModal';
 import { MergeModal } from './MergeModal';
+import { ImportarModal } from './ImportarModal';
 import { exportMaterialsToWord } from './exportWord';
 import { api } from '@/lib/api';
 import { naUnidade } from '@/store/unidade';
@@ -78,6 +79,7 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
   const [manageMaterial, setManageMaterial] = useState<Material | null>(null);
   const [historyMaterial, setHistoryMaterial] = useState<Material | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -199,6 +201,9 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
           </Button>
           <Button variant="outline" icon={<FileDown size={15} />} onClick={() => exportMaterialsToWord(materials, categorias, depositos)} disabled={!planoAtual.libera('exportacoes')} title={planoAtual.libera('exportacoes') ? undefined : planoAtual.porQueNao('exportacoes')}>
             Exportar Word
+          </Button>
+          <Button variant="outline" icon={<Upload size={15} />} onClick={() => setImportOpen(true)}>
+            Importar planilha
           </Button>
           <Button variant="outline" icon={<Clock size={15} />} onClick={() => setAuditOpen(true)}>
             Auditoria Geral
@@ -431,6 +436,8 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
         onDone={handleBulkActionDone}
       />
       <MergeModal open={mergeOpen} materials={selectedMaterials} depositos={depositos} onClose={() => setMergeOpen(false)} onDone={handleBulkActionDone} />
+
+      <ImportarModal open={importOpen} onClose={() => setImportOpen(false)} depositos={depositos} refetch={refetch} />
     </div>
   );
 }

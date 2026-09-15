@@ -159,7 +159,7 @@ export function planoDoMpPlanId(planId: string | null | undefined, planoDeTeste:
 //  A situação da conta: assinada, em avaliação, em carência ou bloqueada
 // ---------------------------------------------------------------------------
 
-export type SituacaoDaConta = 'assinada' | 'avaliacao' | 'carencia' | 'bloqueada';
+export type SituacaoDaConta = 'assinada' | 'avaliacao' | 'carencia' | 'bloqueada' | 'encerrada';
 
 export interface Conta {
   situacao: SituacaoDaConta;
@@ -178,7 +178,12 @@ export interface CamposDaConta {
   plano_ate: string | null;
   avaliacao_ate: string | null;
   cobranca?: string | null;
+  /** Quando o CEO encerrou a conta. Enquanto o prazo corre, a empresa entra só para exportar. */
+  encerrada_em?: string | null;
 }
+
+/** Dias que os dados de uma conta encerrada ficam disponíveis para exportação, como dizem os termos. */
+export const DIAS_PARA_APAGAR = 90;
 
 const DIA_MS = 24 * 60 * 60 * 1000;
 
@@ -188,6 +193,7 @@ function dias(ate: Date, agora: Date): number {
 
 /**
  * A regra inteira de "esta conta pode usar o sistema?":
+ *  - encerrada pelo CEO → encerrada (só exporta, até os dados sumirem);
  *  - plano gravado e sem vencimento (cortesia) ou vencimento no futuro → assinada;
  *  - plano vencido há menos de CARENCIA_DIAS → carência (funciona, com aviso);
  *  - sem plano e avaliação ainda no prazo → avaliação (tudo do Empresarial);
@@ -195,6 +201,11 @@ function dias(ate: Date, agora: Date): number {
  */
 export function situacaoDaConta(c: CamposDaConta, agora: Date = new Date()): Conta {
   const renovacao = c.cobranca === 'cartao' ? 'automatica' : c.cobranca === 'avulso' ? 'manual' : null;
+  // Encerrada manda em tudo: não importa o plano, a empresa saiu.
+  if (c.encerrada_em) {
+    const some = new Date(new Date(c.encerrada_em).getTime() + DIAS_PARA_APAGAR * DIA_MS);
+    return { situacao: 'encerrada', renovacao: null, plano: 'avaliacao', ate: some.toISOString(), dias_restantes: dias(some, agora) };
+  }
   if (ehPlano(c.plano)) {
     if (!c.plano_ate) return { situacao: 'assinada', renovacao, plano: c.plano, ate: null, dias_restantes: null };
     const vence = new Date(c.plano_ate);

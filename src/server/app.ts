@@ -15,8 +15,8 @@ import { validarRetirada, prazoEm } from './emprestimos';
 import { validarEntrega, validoAte } from './entregas';
 import { alocarSaida, descreverConsumos, validarLote, type LoteBase, type Consumo } from './lotes';
 import { validarItem, validarEvento, transicionar } from './patrimonio';
-import { contaDaOrg, negarRecurso, negarLimite } from './planos';
-import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, detalheDoPagamento, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
+import { contaDaOrg, negarRecurso, negarLimite, esquecerConta } from './planos';
+import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, DIAS_PARA_APAGAR, detalheDoPagamento, type PlanoEfetivo, type Conta, type Ciclo } from '../shared/planos';
 import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico, ErroDoMercadoPago, mensagemParaOPagador } from './mercadopago';
 import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, avulsosPendentes, type Pagamento } from './assinaturas';
 import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes';
@@ -24,9 +24,10 @@ import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normal
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
-import { vigiarWhatsapp, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores } from './rotinas';
+import { vigiarWhatsapp, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores, apagarContasVencidas } from './rotinas';
 import { iniciarErros } from './erros';
 import { exportarCsv, ehTabelaExportavel } from './exportar';
+import { lerPlanilha, MAX_LINHAS_POR_ENVIO, type MaterialImportado } from '../shared/importacao';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
 import { emailDeRecibo, emitente as emitenteDoRecibo } from './recibo';
 import { validarPagador } from './pagador';
@@ -157,6 +158,15 @@ async function withTenant(req: express.Request, res: express.Response, next: exp
   } catch (err: any) {
     console.error('[withTenant] conta:', err.message);
     return res.status(500).json({ error: 'Erro ao carregar a organização.' });
+  }
+  // Conta encerrada pelo CEO: nada de operar, mas os dados continuam saindo
+  // pela exportação enquanto o prazo dos termos corre — e dá para reabrir.
+  if (req.conta.situacao === 'encerrada' && !req.path.startsWith('/api/assinatura') && !req.path.startsWith('/api/exportar')) {
+    return res.status(402).json({
+      error: `Esta conta foi encerrada. Os dados ficam disponíveis para exportação até ${new Date(req.conta.ate ?? Date.now()).toLocaleDateString('pt-BR')}; o CEO pode reabrir a conta em Configurações.`,
+      bloqueada: true,
+      conta: req.conta,
+    });
   }
   // Conta bloqueada (avaliação terminou, ou cartão recusado além da carência)
   // só consegue falar com as rotas de assinatura — o caminho para voltar.
@@ -2481,6 +2491,8 @@ export function createApp() {
           notas++;
         }
       }
+      // Contas encerradas que passaram do prazo de exportação: agora somem de verdade.
+      const apagadas = await apagarContasVencidas();
       // O WhatsApp está de pé? Avisos do dia no WhatsApp dos administradores. Às segundas, o resumo da semana por e-mail.
       const whatsapp = await vigiarWhatsapp();
       const avisos = await avisosDoDiaPorWhatsapp();
@@ -2488,7 +2500,7 @@ export function createApp() {
       const segunda = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Sao_Paulo' }).format(hoje) === 'Mon';
       const resumos = segunda ? await resumosSemanais(hoje) : { organizacoes: 0, enviados: 0 };
       console.info(`[lembretes] ${contas.length} conta(s) para lembrar, ${enviados} e-mail(s) enviado(s), ${notas} nota(s) verificada(s), whatsapp ${whatsapp.estado ?? 'n/a'}, ${avisos.mensagens} aviso(s), ${resumos.enviados} resumo(s).`);
-      res.json({ contas: contas.length, enviados, notas, avulsos_aprovados: avulsos, whatsapp, avisos, resumos });
+      res.json({ contas: contas.length, enviados, notas, avulsos_aprovados: avulsos, whatsapp, avisos, resumos, apagadas });
     } catch (err: any) {
       console.error('[GET /api/cron/lembretes] erro:', err.message);
       res.status(500).json({ error: err.message });
@@ -3146,6 +3158,139 @@ export function createApp() {
       res.json({ evolution: evolutionConfigurada(), instancia, ia: claudeConfigurado(), liberado: planoLibera(req.plano!, 'whatsapp'), mensagens_no_mes: count ?? 0, limite_mes: LIMITE_MENSAGENS_MES, numero: process.env.EVOLUTION_NUMERO ?? null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --------------------------- IMPORTAR MATERIAIS ---------------------------
+
+  /**
+   * Uma planilha de materiais vira cadastro. A tela manda as linhas já
+   * lidas (em partes), mas o servidor lê de novo pelo mesmo módulo: o que
+   * chega pela rede nunca é a fonte da verdade.
+   *
+   * Material que já existe pelo nome não é erro nem sobrescrita: é pulado,
+   * e a resposta diz quais foram.
+   */
+  app.post('/api/materials/importar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const brutas: unknown[] = Array.isArray(req.body?.linhas) ? req.body.linhas : [];
+      if (brutas.length === 0) return res.status(400).json({ error: 'Nenhuma linha para importar.' });
+      if (brutas.length > MAX_LINHAS_POR_ENVIO) return res.status(400).json({ error: `Mande no máximo ${MAX_LINHAS_POR_ENVIO} linhas por vez.` });
+
+      // Revalida pelo mesmo caminho da tela: cada linha vira uma linha de CSV e volta pelo leitor.
+      const csv = ['nome;unidade;categoria;estoque_minimo;quantidade']
+        .concat(brutas.map((l: any) => [l?.nome, l?.unidade_medida, l?.categoria, l?.estoque_minimo, l?.quantidade].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')))
+        .join('\r\n');
+      const leitura = lerPlanilha(csv);
+      if (leitura.erroGeral) return res.status(400).json({ error: leitura.erroGeral });
+
+      const depositos = await depositosDaOrg(req.db!);
+      let daUnidade: Deposito[];
+      try {
+        daUnidade = depositosDaUnidade(depositos, req.body?.unit_id);
+      } catch (e: any) {
+        return res.status(409).json({ error: e.message });
+      }
+      const destino = daUnidade.find((d) => d.id === req.body?.warehouse_id) ?? daUnidade.find((d) => d.tipo === 'CENTRAL') ?? daUnidade.find((d) => d.modo === 'almoxarifado') ?? daUnidade[0];
+      if (!destino) return res.status(409).json({ error: 'A unidade não tem estoque cadastrado.' });
+      // Patrimônio conta item a item e validade conta por lote: nesses, o saldo entra pela tela deles.
+      const aceitaSaldo = destino.modo !== 'patrimonio' && destino.modo !== 'validade';
+
+      const { data: existentes } = await req.db!.from('materials').select('nome');
+      const jaTem = new Set(((existentes || []) as Array<{ nome: string }>).map((m) => m.nome.trim().toLowerCase()));
+
+      const criados: string[] = [];
+      const pulados: Array<{ linha: number; nome: string; motivo: string }> = [];
+      for (const linha of leitura.linhas) {
+        if (!linha.dados) {
+          pulados.push({ linha: linha.linha, nome: '', motivo: linha.erro ?? 'Linha inválida.' });
+          continue;
+        }
+        const m: MaterialImportado = linha.dados;
+        if (jaTem.has(m.nome.toLowerCase())) {
+          pulados.push({ linha: linha.linha, nome: m.nome, motivo: 'Já existe um material com este nome.' });
+          continue;
+        }
+        try {
+          const { data: material, error } = await req.db!
+            .from('materials')
+            .insert({ nome: m.nome, unidade_medida: m.unidade_medida, qtd_volumes: 1, fator_multiplicador: 1, estoque_minimo: m.estoque_minimo, categoria: m.categoria })
+            .select('id')
+            .single();
+          if (error) throw error;
+          const saldoInicial = aceitaSaldo ? arredondar(m.quantidade) : 0;
+          await gravarSaldos(req.db!, material.id, Object.fromEntries(daUnidade.map((d) => [d.id, d.id === destino.id ? saldoInicial : 0])));
+          if (saldoInicial > 0) {
+            await req.db!.from('material_movements').insert({
+              material_id: material.id,
+              tipo_operacao: 'ENTRADA',
+              quantidade: saldoInicial,
+              warehouse_destino_id: destino.id,
+              funcionario_matricula: req.user!.matricula,
+              justificativa: 'Importação de planilha',
+            });
+          }
+          jaTem.add(m.nome.toLowerCase());
+          criados.push(m.nome);
+        } catch (e: any) {
+          pulados.push({ linha: linha.linha, nome: m.nome, motivo: String(e.message).slice(0, 120) });
+        }
+      }
+      console.info(`[importar] ${criados.length} material(is) criados em "${destino.nome}" por ${req.user!.matricula}; ${pulados.length} pulado(s).`);
+      res.json({ criados: criados.length, pulados, deposito: destino.nome });
+    } catch (err: any) {
+      console.error('[POST /api/materials/importar] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao importar a planilha.' });
+    }
+  });
+
+  // --------------------------- ENCERRAR A CONTA ---------------------------
+
+  /**
+   * O CEO encerra a conta da empresa. A assinatura é cancelada, a conta
+   * para de operar (o withTenant trata como bloqueada) e os dados ficam
+   * por DIAS_PARA_APAGAR dias para exportação — é o que os termos dizem.
+   */
+  app.post('/api/assinatura/encerrar', authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
+    try {
+      const { data: org } = await req.db!.from('organizations').select('nome, encerrada_em').eq('id', req.user!.organization_id).single();
+      if (org?.encerrada_em) return res.status(400).json({ error: 'Esta conta já está encerrada.' });
+      const confirmacao = String(req.body?.confirmacao ?? '').trim().toLowerCase();
+      if (confirmacao !== String(org?.nome ?? '').trim().toLowerCase()) {
+        return res.status(400).json({ error: 'Para encerrar, escreva o nome da empresa exatamente como está cadastrado.' });
+      }
+      const motivo = String(req.body?.motivo ?? '').trim().slice(0, 500) || null;
+
+      // Cancela no Mercado Pago antes: conta encerrada que segue cobrando é pior que conta aberta.
+      try {
+        await cancelarAssinatura(req.user!.organization_id);
+      } catch (e: any) {
+        console.warn('[encerrar] assinatura:', e.message);
+      }
+      const { error } = await req.db!
+        .from('organizations')
+        .update({ encerrada_em: new Date().toISOString(), encerrada_por: req.user!.id, encerrada_motivo: motivo })
+        .eq('id', req.user!.organization_id);
+      if (error) throw error;
+      esquecerConta(req.user!.organization_id);
+      console.info(`[encerrar] "${org?.nome}" encerrada por ${req.user!.matricula}${motivo ? `: ${motivo}` : ''}.`);
+      res.json({ ok: true, dias_para_apagar: DIAS_PARA_APAGAR });
+    } catch (err: any) {
+      console.error('[POST /api/assinatura/encerrar] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao encerrar a conta.' });
+    }
+  });
+
+  /** Voltou atrás dentro do prazo: a conta reabre (o plano continua como estava). */
+  app.post('/api/assinatura/reabrir', authenticate, withTenant, requireRole(ADMIN_ROLES), requireCeo, async (req, res) => {
+    try {
+      const { error } = await req.db!.from('organizations').update({ encerrada_em: null, encerrada_por: null, encerrada_motivo: null }).eq('id', req.user!.organization_id);
+      if (error) throw error;
+      esquecerConta(req.user!.organization_id);
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error('[POST /api/assinatura/reabrir] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao reabrir a conta.' });
     }
   });
 

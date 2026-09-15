@@ -164,7 +164,7 @@ function InventoryApp({ role }: { role: string }) {
                 onNavigate={setView}
               />
             )}
-            {viewAtual === 'alertas' && <Alertas materials={materials} depositos={depositosDaUnidade} emprestimos={emprestimos} lotes={lotes} categorias={nomesDeCategorias} />}
+            {viewAtual === 'alertas' && <Alertas materials={materials} depositos={depositosDaUnidade} emprestimos={emprestimos} lotes={lotes} categorias={nomesDeCategorias} unidade={unidade} />}
             {viewAtual === 'materiais' && (
               <Admin materials={catalogo} materialMovements={materialMovements} staff={staff} categorias={nomesDeCategorias} depositos={depositosDaUnidade} refetch={refetch} />
             )}

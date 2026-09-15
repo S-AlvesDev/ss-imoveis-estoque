@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, CreditCard, Crown, FileText, Lock, Mail, MessageCircle, Receipt, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, Check, CreditCard, Crown, FileText, Lock, Mail, MessageCircle, Receipt, RefreshCw, RotateCcw, Trash2, XCircle } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
 import { Modal } from '@/shared/ui/Modal';
-import { Input, Select } from '@/shared/ui/Field';
+import { Input, Select, Textarea } from '@/shared/ui/Field';
 import { useAuth } from '@/store/auth';
 import { usePlano } from '@/features/planos/usePlano';
 import { EscolherPlano } from '@/features/planos/EscolherPlano';
@@ -119,6 +119,13 @@ function Uso({ rotulo, atual, max }: { rotulo: string; atual: number; max: numbe
 /** A linha de situação: assinada até, avaliação até, carência, cortesia. */
 function Situacao({ conta, assinatura }: { conta: Conta; assinatura: Assinatura | null }) {
   const ate = conta.ate ? fmtData.format(new Date(conta.ate)) : null;
+  if (conta.situacao === 'encerrada') {
+    return (
+      <p className="text-xs font-semibold text-[var(--vermelho)]">
+        Conta encerrada. Os dados ficam para exportação até <strong>{ate}</strong> ({conta.dias_restantes} {conta.dias_restantes === 1 ? 'dia' : 'dias'}) e depois são apagados. Dá para reabrir enquanto o prazo corre.
+      </p>
+    );
+  }
   if (conta.situacao === 'avaliacao') {
     return <p className="text-xs text-[var(--text-muted)]">{ate ? <>Avaliação gratuita até <strong className="text-[var(--text)]">{ate}</strong> ({conta.dias_restantes} {conta.dias_restantes === 1 ? 'dia' : 'dias'}). Enquanto isso, tudo do Empresarial.</> : 'Conta sem cobrança: tudo do Empresarial liberado.'}</p>;
   }
@@ -165,6 +172,10 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   const [transferindo, setTransferindo] = useState(false);
   const [paraId, setParaId] = useState('');
   const [salvandoTransferencia, setSalvandoTransferencia] = useState(false);
+  const [confirmarEncerrar, setConfirmarEncerrar] = useState(false);
+  const [encerrando, setEncerrando] = useState(false);
+  const [nomeDigitado, setNomeDigitado] = useState('');
+  const [motivoDeSaida, setMotivoDeSaida] = useState('');
   const logout = useAuth((s) => s.logout);
   const organizacao = useMarca((s) => s.organizacao);
   const [enviandoRecibo, setEnviandoRecibo] = useState<Pagamento | null>(null);
@@ -205,6 +216,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   const emVigor = assinatura?.status === 'autorizada' || assinatura?.status === 'pausada';
   // Só o CEO mexe na cobrança. Enquanto o resumo não chegou, ninguém — evita o botão aparecer e sumir.
   const souCeo = resumo?.sou_ceo ?? false;
+  const encerrada = conta.situacao === 'encerrada';
 
   async function transferir() {
     if (!paraId) return toast.error('Escolha para quem vai a titularidade.');
@@ -234,6 +246,38 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
       toast.error(err.message || 'Não foi possível cancelar.');
     } finally {
       setCancelando(false);
+    }
+  }
+
+  /** Encerrar é do CEO e pede o nome da empresa escrito à mão — não é um clique distraído. */
+  async function encerrar() {
+    setEncerrando(true);
+    try {
+      await api.post<{ dias_para_apagar: number }>('/api/assinatura/encerrar', { confirmacao: nomeDigitado.trim(), motivo: motivoDeSaida.trim() || null });
+      toast.success('Conta encerrada. Você ainda consegue exportar os dados pelo prazo informado.');
+      setConfirmarEncerrar(false);
+      setNomeDigitado('');
+      setMotivoDeSaida('');
+      await carregar();
+      await refetch();
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível encerrar.');
+    } finally {
+      setEncerrando(false);
+    }
+  }
+
+  async function reabrir() {
+    setEncerrando(true);
+    try {
+      await api.post('/api/assinatura/reabrir', {});
+      toast.success('Conta reaberta. Assine um plano para voltar a operar.');
+      await carregar();
+      await refetch();
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível reabrir.');
+    } finally {
+      setEncerrando(false);
     }
   }
 
@@ -313,11 +357,20 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
                   Cancelar assinatura
                 </Button>
               )}
-              {!emVigor && !cortesia && souCeo && (
+              {!emVigor && !cortesia && souCeo && !encerrada && (
                 <Button size="sm" variant="ghost" loading={confirmando} onClick={confirmarPagamento} icon={confirmando ? undefined : <RefreshCw size={14} />} title="Pagou e a conta não liberou? Procura a assinatura no Mercado Pago.">
                   Já paguei
                 </Button>
               )}
+              {souCeo && (encerrada ? (
+                <Button size="sm" variant="secondary" loading={encerrando} onClick={reabrir} icon={encerrando ? undefined : <RotateCcw size={14} />}>
+                  Reabrir a conta
+                </Button>
+              ) : (
+                <Button size="sm" variant="ghost" onClick={() => setConfirmarEncerrar(true)} icon={<Trash2 size={14} />}>
+                  Encerrar conta
+                </Button>
+              ))}
             </div>
             <a href={linkWhatsApp(`Olá! Quero falar sobre o plano do Stok Aí (${tituloDoPlano}).`)} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--brand)] hover:underline">
               <MessageCircle size={14} /> Falar com a gente
@@ -479,6 +532,35 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
           <Button variant="danger" loading={cancelando} onClick={cancelar}>
             Cancelar assinatura
           </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={confirmarEncerrar}
+        onClose={() => setConfirmarEncerrar(false)}
+        title="Encerrar a conta da empresa?"
+        subtitle="A assinatura é cancelada e o sistema para de operar. Os dados ficam disponíveis para exportação por 90 dias — depois são apagados, como dizem os termos."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setConfirmarEncerrar(false)}>
+              Voltar
+            </Button>
+            <Button variant="danger" loading={encerrando} onClick={encerrar} disabled={nomeDigitado.trim().toLowerCase() !== (organizacao?.nome ?? '').trim().toLowerCase()}>
+              Encerrar conta
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-rose-500" />
+            <div className="text-sm text-[var(--text)]">
+              <p className="font-bold">Antes de encerrar, leve seus dados.</p>
+              <p className="mt-1 text-[var(--text-muted)]">Em Configurações → Exportar dados dá para baixar materiais, movimentações, empréstimos, usuários, fornecedores e cotações em CSV. Depois de apagados, não há como recuperar.</p>
+            </div>
+          </div>
+          <Input label={`Escreva o nome da empresa para confirmar`} value={nomeDigitado} onChange={(e) => setNomeDigitado(e.target.value)} placeholder={organizacao?.nome ?? 'Nome da empresa'} />
+          <Textarea label="Por que está saindo? (opcional)" value={motivoDeSaida} onChange={(e) => setMotivoDeSaida(e.target.value)} rows={2} placeholder="O que faltou para o Stok Aí servir melhor?" />
         </div>
       </Modal>
     </section>

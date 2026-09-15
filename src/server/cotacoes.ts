@@ -133,7 +133,35 @@ const FERRAMENTAS: Ferramenta[] = [
   },
 ];
 
-function precosAtuais(itens: ItemDeCotacao[], precos: PrecoRespondido[]): string {
+/**
+ * O que a IA disse ter lido vira preço registrado — ou não vira nada.
+ * Item que não está na cotação é ignorado; preço impossível (texto,
+ * negativo, infinito) entra como "sem preço", nunca como número errado.
+ * Pura: é aqui que o teste segura o que a IA pode inventar.
+ */
+export function mesclarPrecos(itens: ItemDeCotacao[], atuais: PrecoRespondido[], lidos: unknown): { precos: PrecoRespondido[]; mudou: boolean } {
+  const lista = Array.isArray(lidos) ? (lidos as any[]) : [];
+  let precos = [...atuais];
+  let mudou = false;
+  for (const it of lista) {
+    const n = Number(it?.n);
+    if (!Number.isInteger(n) || !itens.some((i) => i.n === n)) continue;
+    const bruto = it?.preco_unitario === undefined || it?.preco_unitario === null || it?.preco_unitario === '' ? null : Number(it.preco_unitario);
+    const preco_unitario = bruto !== null && Number.isFinite(bruto) && bruto >= 0 ? Math.round(bruto * 100) / 100 : null;
+    const novo: PrecoRespondido = {
+      n,
+      preco_unitario,
+      disponivel: it?.disponivel === undefined ? true : Boolean(it.disponivel),
+      prazo: it?.prazo ? String(it.prazo).slice(0, 80) : null,
+      observacao: it?.observacao ? String(it.observacao).slice(0, 200) : null,
+    };
+    precos = [...precos.filter((p) => p.n !== n), novo].sort((a, b) => a.n - b.n);
+    mudou = true;
+  }
+  return { precos, mudou };
+}
+
+export function precosAtuais(itens: ItemDeCotacao[], precos: PrecoRespondido[]): string {
   return itens
     .map((i) => {
       const p = precos.find((x) => x.n === i.n);
@@ -213,21 +241,9 @@ export async function responderFornecedor(ctx: FornecedorFalando, texto: string 
           maxTokens: 400,
           executar: async (name, input) => {
             if (name !== 'registrar_precos') return 'Ferramenta desconhecida.';
-            const lidos = Array.isArray((input as any).itens) ? ((input as any).itens as any[]) : [];
-            for (const it of lidos) {
-              const n = Number(it.n);
-              if (!ctx.cotacao.itens.some((i) => i.n === n)) continue;
-              const preco = it.preco_unitario === undefined || it.preco_unitario === null ? null : Number(it.preco_unitario);
-              const novo: PrecoRespondido = {
-                n,
-                preco_unitario: preco !== null && Number.isFinite(preco) && preco >= 0 ? Math.round(preco * 100) / 100 : null,
-                disponivel: it.disponivel === undefined ? true : Boolean(it.disponivel),
-                prazo: it.prazo ? String(it.prazo).slice(0, 80) : null,
-                observacao: it.observacao ? String(it.observacao).slice(0, 200) : null,
-              };
-              precos = [...precos.filter((p) => p.n !== n), novo].sort((a, b) => a.n - b.n);
-              avisar = true;
-            }
+            const r = mesclarPrecos(ctx.cotacao.itens, precos, (input as any).itens);
+            precos = r.precos;
+            if (r.mudou) avisar = true;
             return `Registrado. Situação agora:\n${precosAtuais(ctx.cotacao.itens, precos)}`;
           },
         });

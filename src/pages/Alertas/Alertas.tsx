@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ArrowLeftRight, CalendarClock, FileDown, PackageX, RefreshCw, TrendingDown, Timer } from 'lucide-react';
+import { toast } from 'sonner';
+import { AlertTriangle, ArrowLeftRight, CalendarClock, FileDown, PackageX, RefreshCw, ShoppingCart, TrendingDown, Timer } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
@@ -8,6 +9,11 @@ import { Reveal, RevealItem } from '@/shared/ui/Reveal';
 import type { Material, Deposito, Emprestimo, Lote } from '@/shared/types';
 import { formatNumber, percentOfMinimum, stockStatus, stockTotal, saldoEm, ondeTem, formatDateTime } from '@/features/estoque/utils';
 import { exportReposicaoToWord } from './exportReposicao';
+import { api } from '@/lib/api';
+import { usePlano } from '@/features/planos/usePlano';
+import { NovaCotacao } from '@/pages/Compras/NovaCotacao';
+import type { Cotacao, Fornecedor } from '@/shared/cotacoes';
+import type { Unidade } from '@/shared/types';
 
 type Group = 'RUPTURA' | 'ABAIXO' | 'TRANSFERIR';
 
@@ -113,10 +119,16 @@ interface AlertasProps {
   /** Lotes com saldo — os vencidos e os vencendo viram alerta aqui. */
   lotes: Lote[];
   categorias: string[];
+  /** A unidade em uso — vira o "entregar em" da cotação. */
+  unidade: Unidade | null;
 }
 
-export function Alertas({ materials, depositos, emprestimos, lotes, categorias }: AlertasProps) {
+export function Alertas({ materials, depositos, emprestimos, lotes, categorias, unidade }: AlertasProps) {
   const nomeDo = (id: string) => depositos.find((d) => d.id === id)?.nome ?? '';
+  const planoAtual = usePlano();
+  const [cotando, setCotando] = useState(false);
+  const [carregandoFornecedores, setCarregandoFornecedores] = useState(false);
+  const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   // Empréstimos vencidos e entregas com troca vencida — as duas moram na mesma tabela, com tipo.
   const atrasados = useMemo(() => {
     const agora = Date.now();
@@ -165,6 +177,34 @@ export function Alertas({ materials, depositos, emprestimos, lotes, categorias }
   }, [materials, depositos]);
 
   const totalCompra = grouped.RUPTURA.length + grouped.ABAIXO.length;
+  /** O que falta vira lista de cotação: compra o que recompõe o mínimo (no mínimo 1). */
+  const itensParaCotar = useMemo(
+    () =>
+      [...grouped.RUPTURA, ...grouped.ABAIXO].map((m) => ({
+        material_id: m.id,
+        descricao: m.nome,
+        quantidade: Math.max(1, Math.ceil(Number(m.estoque_minimo || 0) - stockTotal(m))),
+        unidade: m.unidade_medida,
+      })),
+    [grouped],
+  );
+
+  async function abrirCotacao() {
+    setCarregandoFornecedores(true);
+    try {
+      const r = await api.get<{ fornecedores: Fornecedor[] }>('/api/fornecedores');
+      setFornecedores(r.fornecedores);
+      if (r.fornecedores.filter((f) => f.ativo).length === 0) {
+        toast.error('Cadastre um fornecedor em Compras antes de cotar.');
+        return;
+      }
+      setCotando(true);
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível carregar os fornecedores.');
+    } finally {
+      setCarregandoFornecedores(false);
+    }
+  }
   const visibleGroups = GROUPS.filter((g) => openGroup === 'TODOS' || openGroup === g.key);
 
   return (
@@ -174,14 +214,25 @@ export function Alertas({ materials, depositos, emprestimos, lotes, categorias }
           <h1 className="font-display text-2xl font-bold text-[var(--text)]">Alertas</h1>
           <p className="text-sm text-[var(--text-muted)]">O que precisa de compra, o que só precisa de transferência, o que está atrasado na rua e o que está vencendo.</p>
         </div>
-        <Button
-          variant="outline"
-          icon={<FileDown size={15} />}
-          disabled={totalCompra === 0}
-          onClick={() => exportReposicaoToWord([...grouped.RUPTURA, ...grouped.ABAIXO], categorias, depositos)}
-        >
-          Lista de Compras ({totalCompra})
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            icon={<FileDown size={15} />}
+            disabled={totalCompra === 0}
+            onClick={() => exportReposicaoToWord([...grouped.RUPTURA, ...grouped.ABAIXO], categorias, depositos)}
+          >
+            Lista de Compras ({totalCompra})
+          </Button>
+          <Button
+            icon={<ShoppingCart size={15} />}
+            disabled={totalCompra === 0 || !planoAtual.libera('cotacoes')}
+            loading={carregandoFornecedores}
+            title={planoAtual.libera('cotacoes') ? 'Pergunta o preço destes materiais aos fornecedores, pelo WhatsApp' : planoAtual.porQueNao('cotacoes')}
+            onClick={abrirCotacao}
+          >
+            Cotar o que falta
+          </Button>
+        </div>
       </div>
 
       {atrasados.length > 0 && (
@@ -340,6 +391,17 @@ export function Alertas({ materials, depositos, emprestimos, lotes, categorias }
           })}
         </>
       )}
+
+      <NovaCotacao
+        open={cotando}
+        onClose={() => setCotando(false)}
+        onCriada={() => toast.success('Cotação enviada. Acompanhe as respostas em Compras.')}
+        catalogo={materials}
+        fornecedores={fornecedores}
+        unidade={unidade}
+        itensIniciais={itensParaCotar}
+        tituloInicial={`Reposição ${new Date().toLocaleDateString('pt-BR')}`}
+      />
     </div>
   );
 }
