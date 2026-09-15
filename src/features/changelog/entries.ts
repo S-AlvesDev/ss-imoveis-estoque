@@ -24,6 +24,24 @@ export const KIND_META: Record<ChangeKind, { label: string; className: string }>
 /** Mais recente primeiro. A versão do topo é a que aparece no aviso do Dashboard. */
 export const RELEASES: Release[] = [
   {
+    versao: '3.9',
+    data: '2026-09-15',
+    titulo: 'O que faltava para operar sozinho',
+    resumo:
+      'Avisos do dia no WhatsApp, resumo da semana por e-mail, foto de tabela de preço lida pela IA, entrada do pedido com um clique, o número da própria empresa nas cotações, exportação em CSV e um guia de primeiros passos para quem acabou de chegar.',
+    mudancas: [
+      { tipo: 'novo', titulo: 'Avisos do dia no WhatsApp', descricao: 'Toda manhã, os administradores com WhatsApp recebem o que está abaixo do mínimo, os empréstimos atrasados e os lotes vencendo em 30 dias. Só quando há algo.' },
+      { tipo: 'novo', titulo: 'Resumo da semana por e-mail', descricao: 'Às segundas: movimentações da semana, o que mais saiu, pendências. Plano Empresarial.' },
+      { tipo: 'novo', titulo: 'Foto de tabela de preço', descricao: 'O fornecedor manda a foto ou o PDF; a IA lê e registra só os itens da cotação.' },
+      { tipo: 'novo', titulo: 'Entrada a partir do pedido', descricao: 'Chegou o material? Na cotação, escolha o estoque e a entrada de cada item do catálogo é lançada com o fornecedor na justificativa.' },
+      { tipo: 'novo', titulo: 'Número da própria empresa', descricao: 'Em Configurações → Stok Aí no WhatsApp, conecte o WhatsApp da empresa por QR: cotações, pedidos e avisos passam a sair dele.' },
+      { tipo: 'novo', titulo: 'Exportar dados', descricao: 'Materiais com saldo, movimentações, empréstimos, usuários, fornecedores e cotações em CSV, em Configurações.' },
+      { tipo: 'novo', titulo: 'Primeiros passos', descricao: 'A conta nova ganha um guia no painel: materiais, primeira entrada, equipe, ajustes.' },
+      { tipo: 'melhoria', titulo: 'Alerta de mínimo por e-mail', descricao: 'Agora vai para os administradores da sua empresa — antes ia para um endereço fixo.' },
+      { tipo: 'melhoria', titulo: 'Termos e privacidade', descricao: 'Publicados em stokai.app/termos e /privacidade; o aceite entra ao criar a conta.' },
+    ],
+  },
+  {
     versao: '3.8',
     data: '2026-09-14',
     titulo: 'Compras: cotação pelo WhatsApp',

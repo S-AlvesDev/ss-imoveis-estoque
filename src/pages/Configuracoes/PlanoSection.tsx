@@ -80,7 +80,7 @@ const RECURSOS_VISIVEIS: Array<{ id: Recurso; nome: string }> = [
   { id: 'alertas-por-email', nome: 'Alertas por e-mail' },
   { id: 'whatsapp', nome: 'Stok Aí no WhatsApp' },
   { id: 'cotacoes', nome: 'Cotações a fornecedores pelo WhatsApp' },
-  { id: 'relatorios-automaticos', nome: 'Relatórios automáticos (em breve)' },
+  { id: 'relatorios-automaticos', nome: 'Resumo semanal por e-mail' },
 ];
 
 const BADGE_PAGAMENTO: Record<Pagamento['status'], { variant: 'success' | 'critical' | 'warning' | 'neutral' | 'info'; texto: string }> = {

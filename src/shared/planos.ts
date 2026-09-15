@@ -88,7 +88,7 @@ export const DEFINICOES: Record<Plano, DefinicaoDoPlano> = {
     limites: { unidades: 4, depositosPorUnidade: null, usuarios: null },
     recursos: ['transferencia', 'identidade-visual', 'exportacoes', 'alertas-por-email', 'relatorios-automaticos', 'whatsapp', 'cotacoes'],
     niveis: { auditoria: 'Avançada', alertas: 'Automáticos', dashboard: 'Avançado', relatorios: 'Avançados', permissoes: 'Avançadas', suporte: 'Prioridade máxima' },
-    destaques: ['4 unidades, depósitos ilimitados*', 'Usuários ilimitados*', 'Tudo do Profissional', 'WhatsApp incluído', 'Relatórios automáticos', 'Personalização completa', 'Acesso antecipado a novos módulos'],
+    destaques: ['4 unidades, depósitos ilimitados*', 'Usuários ilimitados*', 'Tudo do Profissional', 'Stok Aí no WhatsApp: a equipe opera pelo celular', 'Cotações a fornecedores pelo WhatsApp', 'Avisos diários e resumo semanal', 'Acesso antecipado a novos módulos'],
     servicos: ['Implantação e treinamento da equipe', 'Acompanhamento dedicado', 'Prioridade máxima no suporte'],
   },
 };

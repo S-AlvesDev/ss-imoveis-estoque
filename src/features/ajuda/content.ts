@@ -415,9 +415,21 @@ export const GUIA: Section[] = [
         passos: [
           'Na cotação, clique em "fechar pedido" no fornecedor escolhido. Dá para mandar um recado extra ("entregar de manhã").',
           'A cotação encerra. O que o fornecedor disser depois sobre o pedido chega no WhatsApp de quem criou a cotação.',
-          'Quando o material chegar, dê a entrada no estoque normalmente — pelo painel ou pelo WhatsApp.',
+          'Quando o material chegar, abra a cotação, escolha o estoque em "O material chegou?" e clique em Dar entrada: cada item do catálogo entra com a quantidade do pedido.',
         ],
         dicas: [{ tipo: 'dica', texto: 'Faz parte do plano Empresarial, junto com o Stok Aí no WhatsApp.' }],
+      },
+      {
+        id: 'compras-numero-proprio',
+        titulo: 'Usar o WhatsApp da própria empresa',
+        audiencia: ['admin'],
+        resumo: 'Por padrão as cotações saem do número do Stok Aí. Se preferir que saiam do WhatsApp da sua empresa, conecte-o por QR — como o WhatsApp Web.',
+        passos: [
+          'Configurações → Stok Aí no WhatsApp → "Conectar número da empresa".',
+          'No celular da empresa: WhatsApp → ⋮ → Aparelhos conectados → Conectar aparelho → leia o QR da tela.',
+          'Pronto: cotações, pedidos e os avisos do dia passam a sair desse número. Clientes que escrevem nele não recebem resposta automática — o Stok Aí só fala com a equipe e com fornecedores em cotação.',
+        ],
+        dicas: [{ tipo: 'atencao', texto: 'O celular da empresa precisa continuar com internet e o WhatsApp instalado, como no WhatsApp Web. "Desconectar" volta ao número do Stok Aí.' }],
       },
     ],
   },
