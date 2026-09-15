@@ -5,7 +5,6 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import nodemailer from 'nodemailer';
 import { supabaseServer } from '../lib/supabaseServer';
 import { ADMIN_ROLES, ALL_INVENTORY_ROLES, ASSIGNABLE_ROLES, CEO } from '../shared/constants';
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
@@ -25,10 +24,11 @@ import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normal
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { enviarCotacao, fecharPedido } from './cotacoes';
+import { vigiarWhatsapp, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores } from './rotinas';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
 import { emailDeRecibo, emitente as emitenteDoRecibo } from './recibo';
 import { validarPagador } from './pagador';
-import { configuracaoSmtp, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
+import { getTransporter, remetente, destinatarioAdmin, destinatarioDemo } from './mail';
 import {
   gerarToken,
   hashDoToken,
@@ -72,15 +72,6 @@ const ESTOQUE_USERS = 'estoque_users';
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   throw new Error('[Server] JWT_SECRET não definido — configure essa variável de ambiente antes de subir o servidor.');
-}
-
-let transporter: nodemailer.Transporter | null = null;
-async function getTransporter() {
-  if (transporter) return transporter;
-  const config = configuracaoSmtp();
-  if (!config) return null; // sem SMTP configurado: o sistema segue sem e-mail
-  transporter = nodemailer.createTransport(config);
-  return transporter;
 }
 
 // O PostgREST (Supabase) limita cada resposta a 1000 linhas por padrão. Esta
@@ -1653,7 +1644,7 @@ export function createApp() {
    * saldo. A regra é a mesma da interface (needsPurchase), calculada sobre a
    * UNIDADE onde a operação aconteceu. Nunca derruba a operação.
    */
-  async function avisarMinimo(plano: PlanoEfetivo, material: any, saldosNovos: SaldosPorDeposito, saldosAntes: SaldosPorDeposito, depositosDaUnidadeDela: Deposito[], resumo: string) {
+  async function avisarMinimo(plano: PlanoEfetivo, organizationId: string, material: any, saldosNovos: SaldosPorDeposito, saldosAntes: SaldosPorDeposito, depositosDaUnidadeDela: Deposito[], resumo: string) {
     // Na tela o alerta é de todo mundo; o e-mail é dos planos que o incluem.
     if (!planoLibera(plano, 'alertas-por-email')) return;
     const saldos_unidade: Record<string, number> = {};
@@ -1665,10 +1656,13 @@ export function createApp() {
     try {
       const t = await getTransporter();
       if (!t) return;
+      // Para quem responde pela empresa — cada organização recebe só os alertas dela.
+      const para = await emailsDosAdministradores(organizationId);
+      if (!para.length) return;
       const linhas = depositosDaUnidadeDela.map((d) => `${d.nome}: ${saldos_unidade[d.id]} ${material.unidade_medida}`).join('<br/>');
       await t.sendMail({
         from: remetente(),
-        to: destinatarioAdmin(),
+        to: para.join(', '),
         subject: `${semEstoque ? 'Sem estoque' : 'Estoque abaixo do mínimo'}: ${material.nome}`,
         html:
           `<p>O material <strong>${material.nome}</strong> ${semEstoque ? 'está <strong>sem estoque</strong> em todos os estoques da unidade.' : 'está com o saldo da unidade <strong>abaixo do estoque mínimo</strong>.'}</p>` +
@@ -1828,7 +1822,7 @@ export function createApp() {
         justificativa: `${String(justificativa).trim()}${detalheLotes}`,
       });
 
-      await avisarMinimo(req.plano!, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Operação: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Responsável: ${req.user!.nome}`);
+      await avisarMinimo(req.plano!, req.user!.organization_id, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Operação: ${operacao} em ${estoque.nome} | Quantidade: ${q} | Responsável: ${req.user!.nome}`);
 
       res.json({ success: true, material_id, saldos: calculo.novos, lotes: consumos });
     } catch (err: any) {
@@ -1907,7 +1901,7 @@ export function createApp() {
         justificativa: `Retirada por ${r.tomador_nome}${r.tomador_referencia ? ` (${r.tomador_referencia})` : ''} — prazo ${r.prazo_horas} h`,
       });
 
-      await avisarMinimo(req.plano!, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user!.nome}`);
+      await avisarMinimo(req.plano!, req.user!.organization_id, material, calculo.novos, atuais, depositos.filter((d) => d.unit_id === estoque.unit_id), `Retirada em ${estoque.nome} por ${r.tomador_nome} | Quantidade: ${r.quantidade} | Registrou: ${req.user!.nome}`);
 
       res.status(201).json({ emprestimo: { ...emprestimo, material_nome: material.nome, unidade_medida: material.unidade_medida }, saldos: calculo.novos });
     } catch (err: any) {
@@ -2035,7 +2029,7 @@ export function createApp() {
 
       const r = await registrarEntrega(req, estoque, req.body);
       if (r.status === 201 && r.material) {
-        await avisarMinimo(req.plano!, r.material, r.saldosNovos!, r.saldosAntes!, depositos.filter((d) => d.unit_id === estoque.unit_id), `Entrega em ${estoque.nome} | Registrou: ${req.user!.nome}`);
+        await avisarMinimo(req.plano!, req.user!.organization_id, r.material, r.saldosNovos!, r.saldosAntes!, depositos.filter((d) => d.unit_id === estoque.unit_id), `Entrega em ${estoque.nome} | Registrou: ${req.user!.nome}`);
       }
       res.status(r.status).json(r.body);
     } catch (err: any) {
@@ -2483,8 +2477,14 @@ export function createApp() {
           notas++;
         }
       }
-      console.info(`[lembretes] ${contas.length} conta(s) para lembrar, ${enviados} e-mail(s) enviado(s), ${notas} nota(s) verificada(s).`);
-      res.json({ contas: contas.length, enviados, notas, avulsos_aprovados: avulsos });
+      // O WhatsApp está de pé? Avisos do dia no WhatsApp dos administradores. Às segundas, o resumo da semana por e-mail.
+      const whatsapp = await vigiarWhatsapp();
+      const avisos = await avisosDoDiaPorWhatsapp();
+      const hoje = new Date();
+      const segunda = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Sao_Paulo' }).format(hoje) === 'Mon';
+      const resumos = segunda ? await resumosSemanais(hoje) : { organizacoes: 0, enviados: 0 };
+      console.info(`[lembretes] ${contas.length} conta(s) para lembrar, ${enviados} e-mail(s) enviado(s), ${notas} nota(s) verificada(s), whatsapp ${whatsapp.estado ?? 'n/a'}, ${avisos.mensagens} aviso(s), ${resumos.enviados} resumo(s).`);
+      res.json({ contas: contas.length, enviados, notas, avulsos_aprovados: avulsos, whatsapp, avisos, resumos });
     } catch (err: any) {
       console.error('[GET /api/cron/lembretes] erro:', err.message);
       res.status(500).json({ error: err.message });

@@ -11,6 +11,8 @@
  * mexer no process.env.
  */
 
+import nodemailer from 'nodemailer';
+
 type Ambiente = Record<string, string | undefined>;
 
 export interface ConfiguracaoSmtp {
@@ -49,4 +51,14 @@ export function destinatarioAdmin(env: Ambiente = process.env): string {
 /** Quem recebe pedidos de demonstração: o comercial, ou o administrador. */
 export function destinatarioDemo(env: Ambiente = process.env): string {
   return env.DEMO_EMAIL || destinatarioAdmin(env);
+}
+
+let transporter: nodemailer.Transporter | null = null;
+/** O transporte de e-mail, criado uma vez. Nulo sem SMTP configurado: o sistema segue sem e-mail. */
+export async function getTransporter(): Promise<nodemailer.Transporter | null> {
+  if (transporter) return transporter;
+  const config = configuracaoSmtp();
+  if (!config) return null;
+  transporter = nodemailer.createTransport(config);
+  return transporter;
 }
