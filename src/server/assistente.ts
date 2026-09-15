@@ -442,6 +442,13 @@ async function registrar(args: { organizationId: string | null; userId: number |
   }
 }
 
+/** Já mandamos o aviso de "não achei seu cadastro" para este número nas últimas 24 h? */
+async function jaAvisamosHoje(telefone: string): Promise<boolean> {
+  const desde = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const { count } = await supabaseServer.from('whatsapp_mensagens').select('*', { count: 'exact', head: true }).eq('telefone', telefone).eq('direcao', 'saida').is('organization_id', null).gte('criado_em', desde);
+  return (count ?? 0) > 0;
+}
+
 async function mensagensNoMes(organizationId: string): Promise<number> {
   const inicio = new Date();
   inicio.setDate(1);
@@ -451,7 +458,8 @@ async function mensagensNoMes(organizationId: string): Promise<number> {
 }
 
 export interface Resposta {
-  texto: string;
+  /** Nulo = não responder nada (número sem cadastro que já recebeu o aviso hoje). */
+  texto: string | null;
   falante: Falante | null;
   uso?: Uso;
   /** Motivo técnico quando a IA falhou — para o administrador no simulador, nunca para o WhatsApp. */
@@ -475,6 +483,10 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
       return { texto: r.texto, falante: null };
     }
     await registrar({ organizationId: null, userId: null, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });
+    // O número do assistente é o do atendimento: quem está conversando com uma pessoa da equipe
+    // não pode receber o aviso automático a cada mensagem. Uma vez por dia basta.
+    if (await jaAvisamosHoje(telefone)) return { texto: null, falante: null };
+    await registrar({ organizationId: null, userId: null, telefone, direcao: 'saida', texto: MENSAGEM_PARA_DESCONHECIDO });
     return { texto: MENSAGEM_PARA_DESCONHECIDO, falante: null };
   }
   await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });

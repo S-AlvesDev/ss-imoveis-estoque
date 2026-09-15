@@ -3017,6 +3017,7 @@ export function createApp() {
     if (!msg) return res.json({ ok: true, ignorado: true });
     try {
       const r = await responder(msg.telefone, msg.texto, msg.tipo, msg.instancia || null);
+      if (r.texto === null) return res.json({ ok: true, respondido: false });
       try {
         await enviarTexto(msg.telefone, r.texto, msg.instancia || null);
       } catch (e: any) {
@@ -3039,7 +3040,7 @@ export function createApp() {
       if (!u) return res.status(404).json({ error: 'Usuário não encontrado.' });
       if (!u.whatsapp) return res.status(400).json({ error: 'Este usuário não tem WhatsApp cadastrado — coloque um em Usuários para simular.' });
       const r = await responder(u.whatsapp, texto, 'texto');
-      res.json({ resposta: r.texto, uso: r.uso ?? null, erro: r.erro ?? null });
+      res.json({ resposta: r.texto ?? '(sem resposta: este número já recebeu o aviso hoje)', uso: r.uso ?? null, erro: r.erro ?? null });
     } catch (err: any) {
       console.error('[POST /api/whatsapp/simular] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível simular.' });
