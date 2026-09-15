@@ -10,7 +10,8 @@ import { supabaseServer } from '../lib/supabaseServer';
 import { scopedDb } from './tenant';
 import { enviarTexto, variantesDoTelefone } from './evolution';
 import { depositosDaOrg, saldosDoMaterial, calcularMovimento, gravarSaldos } from './estoque';
-import { conversar, claudeConfigurado, type Ferramenta } from './claude';
+import { conversar, claudeConfigurado, type Ferramenta, type BlocoDeConteudo, type MensagemDoChat } from './claude';
+import type { Midia } from './evolution';
 import { mensagemDeCotacao, mensagemDePedido, totalDaResposta, formatarMoeda, listarItens, type ItemDeCotacao, type PrecoRespondido, type FalaComFornecedor } from '../shared/cotacoes';
 
 // ---------------------------------------------------------------------------
@@ -166,28 +167,42 @@ export interface RespostaAoFornecedor {
   recado?: string;
 }
 
+const IMAGENS = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+/** O que dá para mandar à IA: fotos e PDF. Áudio e outros arquivos, não. */
+export function midiaLegivel(m: Midia | null | undefined): m is Midia {
+  return Boolean(m && (IMAGENS.has(m.mimetype) || m.mimetype === 'application/pdf'));
+}
+
 /** Entrou uma mensagem do fornecedor: extrai o que ele disse e responde. Grava na linha da cotação. */
-export async function responderFornecedor(ctx: FornecedorFalando, texto: string | null, tipo: string): Promise<RespostaAoFornecedor> {
+export async function responderFornecedor(ctx: FornecedorFalando, texto: string | null, tipo: string, midia?: Midia | null): Promise<RespostaAoFornecedor> {
   const db = scopedDb(ctx.organization_id);
   const conversa = [...ctx.resposta.conversa];
   let precos = [...ctx.resposta.precos];
   let resposta: string;
   let avisar = false;
 
-  if (tipo !== 'texto' || !texto) {
+  const comMidia = midiaLegivel(midia);
+  if ((tipo !== 'texto' || !texto) && !comMidia) {
     conversa.push({ de: 'fornecedor', texto: `[${tipo}]`, em: new Date().toISOString() });
-    resposta = tipo === 'imagem' || tipo === 'documento' ? 'Obrigado! Por aqui ainda não consigo ler imagens e arquivos — pode me passar os preços em texto, pelo número de cada item?' : 'Pode escrever os preços em texto, pelo número de cada item? Obrigado!';
+    resposta = tipo === 'imagem' || tipo === 'documento' ? 'Obrigado! Não consegui abrir esse arquivo — pode me passar os preços em texto, pelo número de cada item?' : 'Pode escrever os preços em texto, pelo número de cada item? Obrigado!';
   } else if (ctx.resposta.status === 'pedido') {
     // Pedido já fechado: nada a extrair. Agradece e repassa o recado a quem comprou.
-    conversa.push({ de: 'fornecedor', texto, em: new Date().toISOString() });
+    conversa.push({ de: 'fornecedor', texto: texto ?? `[${tipo}]`, em: new Date().toISOString() });
     resposta = `Obrigado! Já repassei para a ${ctx.organizacao}.`;
     avisar = true;
   } else {
-    conversa.push({ de: 'fornecedor', texto, em: new Date().toISOString() });
+    // A foto (ou PDF) vai para a IA junto com a legenda; no histórico fica só a marca.
+    const textoDaVez = comMidia ? `${texto ? `${texto} ` : ''}[${tipo === 'documento' ? 'arquivo' : 'foto'} enviado]` : (texto as string);
+    conversa.push({ de: 'fornecedor', texto: textoDaVez, em: new Date().toISOString() });
     if (!claudeConfigurado()) {
       resposta = 'Obrigado! A empresa vai avaliar e retorna por aqui.';
     } else {
-      const historico = conversa.slice(-10).map((f) => ({ role: (f.de === 'nos' ? 'assistant' : 'user') as 'assistant' | 'user', content: f.texto }));
+      const historico: MensagemDoChat[] = conversa.slice(-10, -1).map((f) => ({ role: (f.de === 'nos' ? 'assistant' : 'user') as 'assistant' | 'user', content: f.texto }));
+      const blocos: BlocoDeConteudo[] = [];
+      if (comMidia) blocos.push(midia.mimetype === 'application/pdf' ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: midia.base64 } } : { type: 'image', source: { type: 'base64', media_type: midia.mimetype, data: midia.base64 } });
+      blocos.push({ type: 'text', text: comMidia ? `${texto ? `${texto}\n\n` : ''}(O fornecedor mandou ${tipo === 'documento' ? 'este arquivo' : 'esta foto'}. Procure nele os preços dos itens da cotação e registre só o que corresponde a eles.)` : (texto as string) });
+      historico.push({ role: 'user', content: blocos });
       // A conversa tem que começar pela pessoa (o fornecedor) para a API; a nossa pergunta inicial já está no system.
       while (historico.length && historico[0].role === 'assistant') historico.shift();
       try {

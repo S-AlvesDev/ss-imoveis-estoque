@@ -32,7 +32,7 @@ describe('telefone', () => {
 describe('evento da Evolution', () => {
   const base = { event: 'messages.upsert', instance: 'stokai', data: { key: { remoteJid: '5584991434190@s.whatsapp.net', fromMe: false, id: 'ABC' }, pushName: 'Marlon', message: { conversation: 'quanto tem de cimento?' } } };
   it('lê texto simples e texto estendido', () => {
-    expect(lerEvento(base)).toEqual({ instancia: 'stokai', telefone: '5584991434190', nome: 'Marlon', texto: 'quanto tem de cimento?', tipo: 'texto', idMensagem: 'ABC' });
+    expect(lerEvento(base)).toEqual({ instancia: 'stokai', telefone: '5584991434190', nome: 'Marlon', texto: 'quanto tem de cimento?', tipo: 'texto', idMensagem: 'ABC', chave: { id: 'ABC', remoteJid: '5584991434190@s.whatsapp.net', fromMe: false }, mimetype: null });
     const ext = { ...base, data: { ...base.data, message: { extendedTextMessage: { text: 'oi' } } } };
     expect(lerEvento(ext)?.texto).toBe('oi');
   });
@@ -44,7 +44,7 @@ describe('evento da Evolution', () => {
   });
   it('classifica áudio, imagem e documento', () => {
     expect(lerEvento({ ...base, data: { ...base.data, message: { audioMessage: {} } } })).toMatchObject({ tipo: 'audio', texto: null });
-    expect(lerEvento({ ...base, data: { ...base.data, message: { imageMessage: { caption: 'nota' } } } })).toMatchObject({ tipo: 'imagem', texto: 'nota' });
+    expect(lerEvento({ ...base, data: { ...base.data, message: { imageMessage: { caption: 'nota', mimetype: 'image/jpeg' } } } })).toMatchObject({ tipo: 'imagem', texto: 'nota', mimetype: 'image/jpeg' });
     expect(lerEvento({ ...base, data: { ...base.data, message: { documentMessage: {} } } })).toMatchObject({ tipo: 'documento' });
   });
   it('só fica configurada com URL, chave e instância; a IA só com a chave', () => {

@@ -72,6 +72,19 @@ export async function enviarTexto(telefone: string, texto: string, instancia?: s
 }
 
 /** Estado da conexão de uma instância: 'open' = conectada. */
+export interface Midia {
+  base64: string;
+  mimetype: string;
+}
+
+/** Baixa a foto ou o arquivo de uma mensagem recebida, em base64. */
+export async function baixarMidia(chave: { id: string; remoteJid: string; fromMe: boolean }, instancia?: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<Midia> {
+  const inst = instancia || (env.EVOLUTION_INSTANCE as string);
+  const r = await evo<{ base64?: string; mimetype?: string; mediaType?: string }>(`/chat/getBase64FromMediaMessage/${encodeURIComponent(inst)}`, { method: 'POST', body: JSON.stringify({ message: { key: chave }, convertToMp4: false }) }, env);
+  if (!r.base64) throw new Error('A Evolution não devolveu o arquivo.');
+  return { base64: r.base64, mimetype: r.mimetype ?? 'application/octet-stream' };
+}
+
 export async function estadoDaInstancia(instancia?: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<string> {
   const inst = instancia || (env.EVOLUTION_INSTANCE as string);
   const r = await evo<{ instance?: { state?: string }; state?: string }>(`/instance/connectionState/${encodeURIComponent(inst)}`, {}, env);
@@ -90,6 +103,10 @@ export interface MensagemRecebida {
   /** 'texto' | 'imagem' | 'audio' | 'documento' | 'outro' */
   tipo: 'texto' | 'imagem' | 'audio' | 'documento' | 'outro';
   idMensagem: string | null;
+  /** A chave da mensagem na Evolution — é com ela que se baixa a foto ou o arquivo. */
+  chave: { id: string; remoteJid: string; fromMe: boolean } | null;
+  /** Tipo do arquivo (image/jpeg, application/pdf), quando a mensagem traz um. */
+  mimetype: string | null;
 }
 
 /**
@@ -127,5 +144,7 @@ export function lerEvento(body: any): MensagemRecebida | null {
     texto = m.documentMessage.caption ? String(m.documentMessage.caption) : null;
     tipo = 'documento';
   }
-  return { instancia: String(body.instance ?? ''), telefone, nome: dados.pushName ? String(dados.pushName) : null, texto: texto?.trim() || null, tipo, idMensagem: dados.key.id ? String(dados.key.id) : null };
+  const mimetype = m.imageMessage?.mimetype ?? m.documentMessage?.mimetype ?? m.audioMessage?.mimetype ?? null;
+  const chave = dados.key.id ? { id: String(dados.key.id), remoteJid: jid, fromMe: false } : null;
+  return { instancia: String(body.instance ?? ''), telefone, nome: dados.pushName ? String(dados.pushName) : null, texto: texto?.trim() || null, tipo, idMensagem: dados.key.id ? String(dados.key.id) : null, chave, mimetype: mimetype ? String(mimetype) : null };
 }
