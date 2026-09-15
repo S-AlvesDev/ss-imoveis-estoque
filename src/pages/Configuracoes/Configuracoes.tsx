@@ -10,6 +10,7 @@ import { IdentidadeSection } from './IdentidadeSection';
 import { CategoriasSection } from './CategoriasSection';
 import { PlanoSection } from './PlanoSection';
 import { WhatsappSection } from './WhatsappSection';
+import { ExportarSection } from './ExportarSection';
 import { usePlano } from '@/features/planos/usePlano';
 import { Cadeado } from '@/features/planos/Cadeado';
 
@@ -89,6 +90,8 @@ export function Configuracoes({ unidades, depositos, catalogo, categorias, refet
       <AcessosSection unidades={unidades} depositos={depositos} />
 
       <WhatsappSection />
+
+      <ExportarSection />
 
       <NovaUnidadeModal
         open={criando}

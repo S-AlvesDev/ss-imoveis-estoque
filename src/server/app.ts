@@ -26,6 +26,7 @@ import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistent
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
 import { vigiarWhatsapp, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores } from './rotinas';
 import { iniciarErros } from './erros';
+import { exportarCsv, ehTabelaExportavel } from './exportar';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
 import { emailDeRecibo, emitente as emitenteDoRecibo } from './recibo';
 import { validarPagador } from './pagador';
@@ -3067,6 +3068,23 @@ export function createApp() {
       res.json({ evolution: evolutionConfigurada(), instancia, ia: claudeConfigurado(), liberado: planoLibera(req.plano!, 'whatsapp'), mensagens_no_mes: count ?? 0, limite_mes: LIMITE_MENSAGENS_MES, numero: process.env.EVOLUTION_NUMERO ?? null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --------------------------- EXPORTAR ---------------------------
+
+  /** Os dados da empresa em CSV: materiais com saldos, movimentações, empréstimos, usuários, fornecedores, cotações. */
+  app.get('/api/exportar/:tabela.csv', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const tabela = req.params.tabela;
+      if (!ehTabelaExportavel(tabela)) return res.status(404).json({ error: 'Não existe essa exportação.' });
+      const { nome, csv } = await exportarCsv(req.user!.organization_id, tabela);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${nome}"`);
+      res.send(csv);
+    } catch (err: any) {
+      console.error('[GET /api/exportar] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao exportar.' });
     }
   });
 
