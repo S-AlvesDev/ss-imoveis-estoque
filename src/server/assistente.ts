@@ -15,7 +15,7 @@ import { depositosDaOrg, unidadesDaOrg, saldosDaOrg, saldosDoMaterial, calcularM
 import { conversar, claudeConfigurado, type Ferramenta, type MensagemDoChat, type Uso } from './claude';
 import { variantesDoTelefone } from './evolution';
 import { fornecedorPeloTelefone, responderFornecedor, avisarQuemPediu } from './cotacoes';
-import type { Midia } from './evolution';
+import { ehInstanciaDoStokAi, type Midia } from './evolution';
 import { contaDaOrg } from './planos';
 import { planoLibera, NOME_DO_PLANO } from '../shared/planos';
 import { stockStatus } from '../features/estoque/utils';
@@ -491,6 +491,8 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
       if (r.avisar) await avisarQuemPediu(fornecedor, r);
       return { texto: r.texto, falante: null };
     }
+    // No número da própria empresa, quem não é da equipe nem fornecedor é cliente dela: não é conosco. Silêncio.
+    if (!ehInstanciaDoStokAi(instancia)) return { texto: null, falante: null };
     await registrar({ organizationId: null, userId: null, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });
     // O número do assistente é o do atendimento: quem está conversando com uma pessoa da equipe
     // não pode receber o aviso automático a cada mensagem. Uma vez por dia basta.

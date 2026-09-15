@@ -148,3 +148,64 @@ export function lerEvento(body: any): MensagemRecebida | null {
   const chave = dados.key.id ? { id: String(dados.key.id), remoteJid: jid, fromMe: false } : null;
   return { instancia: String(body.instance ?? ''), telefone, nome: dados.pushName ? String(dados.pushName) : null, texto: texto?.trim() || null, tipo, idMensagem: dados.key.id ? String(dados.key.id) : null, chave, mimetype: mimetype ? String(mimetype) : null };
 }
+
+// ---------------------------------------------------------------------------
+//  O número da própria empresa: uma instância por organização
+// ---------------------------------------------------------------------------
+
+export interface QrCode {
+  /** data:image/png;base64,… pronto para um <img>. */
+  base64: string | null;
+  /** Código de pareamento, quando a Evolution oferece. */
+  codigo: string | null;
+}
+
+function lerQr(r: any): QrCode {
+  const q = r?.qrcode ?? r;
+  const base64 = q?.base64 ?? null;
+  return { base64: base64 ? (String(base64).startsWith('data:') ? String(base64) : `data:image/png;base64,${base64}`) : null, codigo: q?.pairingCode ?? q?.code ?? null };
+}
+
+/** Cria a instância (idempotente: se já existe, só segue) e aponta o webhook para nós. */
+export async function criarInstancia(nome: string, webhookUrl: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
+  try {
+    await evo(`/instance/create`, { method: 'POST', body: JSON.stringify({ instanceName: nome, integration: 'WHATSAPP-BAILEYS', qrcode: true, webhook: { url: webhookUrl, byEvents: false, base64: false, events: ['MESSAGES_UPSERT'] } }) }, env);
+  } catch (e: any) {
+    if (!/already|exist|em uso|in use/i.test(String(e.message))) throw e;
+  }
+  await configurarWebhook(nome, webhookUrl, env);
+}
+
+/** Garante o webhook da instância (formato da v2; cai para o da v1 se a Evolution for antiga). */
+export async function configurarWebhook(nome: string, webhookUrl: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
+  try {
+    await evo(`/webhook/set/${encodeURIComponent(nome)}`, { method: 'POST', body: JSON.stringify({ webhook: { enabled: true, url: webhookUrl, byEvents: false, base64: false, events: ['MESSAGES_UPSERT'] } }) }, env);
+  } catch {
+    await evo(`/webhook/set/${encodeURIComponent(nome)}`, { method: 'POST', body: JSON.stringify({ enabled: true, url: webhookUrl, webhook_by_events: false, events: ['MESSAGES_UPSERT'] }) }, env);
+  }
+}
+
+/** O QR code atual para conectar a instância (só faz sentido enquanto não está `open`). */
+export async function qrDaInstancia(nome: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<QrCode> {
+  return lerQr(await evo(`/instance/connect/${encodeURIComponent(nome)}`, {}, env));
+}
+
+/** Desconecta o número e apaga a instância. Tolerante: se já não existe, tudo bem. */
+export async function apagarInstancia(nome: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
+  try {
+    await evo(`/instance/logout/${encodeURIComponent(nome)}`, { method: 'DELETE' }, env);
+  } catch {
+    // já estava desconectada
+  }
+  try {
+    await evo(`/instance/delete/${encodeURIComponent(nome)}`, { method: 'DELETE' }, env);
+  } catch (e: any) {
+    if (!/not found|não encontrad|does not exist/i.test(String(e.message))) throw e;
+  }
+}
+
+/** A instância padrão (o número do Stok Aí) — para saber se uma mensagem veio de um número de empresa. */
+export function ehInstanciaDoStokAi(instancia: string | null | undefined, env: AmbienteEvolution = process.env as AmbienteEvolution): boolean {
+  return !instancia || instancia === env.EVOLUTION_INSTANCE;
+}
+

@@ -10,6 +10,7 @@ import { usePlano } from '@/features/planos/usePlano';
 import { Cadeado } from '@/features/planos/Cadeado';
 import { formatarWhatsapp } from '@/shared/whatsapp';
 import type { ManagedUser } from '@/shared/types';
+import { NumeroDaEmpresa } from './NumeroDaEmpresa';
 
 interface Status {
   evolution: boolean;
@@ -167,6 +168,9 @@ export function WhatsappSection() {
               </Button>
             </form>
           </div>
+        </div>
+        <div className="mt-5">
+          <NumeroDaEmpresa liberado={liberado} />
         </div>
       </Card>
     </section>

@@ -20,7 +20,7 @@ import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, detalheD
 import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico, ErroDoMercadoPago, mensagemParaOPagador } from './mercadopago';
 import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, avulsosPendentes, type Pagamento } from './assinaturas';
 import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes';
-import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone, baixarMidia } from './evolution';
+import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone, baixarMidia, criarInstancia, qrDaInstancia, apagarInstancia } from './evolution';
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
@@ -42,6 +42,7 @@ import {
   emailDeBoasVindas,
   emailDeNovaEmpresa,
   VALIDADE_DO_TOKEN_MS,
+  siteUrl,
 } from './senha';
 import {
   calcularMovimento,
@@ -3047,6 +3048,83 @@ export function createApp() {
     } catch (err: any) {
       console.error('[POST /api/whatsapp/simular] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível simular.' });
+    }
+  });
+
+  // ---- O número da própria empresa (uma instância por organização)
+
+  /** Nome da instância desta organização na Evolution, estável e sem caracteres estranhos. */
+  function nomeDaInstanciaDaOrg(organizationId: string): string {
+    return `org-${organizationId.replace(/-/g, '').slice(0, 12)}`;
+  }
+  function urlDoWebhook(): string {
+    return `${siteUrl()}/api/webhooks/whatsapp?token=${encodeURIComponent(process.env.EVOLUTION_WEBHOOK_TOKEN ?? '')}`;
+  }
+
+  /** Como está o número da empresa: nenhum, conectando (com QR) ou conectado. */
+  app.get('/api/whatsapp/empresa', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: org } = await req.db!.from('organizations').select('whatsapp_instancia').eq('id', req.user!.organization_id).single();
+      const instancia = org?.whatsapp_instancia ?? null;
+      if (!instancia) return res.json({ instancia: null, estado: null, qr: null });
+      let estado = 'desconhecido';
+      let qr: { base64: string | null; codigo: string | null } | null = null;
+      try {
+        estado = await estadoDaInstancia(instancia);
+        if (estado !== 'open') qr = await qrDaInstancia(instancia);
+      } catch (e: any) {
+        estado = `erro: ${String(e.message).slice(0, 80)}`;
+      }
+      res.json({ instancia, estado, qr });
+    } catch (err: any) {
+      console.error('[GET /api/whatsapp/empresa] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao consultar o número da empresa.' });
+    }
+  });
+
+  /** Cria a instância da empresa (se preciso) e devolve o QR para conectar. */
+  app.post('/api/whatsapp/empresa/conectar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const negada = negarRecurso(req.plano!, 'whatsapp');
+      if (negada) return res.status(negada.status).json(negada.body);
+      if (!evolutionConfigurada()) return res.status(503).json({ error: 'O WhatsApp não está configurado neste servidor.' });
+      if (!process.env.EVOLUTION_WEBHOOK_TOKEN) return res.status(503).json({ error: 'Falta o EVOLUTION_WEBHOOK_TOKEN no servidor.' });
+      const nome = nomeDaInstanciaDaOrg(req.user!.organization_id);
+      await criarInstancia(nome, urlDoWebhook());
+      const { error } = await req.db!.from('organizations').update({ whatsapp_instancia: nome }).eq('id', req.user!.organization_id);
+      if (error) throw error;
+      let estado = 'connecting';
+      let qr: { base64: string | null; codigo: string | null } | null = null;
+      try {
+        estado = await estadoDaInstancia(nome);
+        if (estado !== 'open') qr = await qrDaInstancia(nome);
+      } catch (e: any) {
+        console.warn('[whatsapp empresa] qr:', e.message);
+      }
+      res.json({ instancia: nome, estado, qr });
+    } catch (err: any) {
+      console.error('[POST /api/whatsapp/empresa/conectar] erro:', err.message);
+      res.status(500).json({ error: `Não foi possível criar a conexão: ${String(err.message).slice(0, 120)}` });
+    }
+  });
+
+  /** Desconecta o número da empresa e volta a usar o do Stok Aí. */
+  app.delete('/api/whatsapp/empresa', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const { data: org } = await req.db!.from('organizations').select('whatsapp_instancia').eq('id', req.user!.organization_id).single();
+      if (org?.whatsapp_instancia) {
+        try {
+          await apagarInstancia(org.whatsapp_instancia);
+        } catch (e: any) {
+          console.warn('[whatsapp empresa] apagar:', e.message);
+        }
+      }
+      const { error } = await req.db!.from('organizations').update({ whatsapp_instancia: null }).eq('id', req.user!.organization_id);
+      if (error) throw error;
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error('[DELETE /api/whatsapp/empresa] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao desconectar.' });
     }
   });
 
