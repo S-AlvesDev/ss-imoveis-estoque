@@ -60,7 +60,7 @@ export interface Cotacao {
   entrega: string | null;
   observacoes: string | null;
   status: StatusDaCotacao;
-  pedido: { fornecedor_id: string; total: number | null; enviado_em: string } | null;
+  pedido: { fornecedor_id: string; total: number | null; enviado_em: string; entrada_em?: string; deposito_id?: string } | null;
   created_at: string;
   encerrada_em: string | null;
   criado_por: number | null;

@@ -23,7 +23,7 @@ import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes'
 import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone } from './evolution';
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
-import { enviarCotacao, fecharPedido } from './cotacoes';
+import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
 import { vigiarWhatsapp, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores } from './rotinas';
 import { iniciarErros } from './erros';
 import { nfseConfigurada, emitirNota, pagamentosSemNota, emailDaNota } from './notafiscal';
@@ -3283,6 +3283,24 @@ export function createApp() {
     } catch (err: any) {
       console.error('[POST /api/cotacoes/:id/pedido] erro:', err.message);
       res.status(500).json({ error: 'Erro ao fechar o pedido.' });
+    }
+  });
+
+  /** O material do pedido chegou: entrada de cada item do catálogo no estoque escolhido. */
+  app.post('/api/cotacoes/:id/entrada', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const depositoId = String(req.body?.deposito_id ?? '');
+      if (!depositoId) return res.status(400).json({ error: 'Escolha o estoque que recebe.' });
+      let r: { lancados: string[]; ignorados: string[] };
+      try {
+        r = await darEntradaDoPedido(req.user!.organization_id, req.params.id, depositoId, req.user!.matricula);
+      } catch (e: any) {
+        return res.status(400).json({ error: e.message });
+      }
+      res.json({ cotacao: await cotacaoCompleta(req.db!, req.params.id), ...r });
+    } catch (err: any) {
+      console.error('[POST /api/cotacoes/:id/entrada] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao dar entrada.' });
     }
   });
 

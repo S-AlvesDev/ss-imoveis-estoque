@@ -201,7 +201,7 @@ function InventoryApp({ role }: { role: string }) {
             )}
             {viewAtual === 'suporte' && <Suporte materials={catalogo} />}
             {viewAtual === 'ajuda' && <Ajuda />}
-            {viewAtual === 'compras' && isAdmin && <Compras catalogo={catalogo} unidade={unidade} />}
+            {viewAtual === 'compras' && isAdmin && <Compras catalogo={catalogo} unidade={unidade} depositos={depositos} />}
             {viewAtual === 'usuarios' && isAdmin && <Usuarios />}
             {viewAtual === 'configuracoes' && isAdmin && (
               <Configuracoes unidades={unidades} depositos={depositos} catalogo={catalogo} categorias={categorias} refetch={refetch} onSelecionarUnidade={setUnidade} />

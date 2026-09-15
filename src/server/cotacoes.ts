@@ -9,6 +9,7 @@
 import { supabaseServer } from '../lib/supabaseServer';
 import { scopedDb } from './tenant';
 import { enviarTexto, variantesDoTelefone } from './evolution';
+import { depositosDaOrg, saldosDoMaterial, calcularMovimento, gravarSaldos } from './estoque';
 import { conversar, claudeConfigurado, type Ferramenta } from './claude';
 import { mensagemDeCotacao, mensagemDePedido, totalDaResposta, formatarMoeda, listarItens, type ItemDeCotacao, type PrecoRespondido, type FalaComFornecedor } from '../shared/cotacoes';
 
@@ -282,4 +283,58 @@ export async function fecharPedido(organizationId: string, empresa: string, cota
   await db.from('cotacao_fornecedores').update({ status: 'pedido', conversa: conversa.slice(-30) }).eq('cotacao_id', cotacaoId).eq('fornecedor_id', fornecedorId);
   await db.from('cotacoes').update({ status: 'encerrada', encerrada_em: agora, pedido: { fornecedor_id: fornecedorId, total, enviado_em: agora } }).eq('id', cotacaoId);
   return { texto, total };
+}
+
+// ---------------------------------------------------------------------------
+//  O material chegou: entrada a partir do pedido
+// ---------------------------------------------------------------------------
+
+/**
+ * Dá entrada, no estoque escolhido, de cada item do pedido fechado que
+ * está ligado a um material do catálogo (itens escritos à mão ficam de
+ * fora — o sistema não sabe o que são). Só uma vez por pedido.
+ */
+export async function darEntradaDoPedido(organizationId: string, cotacaoId: string, depositoId: string, matricula: string): Promise<{ lancados: string[]; ignorados: string[] }> {
+  const db = scopedDb(organizationId);
+  const { data: c } = await db.from('cotacoes').select('id, titulo, itens, status, pedido').eq('id', cotacaoId).maybeSingle();
+  if (!c) throw new Error('Cotação não encontrada.');
+  if (c.status !== 'encerrada' || !c.pedido?.fornecedor_id) throw new Error('Só dá entrada em cotação com pedido fechado.');
+  if (c.pedido.entrada_em) throw new Error('A entrada deste pedido já foi lançada.');
+  const depositos = await depositosDaOrg(db);
+  const deposito = depositos.find((d) => d.id === depositoId && d.ativo);
+  if (!deposito) throw new Error('Estoque não encontrado.');
+  if (deposito.modo !== 'almoxarifado') throw new Error('Por enquanto a entrada automática é só em estoque do modo almoxarifado; nos outros, lance pelo painel do estoque.');
+  const { data: linha } = await db.from('cotacao_fornecedores').select('precos, fornecedores(nome)').eq('cotacao_id', cotacaoId).eq('fornecedor_id', c.pedido.fornecedor_id).maybeSingle();
+  const precos: PrecoRespondido[] = Array.isArray(linha?.precos) ? linha!.precos : [];
+  const fornecedor = (linha as any)?.fornecedores?.nome ?? 'fornecedor';
+
+  const lancados: string[] = [];
+  const ignorados: string[] = [];
+  for (const item of (c.itens ?? []) as ItemDeCotacao[]) {
+    const p = precos.find((x) => x.n === item.n);
+    if (!p || !p.disponivel || p.preco_unitario === null) continue; // não fez parte do pedido
+    if (!item.material_id) {
+      ignorados.push(item.descricao);
+      continue;
+    }
+    const atuais = await saldosDoMaterial(db, item.material_id);
+    const calculo = calcularMovimento(atuais, { destino_id: deposito.id, quantidade: item.quantidade, rotulo: 'Entrada', nomeDe: () => deposito.nome });
+    if (!calculo.ok) {
+      ignorados.push(`${item.descricao} (${calculo.erro})`);
+      continue;
+    }
+    await gravarSaldos(db, item.material_id, calculo.novos);
+    await db.from('material_movements').insert({
+      material_id: item.material_id,
+      tipo_operacao: 'ENTRADA',
+      quantidade: item.quantidade,
+      warehouse_origem_id: null,
+      warehouse_destino_id: deposito.id,
+      funcionario_matricula: matricula,
+      justificativa: `Pedido "${c.titulo}" — ${fornecedor} (${formatarMoeda(p.preco_unitario)}/${item.unidade})`,
+    });
+    lancados.push(item.descricao);
+  }
+  await db.from('cotacoes').update({ pedido: { ...c.pedido, entrada_em: new Date().toISOString(), deposito_id: deposito.id } }).eq('id', cotacaoId);
+  return { lancados, ignorados };
 }

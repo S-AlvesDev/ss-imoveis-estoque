@@ -10,7 +10,7 @@ import { api } from '@/lib/api';
 import { usePlano } from '@/features/planos/usePlano';
 import { Cadeado } from '@/features/planos/Cadeado';
 import { formatDateTime } from '@/features/estoque/utils';
-import type { Material, Unidade } from '@/shared/types';
+import type { Deposito, Material, Unidade } from '@/shared/types';
 import { formatarMoeda, type Cotacao, type Fornecedor } from '@/shared/cotacoes';
 import { Fornecedores } from './Fornecedores';
 import { NovaCotacao } from './NovaCotacao';
@@ -21,6 +21,8 @@ type Aba = 'cotacoes' | 'fornecedores';
 interface Props {
   catalogo: Material[];
   unidade: Unidade | null;
+  /** Todos os estoques da organização — para dar entrada do pedido onde a pessoa escolher. */
+  depositos: Deposito[];
 }
 
 /**
@@ -28,7 +30,7 @@ interface Props {
  * fornecedores que recebem. O sistema pergunta, a IA lê a resposta, a
  * tela compara — e a pessoa fecha o pedido.
  */
-export function Compras({ catalogo, unidade }: Props) {
+export function Compras({ catalogo, unidade, depositos }: Props) {
   const planoAtual = usePlano();
   const liberado = planoAtual.libera('cotacoes');
   const [aba, setAba] = useState<Aba>('cotacoes');
@@ -149,7 +151,7 @@ export function Compras({ catalogo, unidade }: Props) {
         fornecedores={fornecedores}
         unidade={unidade}
       />
-      <CotacaoDetalhe id={aberta} onClose={() => setAberta(null)} onMudou={carregar} />
+      <CotacaoDetalhe id={aberta} onClose={() => setAberta(null)} onMudou={carregar} depositos={depositos} />
     </div>
   );
 }

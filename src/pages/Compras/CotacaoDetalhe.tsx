@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { CheckCircle2, MessageSquareText, RefreshCw, Send, Trophy, XCircle } from 'lucide-react';
+import { CheckCircle2, MessageSquareText, PackagePlus, RefreshCw, Send, Trophy, XCircle } from 'lucide-react';
 import { Modal } from '@/shared/ui/Modal';
 import { Button } from '@/shared/ui/Button';
 import { Badge } from '@/shared/ui/Badge';
-import { Textarea } from '@/shared/ui/Field';
+import { Select, Textarea } from '@/shared/ui/Field';
+import type { Deposito } from '@/shared/types';
 import { api } from '@/lib/api';
 import { formatDateTime } from '@/features/estoque/utils';
 import { compararCotacao, formatarMoeda, NOME_DO_STATUS_DO_FORNECEDOR, type Cotacao, type FornecedorNaCotacao } from '@/shared/cotacoes';
@@ -22,6 +23,7 @@ interface Props {
   id: string | null;
   onClose: () => void;
   onMudou: () => void;
+  depositos: Deposito[];
 }
 
 /**
@@ -30,12 +32,13 @@ interface Props {
  * Recarrega sozinha a cada 20 s enquanto está aberta — resposta chega
  * pelo WhatsApp a qualquer hora.
  */
-export function CotacaoDetalhe({ id, onClose, onMudou }: Props) {
+export function CotacaoDetalhe({ id, onClose, onMudou, depositos }: Props) {
   const [c, setC] = useState<Cotacao | null>(null);
   const [conversaDe, setConversaDe] = useState<string | null>(null);
   const [fechandoCom, setFechandoCom] = useState<string | null>(null);
   const [obsPedido, setObsPedido] = useState('');
   const [ocupado, setOcupado] = useState(false);
+  const [depositoEntrada, setDepositoEntrada] = useState('');
 
   useEffect(() => {
     if (!id) {
@@ -85,6 +88,22 @@ export function CotacaoDetalhe({ id, onClose, onMudou }: Props) {
       onMudou();
     } catch (err: any) {
       toast.error(err.message || 'Não foi possível fechar o pedido.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  async function darEntrada() {
+    if (!c || !depositoEntrada) return;
+    setOcupado(true);
+    try {
+      const r = await api.post<{ cotacao: Cotacao; lancados: string[]; ignorados: string[] }>(`/api/cotacoes/${c.id}/entrada`, { deposito_id: depositoEntrada });
+      setC(r.cotacao);
+      if (r.lancados.length) toast.success(`Entrada de ${r.lancados.length} item(ns) lançada.`);
+      if (r.ignorados.length) toast.warning(`Sem entrada automática: ${r.ignorados.join(', ')} — lance pelo estoque.`);
+      onMudou();
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível dar entrada.');
     } finally {
       setOcupado(false);
     }
@@ -247,6 +266,32 @@ export function CotacaoDetalhe({ id, onClose, onMudou }: Props) {
           )}
 
           {c.observacoes && <p className="text-xs text-[var(--text-muted)]">Observações enviadas: {c.observacoes}</p>}
+
+          {c.status === 'encerrada' && c.pedido && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-4">
+              {c.pedido.entrada_em ? (
+                <p className="inline-flex items-center gap-2 text-sm text-[var(--text)]">
+                  <CheckCircle2 size={15} className="text-[var(--verde)]" /> Entrada lançada em {formatDateTime(c.pedido.entrada_em)}
+                  {c.pedido.deposito_id && <span className="text-[var(--text-muted)]">· {depositos.find((d) => d.id === c.pedido!.deposito_id)?.nome ?? ''}</span>}
+                </p>
+              ) : (
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="min-w-[220px] flex-1">
+                    <Select label="O material chegou? Dê entrada em" value={depositoEntrada} onChange={(e) => setDepositoEntrada(e.target.value)}>
+                      <option value="">Escolha o estoque…</option>
+                      {depositos.filter((d) => d.ativo && d.modo === 'almoxarifado').map((d) => (
+                        <option key={d.id} value={d.id}>{d.nome}</option>
+                      ))}
+                    </Select>
+                  </div>
+                  <Button onClick={darEntrada} loading={ocupado} disabled={!depositoEntrada} icon={<PackagePlus size={14} />}>
+                    Dar entrada
+                  </Button>
+                  <p className="basis-full text-[11px] text-[var(--text-muted)]">Entra cada item ligado a um material do catálogo, com a quantidade do pedido e o fornecedor na justificativa. Item escrito à mão fica de fora.</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </Modal>
