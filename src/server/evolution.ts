@@ -65,6 +65,20 @@ export function variantesDoTelefone(telefone: string): string[] {
   return [telefone];
 }
 
+/**
+ * "digitando…" no WhatsApp da pessoa. É só aparência, e é justamente por
+ * isso que vale: a espera de três segundos deixa de parecer mudez. Falha
+ * em silêncio — nunca atrasa nem derruba a resposta de verdade.
+ */
+export async function mostrarDigitando(telefone: string, instancia?: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
+  const inst = instancia || (env.EVOLUTION_INSTANCE as string);
+  try {
+    await evo(`/chat/sendPresence/${encodeURIComponent(inst)}`, { method: 'POST', body: JSON.stringify({ number: telefone, presence: 'composing', delay: 1200 }) }, env);
+  } catch {
+    // Presença é enfeite: se a Evolution não tiver a rota, segue o jogo.
+  }
+}
+
 /** Manda um texto para um número, pela instância pedida (ou a padrão). */
 export async function enviarTexto(telefone: string, texto: string, instancia?: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
   const inst = instancia || (env.EVOLUTION_INSTANCE as string);

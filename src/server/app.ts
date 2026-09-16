@@ -20,7 +20,7 @@ import { planoLibera, ehPlano, CICLOS, PLANOS, precoDo, AVALIACAO_DIAS, DIAS_PAR
 import { mpConfigurado, mpPublicKey, assinaturaDoWebhookValida, idDoEvento, tipoDoEvento, buscarAssinatura, modoTeste, mpPlanId, diagnostico, ErroDoMercadoPago, mensagemParaOPagador } from './mercadopago';
 import { contaDe, assinaturaAtual, pagamentosDe, iniciarAssinatura, assinarComCartao, cancelarAssinatura, aplicarPreapproval, procurarEAplicar, tratarEvento, registrarEvento, ErroDeAssinatura, criarAvulso, atualizarAvulso, avulsoPendente, avulsosPendentes, type Pagamento } from './assinaturas';
 import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes';
-import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone, baixarMidia, criarInstancia, qrDaInstancia, apagarInstancia } from './evolution';
+import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone, baixarMidia, criarInstancia, qrDaInstancia, apagarInstancia, mostrarDigitando } from './evolution';
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
@@ -3032,6 +3032,8 @@ export function createApp() {
     if (req.query.token !== esperado) return res.status(401).json({ error: 'Token inválido.' });
     const msg = lerEvento(req.body);
     if (!msg) return res.json({ ok: true, ignorado: true });
+    // "digitando…" antes de pensar: a espera de três segundos deixa de parecer mudez.
+    void mostrarDigitando(msg.telefone, msg.instancia || null);
     try {
       const r = await responder(msg.telefone, msg.texto, msg.tipo, msg.instancia || null, msg.chave ? () => baixarMidia(msg.chave!, msg.instancia || null) : undefined);
       if (r.texto === null) return res.json({ ok: true, respondido: false });

@@ -90,31 +90,50 @@ export async function falantePeloTelefone(telefone: string): Promise<Falante | n
 //  O que a pessoa enxerga (e o que a IA recebe como contexto)
 // ---------------------------------------------------------------------------
 
+interface MaterialVisivel {
+  id: number;
+  nome: string;
+  unidade_medida: string;
+  estoque_minimo: number;
+  saldos: Record<string, number>;
+}
+
 interface Contexto {
   db: ScopedDb;
   falante: Falante;
   acessos: Acessos;
   depositos: Deposito[];
   unidades: Array<{ id: string; nome: string }>;
-  materiais: Array<{ id: number; nome: string; unidade_medida: string; estoque_minimo: number; saldos: Record<string, number> }>;
+  /** Nulo até alguma ferramenta precisar — ver materiaisDoContexto(). */
+  materiais: MaterialVisivel[] | null;
 }
 
+/**
+ * O que a IA precisa saber antes de falar: quem é a pessoa, o que ela
+ * enxerga e quais estoques existem.
+ *
+ * O catálogo com saldos NÃO entra aqui: numa empresa com mil materiais,
+ * carregar tudo a cada "oi" custa segundos que a pessoa espera olhando a
+ * tela. Ele é lido na primeira ferramenta que precisar — e uma vez só por
+ * mensagem, porque fica guardado no contexto.
+ */
 async function montarContexto(falante: Falante): Promise<Contexto> {
   const db = scopedDb(falante.organization_id);
-  const [acessos, todos, unidades, saldos, materiaisRes] = await Promise.all([
-    acessosDoUsuario(db, falante.id, falante.role),
-    depositosDaOrg(db),
-    unidadesDaOrg(db),
-    saldosDaOrg(db),
-    db.from('materials').select('id, nome, unidade_medida, estoque_minimo').order('nome'),
-  ]);
+  const [acessos, todos, unidades] = await Promise.all([acessosDoUsuario(db, falante.id, falante.role), depositosDaOrg(db), unidadesDaOrg(db)]);
   const depositos = todos.filter((d) => d.ativo && podeVer(acessos, d.id));
-  const visiveis = new Set(depositos.map((d) => d.id));
-  const materiais = ((materiaisRes.data || []) as any[]).map((m) => {
+  return { db, falante, acessos, depositos, unidades: unidades.map((u) => ({ id: u.id, nome: u.nome })), materiais: null };
+}
+
+/** O catálogo com os saldos que esta pessoa enxerga. Lê do banco na primeira vez; depois é de graça. */
+async function materiaisDoContexto(ctx: Contexto): Promise<MaterialVisivel[]> {
+  if (ctx.materiais) return ctx.materiais;
+  const [saldos, materiaisRes] = await Promise.all([saldosDaOrg(ctx.db), ctx.db.from('materials').select('id, nome, unidade_medida, estoque_minimo').order('nome')]);
+  const visiveis = new Set(ctx.depositos.map((d) => d.id));
+  ctx.materiais = ((materiaisRes.data || []) as any[]).map((m) => {
     const s = saldos.get(m.id) || {};
     return { id: m.id, nome: m.nome, unidade_medida: m.unidade_medida, estoque_minimo: Number(m.estoque_minimo), saldos: Object.fromEntries(Object.entries(s).filter(([id]) => visiveis.has(id))) };
   });
-  return { db, falante, acessos, depositos, unidades: unidades.map((u) => ({ id: u.id, nome: u.nome })), materiais };
+  return ctx.materiais;
 }
 
 function normalizar(s: string): string {
@@ -168,7 +187,7 @@ async function proporMovimentacao(ctx: Contexto, input: Record<string, unknown>)
   const quantidade = arredondar(Number(input.quantidade));
   if (!Number.isFinite(quantidade) || quantidade <= 0) return { ok: false, erro: 'Informe uma quantidade maior que zero.' };
 
-  const achados = acharMateriais(ctx.materiais, String(input.material ?? ''));
+  const achados = acharMateriais(await materiaisDoContexto(ctx), String(input.material ?? ''));
   if (achados.length === 0) return { ok: false, erro: `Não achei nenhum material parecido com "${input.material}". Peça para a pessoa dizer o nome como está no cadastro.` };
   if (achados.length > 1) return { ok: false, erro: `Mais de um material combina com "${input.material}": ${achados.map((m) => m.nome).join('; ')}. Pergunte qual.` };
   const material = achados[0];
@@ -332,7 +351,7 @@ const FERRAMENTAS: Ferramenta[] = [
 
 async function executarFerramenta(ctx: Contexto, name: string, input: Record<string, unknown>, guardar: (p: Proposta) => void): Promise<string> {
   if (name === 'consultar_saldo') {
-    const achados = acharMateriais(ctx.materiais, String(input.material ?? ''));
+    const achados = acharMateriais(await materiaisDoContexto(ctx), String(input.material ?? ''));
     if (achados.length === 0) return `Nenhum material parecido com "${input.material}".`;
     return achados
       .slice(0, 5)
@@ -347,7 +366,7 @@ async function executarFerramenta(ctx: Contexto, name: string, input: Record<str
     return ctx.depositos.map((d) => `${d.nome} (${d.modo}${podeOperar(ctx.acessos, d.id) ? ', opera' : ', só consulta'})`).join('; ') || 'Nenhum estoque visível.';
   }
   if (name === 'listar_pendencias') {
-    const faltando = ctx.materiais
+    const faltando = (await materiaisDoContexto(ctx))
       .map((m) => {
         const saldo_unidade = Object.values(m.saldos).reduce((s, v) => s + Number(v), 0);
         const status = stockStatus({ saldo_unidade, saldos_unidade: m.saldos, estoque_minimo: m.estoque_minimo }, 'empresa');
@@ -447,7 +466,9 @@ async function carregarConversa(telefone: string): Promise<Conversa> {
 }
 
 async function salvarConversa(falante: Falante, telefone: string, c: Conversa) {
-  const mensagens = c.mensagens.slice(-12);
+  // Seis mensagens bastam para o assunto continuar; cada uma a mais é reenviada
+  // à IA em toda rodada, e o que a pessoa sente disso é demora.
+  const mensagens = c.mensagens.slice(-6);
   await supabaseServer.from('whatsapp_conversas').upsert({ organization_id: falante.organization_id, user_id: falante.id, telefone, mensagens, pendente: c.pendente, atualizado_em: new Date().toISOString() }, { onConflict: 'telefone' });
 }
 
@@ -466,12 +487,28 @@ async function jaAvisamosHoje(telefone: string): Promise<boolean> {
   return (count ?? 0) > 0;
 }
 
+/**
+ * Quantas mensagens a empresa mandou neste mês.
+ *
+ * Contar linha por linha a cada mensagem custa uma ida ao banco que a
+ * pessoa espera. O número é guardado por um minuto e vai subindo sozinho;
+ * o limite é de mil, então errar por alguns segundos não muda nada.
+ */
+const contagem = new Map<string, { valor: number; ate: number }>();
 async function mensagensNoMes(organizationId: string): Promise<number> {
+  const agora = Date.now();
+  const guardada = contagem.get(organizationId);
+  if (guardada && guardada.ate > agora) {
+    guardada.valor += 1;
+    return guardada.valor;
+  }
   const inicio = new Date();
   inicio.setDate(1);
   inicio.setHours(0, 0, 0, 0);
   const { count } = await supabaseServer.from('whatsapp_mensagens').select('*', { count: 'exact', head: true }).eq('organization_id', organizationId).eq('direcao', 'entrada').gte('criado_em', inicio.toISOString());
-  return count ?? 0;
+  const valor = count ?? 0;
+  contagem.set(organizationId, { valor, ate: agora + 60_000 });
+  return valor;
 }
 
 export interface Resposta {

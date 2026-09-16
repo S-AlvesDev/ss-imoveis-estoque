@@ -83,6 +83,7 @@ export async function conversar(args: {
   executar: (name: string, input: Record<string, unknown>) => Promise<string>;
   env?: AmbienteClaude;
   maxRodadas?: number;
+  /** Teto da resposta. Menor = mais rápido: cada palavra gerada é tempo de espera. */
   maxTokens?: number;
 }): Promise<ResultadoDoChat> {
   const env = args.env ?? (process.env as AmbienteClaude);
@@ -93,7 +94,7 @@ export async function conversar(args: {
   let texto = '';
 
   for (let rodada = 0; rodada < (args.maxRodadas ?? 6); rodada++) {
-    const resposta = await chamar({ system: args.system, messages, tools: args.tools, env, maxTokens: args.maxTokens ?? 700 });
+    const resposta = await chamar({ system: args.system, messages, tools: args.tools, env, maxTokens: args.maxTokens ?? 400 });
     uso.tokens_entrada += resposta.usage?.input_tokens ?? 0;
     uso.tokens_saida += resposta.usage?.output_tokens ?? 0;
     if (resposta.model) uso.modelo = resposta.model;
