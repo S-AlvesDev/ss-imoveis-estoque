@@ -76,7 +76,19 @@ export function useEstoqueData() {
     if (buscando.current) return;
     buscando.current = true;
     try {
-      const result = await api.get<EstoqueResposta>('/api/data');
+      let result: EstoqueResposta;
+      try {
+        result = await api.get<EstoqueResposta>('/api/data');
+      } catch (primeiro: any) {
+        // O primeiro carregamento falhou por algo passageiro (rede, servidor
+        // acordando)? Tenta de novo sozinho antes de mostrar a tela de erro —
+        // a pessoa não precisa apertar "Tentar de novo" por um soluço de 1s.
+        // 401 e 402 não são soluço: sessão e plano, tratados abaixo.
+        const passageiro = !(primeiro instanceof ApiError && (primeiro.status === 401 || primeiro.status === 402));
+        if (jaCarregou.current || !passageiro) throw primeiro;
+        await new Promise((r) => setTimeout(r, 1500));
+        result = await api.get<EstoqueResposta>('/api/data');
+      }
       setData({ ...VAZIO, ...result });
       setAtualizadoEm(new Date());
       setBloqueio(null);

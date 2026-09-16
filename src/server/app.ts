@@ -98,6 +98,38 @@ async function fetchAllRows<T = any>(buildQuery: () => any): Promise<T[]> {
   return all;
 }
 
+/**
+ * Uma leitura do Supabase com nome. O cliente devolve `{ data, error }` sem
+ * lançar; aqui o erro vira exceção — assinada com o nome da consulta e o
+ * código do Postgres, para o log apontar o culpado. As funções auxiliares
+ * (unidadesDaOrg etc.) já lançam; ganham só a assinatura.
+ *
+ * `tolerar`: a consulta pode falhar sem derrubar a rota (o chamador trata
+ * `error`/`data` nulo como sempre tratou).
+ */
+async function lendo<T>(nome: string, leitura: T | PromiseLike<T>, opcoes: { tolerar?: boolean } = {}): Promise<T> {
+  let r: T;
+  try {
+    r = await leitura;
+  } catch (e: any) {
+    throw new Error(`${nome}: ${descreverErro(e)}`);
+  }
+  const erro = (r as any)?.error;
+  if (erro && !opcoes.tolerar) throw new Error(`${nome}: ${descreverErro(erro)}`);
+  return r;
+}
+
+/** Mensagem + código + detalhe, do jeito que o PostgREST manda — é o que se lê no log da Vercel. */
+function descreverErro(e: any): string {
+  if (!e) return 'erro desconhecido';
+  const partes = [e.message ?? String(e)];
+  if (e.code) partes.push(`(${e.code})`);
+  if (e.details) partes.push(`— ${e.details}`);
+  if (e.hint) partes.push(`— ${e.hint}`);
+  if (e.cause?.message) partes.push(`— causa: ${e.cause.message}`);
+  return partes.join(' ');
+}
+
 interface AuthedUser {
   id: number;
   nome: string;
@@ -741,34 +773,48 @@ export function createApp() {
       // Toda leitura desta rota já nasce presa à organização da sessão.
       const db = scopedDb(req.user!.organization_id);
 
-      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes, categoriasRes, emprestimosRes, lotesRes, itensRes] = await Promise.all([
-        db.from('materials').select('*').order('nome', { ascending: true }),
-        fetchAllRows(() =>
-          db
-            .from('material_movements')
-            .select('*, materials(nome)')
-            .order('created_at', { ascending: false })
-            .order('id', { ascending: false }),
-        ),
-        // Sem filtro de CLIENTE: esta tabela só tem gente do estoque.
-        req.db!.from(ESTOQUE_USERS).select('id, nome, matricula, role'),
-        unidadesDaOrg(db),
-        depositosDaOrg(db, { incluirUnidadesInativas: true }),
-        saldosDaOrg(db),
-        db.from('organizations').select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate, avaliacao_ate').eq('id', req.user!.organization_id).single(),
-        db.from('categories').select('id, nome, ordem').order('ordem', { ascending: true }).order('nome', { ascending: true }),
-        // Só o que está na rua: pendentes/atrasados dos estoques de empréstimo e entregas abertas dos de EPI.
-        db.from('loans').select('*, materials(nome, unidade_medida)').is('devolvido_em', null).is('encerrado_em', null).order('prazo_em', { ascending: true }),
-        // Lotes com saldo dos estoques de validade, e os itens dos estoques de patrimônio.
-        db.from('lots').select('*, materials(nome, unidade_medida)').gt('quantidade', 0).order('validade', { ascending: true, nullsFirst: false }),
-        db.from('assets').select('*, materials(nome)').order('codigo', { ascending: true }),
-      ]);
+      // Onze leituras em paralelo; uma que falhe derruba a resposta inteira.
+      // Por isso cada uma assina o próprio erro (o log passa a dizer QUAL
+      // consulta caiu, não só "erro") e a rodada é repetida uma vez antes de
+      // desistir: são só leituras, e o que falha aqui costuma ser passageiro
+      // — rede entre Vercel e Supabase, pool de conexões cheio num pico.
+      const ler = () =>
+        Promise.all([
+          lendo('materials', db.from('materials').select('*').order('nome', { ascending: true })),
+          lendo(
+            'material_movements',
+            fetchAllRows(() =>
+              db
+                .from('material_movements')
+                .select('*, materials(nome)')
+                .order('created_at', { ascending: false })
+                .order('id', { ascending: false }),
+            ),
+          ),
+          // Sem filtro de CLIENTE: esta tabela só tem gente do estoque. Erro aqui não derruba: sai equipe vazia.
+          lendo('estoque_users', req.db!.from(ESTOQUE_USERS).select('id, nome, matricula, role'), { tolerar: true }),
+          lendo('units', unidadesDaOrg(db)),
+          lendo('warehouses', depositosDaOrg(db, { incluirUnidadesInativas: true })),
+          lendo('stock_balances', saldosDaOrg(db)),
+          // Organização ausente vira null na resposta, como sempre foi.
+          lendo('organizations', db.from('organizations').select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate, avaliacao_ate').eq('id', req.user!.organization_id).single(), { tolerar: true }),
+          lendo('categories', db.from('categories').select('id, nome, ordem').order('ordem', { ascending: true }).order('nome', { ascending: true })),
+          // Só o que está na rua: pendentes/atrasados dos estoques de empréstimo e entregas abertas dos de EPI.
+          lendo('loans', db.from('loans').select('*, materials(nome, unidade_medida)').is('devolvido_em', null).is('encerrado_em', null).order('prazo_em', { ascending: true })),
+          // Lotes com saldo dos estoques de validade, e os itens dos estoques de patrimônio.
+          lendo('lots', db.from('lots').select('*, materials(nome, unidade_medida)').gt('quantidade', 0).order('validade', { ascending: true, nullsFirst: false })),
+          lendo('assets', db.from('assets').select('*, materials(nome)').order('codigo', { ascending: true })),
+        ]);
 
-      if (materialsRes.error) throw materialsRes.error;
-      if (categoriasRes.error) throw categoriasRes.error;
-      if (emprestimosRes.error) throw emprestimosRes.error;
-      if (lotesRes.error) throw lotesRes.error;
-      if (itensRes.error) throw itensRes.error;
+      let leitura: Awaited<ReturnType<typeof ler>>;
+      try {
+        leitura = await ler();
+      } catch (primeira: any) {
+        console.warn('[GET /api/data] falhou, repetindo uma vez:', primeira.message);
+        await new Promise((r) => setTimeout(r, 400));
+        leitura = await ler();
+      }
+      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes, categoriasRes, emprestimosRes, lotesRes, itensRes] = leitura;
 
       // Quem não é admin só recebe os depósitos que pode ver — e as unidades
       // que têm algum deles. O saldo dos outros não sai do servidor.
@@ -818,7 +864,7 @@ export function createApp() {
         organizacao: orgRes.data ? { ...orgRes.data, plano_efetivo: req.plano, conta: req.conta } : null,
       });
     } catch (err: any) {
-      console.error('[GET /api/data] erro:', err.message);
+      console.error('[GET /api/data] erro:', descreverErro(err));
       res.status(500).json({ error: 'Erro ao carregar dados do estoque.' });
     }
   });

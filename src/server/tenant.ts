@@ -18,8 +18,8 @@ import jwt from 'jsonwebtoken';
  * 2. Sem o segredo: usa service_role, que ignora RLS. O isolamento fica só
  *    nesta camada. Funciona, mas a garantia é do código, não do banco.
  *
- * O modo 2 é o padrão hoje porque o segredo ainda não foi configurado. Trocar
- * é definir a variável de ambiente — nenhuma linha de código muda.
+ * Trocar de modo é definir (ou não) a variável de ambiente — nenhuma linha
+ * de código muda. Em produção o modo 1 está ligado.
  */
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
@@ -60,13 +60,28 @@ const TABELAS_DA_ORGANIZACAO = new Set([
   'cotacao_fornecedores',
 ]);
 
-const clientesPorOrg = new Map<string, SupabaseClient>();
+/** Quanto vale o token que assinamos para o PostgREST, e com quanta folga o trocamos antes de vencer. */
+export const TOKEN_VALIDADE_S = 60 * 60;
+export const TOKEN_FOLGA_S = 5 * 60;
+/** `iat` dois minutos no passado — ver clientePara. */
+const TOKEN_ATRASO_IAT_S = 120;
 
-function clientePara(organizationId: string): SupabaseClient {
+const clientesPorOrg = new Map<string, { client: SupabaseClient; renovarEm: number }>();
+
+/**
+ * O cliente de uma organização, guardado entre requisições — mas não para
+ * sempre. No modo RLS o cliente carrega um token com prazo, e uma instância
+ * que vive mais que o prazo (a Vercel mantém a função quente enquanto há
+ * tráfego, e a tela pede dados a cada 45 s) passaria a mandar token vencido
+ * em toda consulta: "JWT expired" em tudo, até a instância ser reciclada.
+ * Aconteceu. Agora cada entrada sabe quando deve ser refeita, com folga.
+ */
+function clientePara(organizationId: string, agora = Date.now()): SupabaseClient {
   const cache = clientesPorOrg.get(organizationId);
-  if (cache) return cache;
+  if (cache && agora < cache.renovarEm) return cache.client;
 
   let client: SupabaseClient;
+  let renovarEm = Number.POSITIVE_INFINITY;
 
   if (RLS_ATIVO) {
     // Token que o PostgREST valida e transforma em request.jwt.claims.
@@ -75,24 +90,29 @@ function clientePara(organizationId: string): SupabaseClient {
     // `iat` dois minutos no passado: o PostgREST recusa token "emitido no
     // futuro", e um relógio local meio minuto adiantado já bastava para
     // derrubar toda leitura ("JWT issued at future"). O prazo de validade
-    // é contado a partir do iat, então continua sendo ~1 hora.
-    const token = jwt.sign(
-      { role: 'authenticated', organization_id: organizationId, iat: Math.floor(Date.now() / 1000) - 120 },
-      SUPABASE_JWT_SECRET,
-      { expiresIn: '1h' },
-    );
+    // é contado a partir do iat, então vence antes de uma hora daqui — e a
+    // renovação desconta isso também.
+    const iat = Math.floor(agora / 1000) - TOKEN_ATRASO_IAT_S;
+    const token = jwt.sign({ role: 'authenticated', organization_id: organizationId, iat }, SUPABASE_JWT_SECRET, { expiresIn: TOKEN_VALIDADE_S });
     client = createClient(SUPABASE_URL, ANON_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: `Bearer ${token}` } },
     });
+    renovarEm = (iat + TOKEN_VALIDADE_S - TOKEN_FOLGA_S) * 1000;
   } else {
+    // Chave de serviço não vence: o cliente serve enquanto a instância viver.
     client = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
   }
 
-  clientesPorOrg.set(organizationId, client);
+  clientesPorOrg.set(organizationId, { client, renovarEm });
   return client;
+}
+
+/** Quando o cliente desta organização vai ser refeito (Infinity fora do modo RLS). Para os testes. */
+export function renovacaoDoCliente(organizationId: string): number | null {
+  return clientesPorOrg.get(organizationId)?.renovarEm ?? null;
 }
 
 function comOrganizacao<T>(payload: T, organizationId: string): T {
@@ -105,14 +125,14 @@ function comOrganizacao<T>(payload: T, organizationId: string): T {
  * encadeadas como antes — `.select().eq().order().single()` —, mas já nascem
  * filtradas, e as escritas já nascem marcadas.
  */
-export function scopedDb(organizationId: string) {
+export function scopedDb(organizationId: string, agora = Date.now()) {
   if (!organizationId) {
     // Sem organização não existe consulta válida. Falhar aqui é melhor que
     // devolver dado de todo mundo.
     throw new Error('[tenant] organização ausente — consulta recusada.');
   }
 
-  const client = clientePara(organizationId);
+  const client = clientePara(organizationId, agora);
 
   return {
     /** Escapatória explícita, para o que é global de verdade (ex.: organizations). */
