@@ -5,8 +5,9 @@ import { Input, Select, Textarea } from '@/shared/ui/Field';
 import { MaterialPicker } from '@/shared/ui/MaterialPicker';
 import type { Deposito, Material } from '@/shared/types';
 import { formatNumber, saldoEm } from './utils';
-import { OPERACOES_ALMOXARIFADO } from '@/shared/constants';
+import { OPERACOES_ALMOXARIFADO, podeRegistrarOperacao } from '@/shared/constants';
 import { usePlano } from '@/features/planos/usePlano';
+import { useAuth } from '@/store/auth';
 import { Cadeado } from '@/features/planos/Cadeado';
 
 /** O que a tela manda para POST /api/estoques/:id/movimentacoes. */
@@ -43,11 +44,12 @@ interface MovementFormProps {
 export function MovementForm({ materials, deposito, outrosEstoques, onSubmit }: MovementFormProps) {
   const planoAtual = usePlano();
   const podeTransferir = planoAtual.libera('transferencia');
-  // As operações ligadas neste estoque; "Transferir" só com outro estoque na unidade — e com o plano que a inclui.
+  const cargo = useAuth((s) => s.user?.role ?? '');
+  // As operações ligadas neste estoque, que o cargo pode (entrada é de administrador); "Transferir" só com outro estoque na unidade — e com o plano que a inclui.
   const operacoes = useMemo(
     () =>
-      OPERACOES_ALMOXARIFADO.filter((o) => (!deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes(o.value)) && (o.value !== 'TRANSFERENCIA' || (outrosEstoques.length > 0 && podeTransferir))).map((o) => ({ ...o, color: CORES[o.value] })),
-    [deposito.operacoes_permitidas, outrosEstoques.length, podeTransferir],
+      OPERACOES_ALMOXARIFADO.filter((o) => podeRegistrarOperacao(cargo, o.value) && (!deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes(o.value)) && (o.value !== 'TRANSFERENCIA' || (outrosEstoques.length > 0 && podeTransferir))).map((o) => ({ ...o, color: CORES[o.value] })),
+    [cargo, deposito.operacoes_permitidas, outrosEstoques.length, podeTransferir],
   );
   const transferenciaTravada = !podeTransferir && outrosEstoques.length > 0 && (!deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes('TRANSFERENCIA'));
   const [operacao, setOperacao] = useState<MovimentoPayload['operacao']>(operacoes[0]?.value ?? 'ENTRADA');

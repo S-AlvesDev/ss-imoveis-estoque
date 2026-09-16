@@ -7,7 +7,7 @@ import { Input, Select } from '@/shared/ui/Field';
 import { api } from '@/lib/api';
 import type { ManagedUser } from '@/shared/types';
 import { ASSIGNABLE_ROLES, MIN_PASSWORD_LENGTH, ROLE_HINTS, ROLE_LABELS } from '@/features/usuarios/constants';
-import { OPERACOES_WHATSAPP, operacoesWhatsappPadrao } from '@/shared/constants';
+import { OPERACOES_WHATSAPP, operacoesWhatsappPadrao, podeRegistrarOperacao } from '@/shared/constants';
 import { formatarWhatsapp } from '@/shared/whatsapp';
 
 interface UserModalProps {
@@ -56,7 +56,8 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
   }, [open, user]);
 
   function camposWhatsapp() {
-    const c: Record<string, unknown> = { whatsapp: whatsapp.trim() || null, whatsapp_operacoes: waPersonalizado ? waOperacoes : null };
+    // O que o cargo não pode (entrada, para operador) não vai mesmo que tenha ficado marcado de um cargo anterior.
+    const c: Record<string, unknown> = { whatsapp: whatsapp.trim() || null, whatsapp_operacoes: waPersonalizado ? waOperacoes.filter((o) => podeRegistrarOperacao(role, o)) : null };
     if (waPin.trim()) c.whatsapp_pin = waPin.trim();
     else if (limparPin) c.whatsapp_pin = '';
     return c;
@@ -165,7 +166,7 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
               Personalizar o que pode registrar pelo WhatsApp
             </label>
             <div className="flex flex-wrap gap-1.5">
-              {OPERACOES_WHATSAPP.map((o) => {
+              {OPERACOES_WHATSAPP.filter((o) => podeRegistrarOperacao(role, o.value)).map((o) => {
                 const ligada = (waPersonalizado ? waOperacoes : operacoesWhatsappPadrao(role)).includes(o.value);
                 return (
                   <button
@@ -180,7 +181,7 @@ export function UserModal({ open, user, onClose, onSaved }: UserModalProps) {
                 );
               })}
             </div>
-            <p className="mt-1 text-[11px] text-[var(--text-muted)]">Consulta é sempre liberada. {waPersonalizado ? 'Só o que está laranja pode ser registrado.' : 'Padrão do cargo — marque acima para mudar.'}</p>
+            <p className="mt-1 text-[11px] text-[var(--text-muted)]">Consulta é sempre liberada. {waPersonalizado ? 'Só o que está laranja pode ser registrado.' : 'Padrão do cargo — marque acima para mudar.'}{podeRegistrarOperacao(role, 'ENTRADA') ? '' : ' Entrada de material é de administrador — nem pelo painel.'}</p>
           </div>
           <div>
             <Input label={user?.whatsapp_pin_definido ? 'Trocar PIN (opcional)' : 'PIN para confirmar (opcional)'} value={waPin} onChange={(e) => setWaPin(e.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" placeholder="4 a 6 dígitos" />

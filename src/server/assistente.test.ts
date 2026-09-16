@@ -3,7 +3,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
 import { normalizarTelefone, lerEvento, evolutionConfigurada, variantesDoTelefone } from './evolution';
-import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO, pediuConfirmacaoSemProposta, respondeuNumeroSemConsultar, REGRAS_DO_ASSISTENTE } from './assistente';
+import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO, pediuConfirmacaoSemProposta, respondeuNumeroSemConsultar, REGRAS_DO_ASSISTENTE, pendentesValidos, pedidoDeConfirmacao } from './assistente';
+import { podeRegistrarOperacao, operacoesWhatsappPadrao } from '../shared/constants';
 import { formatarWhatsapp } from '../shared/whatsapp';
 import { claudeConfigurado, conversar, systemComCache, aceitaEsforco } from './claude';
 
@@ -66,6 +67,40 @@ describe('permissões pelo WhatsApp', () => {
     expect(operacoesDoUsuario('OPERADOR', [])).toEqual([]);
     expect(operacoesDoUsuario('OPERADOR', ['SAIDA', 'AJUSTE', 'x'])).toEqual(['SAIDA']);
   });
+  it('entrada é de administrador: operador não ganha nem marcada à mão, e a regra é a mesma do painel', () => {
+    // Aconteceu: um operador deu entrada de 10 coletes pelo WhatsApp. Entrada é de quem administra, em qualquer canal.
+    expect(operacoesDoUsuario('OPERADOR', ['ENTRADA', 'SAIDA'])).toEqual(['SAIDA']);
+    expect(operacoesDoUsuario('ADMINISTRATIVO', ['ENTRADA', 'SAIDA'])).toEqual(['ENTRADA', 'SAIDA']);
+    expect(operacoesDoUsuario('CEO', null)).toContain('ENTRADA');
+    for (const cargo of ['CEO', 'ADMINISTRADOR', 'ADMINISTRATIVO']) expect(podeRegistrarOperacao(cargo, 'ENTRADA')).toBe(true);
+    expect(podeRegistrarOperacao('OPERADOR', 'ENTRADA')).toBe(false);
+    for (const op of ['SAIDA', 'CONSUMO', 'TRANSFERENCIA', 'AJUSTE', 'DEVOLUCAO']) expect(podeRegistrarOperacao('OPERADOR', op)).toBe(true);
+    // O padrão que a tela de Usuários mostra é o mesmo que o servidor aplica.
+    expect(operacoesWhatsappPadrao('OPERADOR')).toEqual(operacoesPadrao('OPERADOR'));
+    expect(operacoesWhatsappPadrao('CEO')).toEqual(operacoesPadrao('CEO'));
+  });
+});
+
+describe('várias propostas num SIM só', () => {
+  const daqui = (min: number) => new Date(Date.now() + min * 60_000).toISOString();
+  const p = (resumo: string, min = 10) => ({ tipo: 'movimentacao' as const, resumo, dados: {}, expira_em: daqui(min) });
+  it('lê o que está gravado: lista, objeto antigo, ou nada; o vencido cai fora', () => {
+    // Aconteceu: "saiu 3 bolas de futsal, 2 de vôlei, e chegaram 10 coletes" — a IA propôs as três, o SIM gravou só a última.
+    const a = p('Saída de 3 bolas');
+    const b = p('Saída de 2 redes');
+    expect(pendentesValidos([a, b])).toEqual([a, b]);
+    expect(pendentesValidos(a)).toEqual([a]);
+    expect(pendentesValidos(null)).toEqual([]);
+    expect(pendentesValidos(undefined)).toEqual([]);
+    expect(pendentesValidos([a, p('vencida', -1)])).toEqual([a]);
+    expect(pendentesValidos(['lixo', 7, null])).toEqual([]);
+  });
+  it('o pedido de confirmação diz quantas são', () => {
+    expect(pedidoDeConfirmacao(1, false)).toBe('Responda SIM para confirmar.');
+    expect(pedidoDeConfirmacao(1, true)).toBe('Responda SIM para confirmar (com o PIN: "SIM 1234").');
+    expect(pedidoDeConfirmacao(3, false)).toBe('Responda SIM para confirmar as 3, ou NÃO para cancelar todas.');
+    expect(pedidoDeConfirmacao(2, true)).toBe('Responda SIM para confirmar as 2 (com o PIN: "SIM 1234"), ou NÃO para cancelar todas.');
+  });
 });
 
 describe('número sem cadastro', () => {
@@ -91,13 +126,13 @@ describe('confirmação', () => {
 describe('contrato da IA: só a ferramenta prepara, só o código grava', () => {
   const proposta = { tipo: 'movimentacao', resumo: 'x', dados: {}, expira_em: new Date(Date.now() + 60_000).toISOString() } as any;
   it('pega a IA pedindo SIM ou anunciando registro sem proposta', () => {
-    expect(pediuConfirmacaoSemProposta('Certo, confirma aí: Transferência de 1. SIM pra registrar?', null, null)).toBe(true);
-    expect(pediuConfirmacaoSemProposta('✅ Transferência registrada!', null, null)).toBe(true);
-    expect(pediuConfirmacaoSemProposta('Tem 6 UN de Teste. Precisa registrar alguma movimentação?', null, null)).toBe(false);
+    expect(pediuConfirmacaoSemProposta('Certo, confirma aí: Transferência de 1. SIM pra registrar?', [], [])).toBe(true);
+    expect(pediuConfirmacaoSemProposta('✅ Transferência registrada!', [], [])).toBe(true);
+    expect(pediuConfirmacaoSemProposta('Tem 6 UN de Teste. Precisa registrar alguma movimentação?', [], [])).toBe(false);
   });
   it('deixa passar quando há proposta nova ou pendente', () => {
-    expect(pediuConfirmacaoSemProposta('Transferir 1 Teste do Central para Obra? Responda SIM', proposta, null)).toBe(false);
-    expect(pediuConfirmacaoSemProposta('Ainda espero o SIM da transferência.', null, proposta)).toBe(false);
+    expect(pediuConfirmacaoSemProposta('Transferir 1 Teste do Central para Obra? Responda SIM', [proposta], [])).toBe(false);
+    expect(pediuConfirmacaoSemProposta('Ainda espero o SIM da transferência.', [], [proposta])).toBe(false);
   });
 });
 

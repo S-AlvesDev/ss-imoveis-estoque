@@ -6,7 +6,7 @@ import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { supabaseServer } from '../lib/supabaseServer';
-import { ADMIN_ROLES, ALL_INVENTORY_ROLES, ASSIGNABLE_ROLES, CEO } from '../shared/constants';
+import { ADMIN_ROLES, ALL_INVENTORY_ROLES, ASSIGNABLE_ROLES, CEO, podeRegistrarOperacao } from '../shared/constants';
 // Mesma regra de saldo que a interface usa — fonte única da verdade.
 import { needsPurchase, stockStatus, stockTotal } from '../features/estoque/utils';
 import { scopedDb, type ScopedDb } from './tenant';
@@ -1702,6 +1702,8 @@ export function createApp() {
     try {
       const { operacao, material_id, quantidade, justificativa, destino_id, lote_id } = req.body || {};
       if (!ehOperacaoGenerica(operacao)) return res.status(400).json({ error: 'Operação inválida.' });
+      // Entrada é de administrador, independente do nível no depósito (regra em shared/constants).
+      if (!podeRegistrarOperacao(req.user!.role, operacao)) return res.status(403).json({ error: 'Entrada de material é registrada por um administrador. Peça a quem administra o estoque.' });
       if (!material_id || quantidade == null || !String(justificativa ?? '').trim()) {
         return res.status(400).json({ error: 'Preencha material, quantidade e justificativa.' });
       }

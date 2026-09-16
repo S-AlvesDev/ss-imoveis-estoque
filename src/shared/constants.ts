@@ -100,6 +100,17 @@ export const ESTADO_DO_ITEM: Record<string, { nome: string; cls: string }> = {
   baixado: { nome: 'Baixado', cls: 'bg-[var(--vermelho)]/15 text-[var(--vermelho)]' },
 };
 
+/**
+ * Entrada de material é de quem administra. O operador tira, consome,
+ * transfere e recebe devolução; o que chega de fora (compra, doação) é
+ * conferido e registrado por administrador — no painel e no WhatsApp, e
+ * nenhuma configuração por usuário abre isso para ele. Servidor e telas
+ * usam esta mesma regra.
+ */
+export function podeRegistrarOperacao(role: string, operacao: string): boolean {
+  return operacao !== 'ENTRADA' || ADMIN_ROLES.includes(role);
+}
+
 /** O que dá para registrar pelo WhatsApp, e o padrão de cada cargo (ajuste, recontagem e cadastro ficam no painel). */
 export const OPERACOES_WHATSAPP: Array<{ value: string; label: string }> = [
   { value: 'SAIDA', label: 'Saída' },
@@ -109,6 +120,6 @@ export const OPERACOES_WHATSAPP: Array<{ value: string; label: string }> = [
   { value: 'DEVOLUCAO', label: 'Devolução de empréstimo' },
 ];
 export function operacoesWhatsappPadrao(role: string): string[] {
-  return ADMIN_ROLES.includes(role) ? ['SAIDA', 'CONSUMO', 'TRANSFERENCIA', 'ENTRADA', 'DEVOLUCAO'] : ['SAIDA', 'CONSUMO', 'TRANSFERENCIA', 'DEVOLUCAO'];
+  return OPERACOES_WHATSAPP.map((o) => o.value).filter((o) => podeRegistrarOperacao(role, o));
 }
 

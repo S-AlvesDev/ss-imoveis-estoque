@@ -19,6 +19,7 @@ import { ehInstanciaDoStokAi, type Midia } from './evolution';
 import { contaDaOrg } from './planos';
 import { planoLibera, NOME_DO_PLANO } from '../shared/planos';
 import { stockStatus } from '../features/estoque/utils';
+import { podeRegistrarOperacao } from '../shared/constants';
 
 // ---------------------------------------------------------------------------
 //  Quem pode o quê pelo WhatsApp
@@ -31,17 +32,21 @@ export const NOME_DA_OPERACAO_WHATSAPP: Record<OperacaoWhatsapp, string> = { SAI
 
 /** O padrão do cargo, quando o usuário não tem lista própria. */
 export function operacoesPadrao(role: string): OperacaoWhatsapp[] {
-  return ehAdmin(role) ? ['SAIDA', 'CONSUMO', 'TRANSFERENCIA', 'ENTRADA', 'DEVOLUCAO'] : ['SAIDA', 'CONSUMO', 'TRANSFERENCIA', 'DEVOLUCAO'];
+  return OPERACOES_WHATSAPP.filter((o) => podeRegistrarOperacao(role, o));
 }
 
 export function ehOperacaoWhatsapp(s: unknown): s is OperacaoWhatsapp {
   return typeof s === 'string' && (OPERACOES_WHATSAPP as readonly string[]).includes(s);
 }
 
-/** A lista válida a partir do que o administrador marcou (nulo = padrão do cargo). */
+/**
+ * A lista válida a partir do que o administrador marcou (nulo = padrão do
+ * cargo). O que o cargo não pode (entrada, para operador) sai mesmo que
+ * esteja marcado — a regra do cargo vale acima da configuração.
+ */
 export function operacoesDoUsuario(role: string, lista: unknown): OperacaoWhatsapp[] {
   if (!Array.isArray(lista)) return operacoesPadrao(role);
-  return lista.filter(ehOperacaoWhatsapp);
+  return lista.filter(ehOperacaoWhatsapp).filter((o) => podeRegistrarOperacao(role, o));
 }
 
 /** "SIM", "sim 1234", "confirmo" → a confirmação e o PIN, se veio. */
@@ -182,7 +187,11 @@ const PROPOSTA_MINUTOS = 10;
 async function proporMovimentacao(ctx: Contexto, input: Record<string, unknown>): Promise<{ ok: true; proposta: Proposta } | { ok: false; erro: string }> {
   const operacao = String(input.operacao ?? '').toUpperCase();
   if (!ehOperacaoWhatsapp(operacao) || operacao === 'DEVOLUCAO') return { ok: false, erro: 'Operação inválida. Use SAIDA, CONSUMO, TRANSFERENCIA ou ENTRADA.' };
-  if (!ctx.falante.operacoes.includes(operacao)) return { ok: false, erro: `${ctx.falante.nome} não pode registrar ${NOME_DA_OPERACAO_WHATSAPP[operacao]} pelo WhatsApp. Peça ao administrador ou use o painel.` };
+  if (!ctx.falante.operacoes.includes(operacao)) {
+    // Entrada é de administrador em qualquer lugar; as outras podem estar só desligadas no WhatsApp desta pessoa.
+    if (!podeRegistrarOperacao(ctx.falante.role, operacao)) return { ok: false, erro: `Entrada de material é registrada por um administrador — ${ctx.falante.nome} é operador e não dá entrada nem pelo WhatsApp nem pelo painel. Diga isso à pessoa e sugira avisar quem administra o estoque.` };
+    return { ok: false, erro: `${ctx.falante.nome} não pode registrar ${NOME_DA_OPERACAO_WHATSAPP[operacao]} pelo WhatsApp. Peça ao administrador ou use o painel.` };
+  }
 
   const quantidade = arredondar(Number(input.quantidade));
   if (!Number.isFinite(quantidade) || quantidade <= 0) return { ok: false, erro: 'Informe uma quantidade maior que zero.' };
@@ -276,7 +285,7 @@ export async function executarProposta(falante: Falante, proposta: Proposta): Pr
     const atuais = await saldosDoMaterial(db, Number(d.material_id));
     const lados = { origem_id: d.origem_id ?? undefined, destino_id: d.destino_id ?? undefined };
     const calculo = calcularMovimento(atuais, { ...lados, quantidade: Number(d.quantidade), rotulo: NOME_DA_OPERACAO_WHATSAPP[d.operacao as OperacaoWhatsapp], nomeDe: (id) => (id === d.origem_id ? d.origem_nome : d.destino_nome) ?? id });
-    if (!calculo.ok) return `Não deu: ${calculo.erro}`;
+    if (!calculo.ok) return `❌ ${proposta.resumo}: ${calculo.erro}`;
     await gravarSaldos(db, Number(d.material_id), calculo.novos);
     await db.from('material_movements').insert({
       material_id: d.material_id,
@@ -292,11 +301,11 @@ export async function executarProposta(falante: Falante, proposta: Proposta): Pr
   }
   if (proposta.tipo === 'devolucao') {
     const { data: emp } = await db.from('loans').select('*').eq('id', d.loan_id).maybeSingle();
-    if (!emp || emp.devolvido_em) return 'Essa retirada já foi devolvida.';
+    if (!emp || emp.devolvido_em) return `❌ ${proposta.resumo}: essa retirada já foi devolvida.`;
     const falta = arredondar(Number(emp.quantidade) - Number(emp.quantidade_devolvida));
     const atuais = await saldosDoMaterial(db, emp.material_id);
     const calculo = calcularMovimento(atuais, { destino_id: emp.warehouse_id, quantidade: falta, rotulo: 'esta devolução', nomeDe: (id) => id });
-    if (!calculo.ok) return `Não deu: ${calculo.erro}`;
+    if (!calculo.ok) return `❌ ${proposta.resumo}: ${calculo.erro}`;
     const agora = new Date().toISOString();
     await db.from('loans').update({ quantidade_devolvida: Number(emp.quantidade), devolvido_em: agora, devolucao_matricula: falante.matricula }).eq('id', emp.id);
     await gravarSaldos(db, emp.material_id, calculo.novos);
@@ -328,7 +337,7 @@ const FERRAMENTAS: Ferramenta[] = [
   },
   {
     name: 'propor_movimentacao',
-    description: 'Prepara uma movimentação (SAIDA, CONSUMO, TRANSFERENCIA ou ENTRADA) para a pessoa confirmar. NUNCA executa: devolve o resumo que deve ser apresentado pedindo "SIM". Se faltar dado (material ambíguo, estoque), devolve o que perguntar.',
+    description: 'Prepara UMA movimentação (SAIDA, CONSUMO, TRANSFERENCIA ou ENTRADA) para a pessoa confirmar. NUNCA executa: devolve o resumo que deve ser apresentado pedindo "SIM". Se a pessoa disser várias movimentações numa mensagem, chame uma vez para cada — todas ficam esperando um único SIM. Se faltar dado (material ambíguo, estoque), devolve o que perguntar.',
     input_schema: {
       type: 'object',
       properties: {
@@ -401,7 +410,8 @@ export const REGRAS_DO_ASSISTENTE = [
   'REGRA QUE NÃO TEM EXCEÇÃO: todo número que você disser (saldo, quantidade, prazo, validade, preço) tem que vir de uma ferramenta chamada NESTA resposta. Não repita número de mensagem anterior, não some de cabeça, não estime. Se a pergunta é sobre quantidade, a primeira coisa que você faz é chamar consultar_saldo.',
   'Se a pessoa disser que o número está errado, consulte de novo e diga o que o sistema mostra. Se der o mesmo número, diga que confere e sugira conferir a prateleira ou ver o histórico no painel — nunca mude o número só porque ela discordou.',
   'Gravação (saída, consumo, transferência, entrada, devolução): você NÃO tem como registrar nem preparar nada sozinha — só a ferramenta propor_movimentacao/propor_devolucao prepara. Chame-a sempre que a pessoa disser uma movimentação; só depois de ela devolver PROPOSTA PRONTA apresente o resumo e peça SIM. Nunca escreva "confirma", "SIM" ou "registrado" sem isso. Quem grava é o sistema, quando a pessoa responde SIM; quem avisa que gravou também é o sistema — nunca você. Se a ferramenta devolver dúvida (material ambíguo, estoque), pergunte à pessoa.',
-  'Só proponha operações que estejam na lista de operações liberadas para a pessoa. Fora dessa lista, diga que é só pelo painel ou com o administrador.',
+  'Só proponha operações que estejam na lista de operações liberadas para a pessoa. Fora dessa lista, diga que é só pelo painel ou com o administrador — e entrada de material é só de administrador, em qualquer lugar.',
+  'Várias movimentações numa mensagem: uma chamada de ferramenta para cada. Depois liste as propostas numeradas, diga quantas são e peça um SIM só ("Responda SIM para confirmar as 3"). Se alguma falhou, diga qual e por quê, e peça SIM só para as que ficaram prontas.',
   'Nunca revele dados de outros estoques ou empresas. Se perguntarem algo fora de estoque, responda em uma linha e volte ao assunto.',
   'Se perguntarem o que você faz: consulta saldo, onde está cada material e o que está faltando; registra o que estiver liberado, sempre pedindo SIM. Só isso — cadastro, ajuste e relatórios são no painel.',
   'Suporte: se a pessoa relatar problema com o sistema (algo não funciona, erro, senha, acesso, plano, cobrança, cadastro) ou pedir ajuda com o próprio Stok Aí, não chute causa nem prometa conserto. Diga em uma linha que isso é com a equipe do Stok Aí, que lê este mesmo número e responde por aqui, e acrescente a dica de suporte do bloco seguinte. Depois volte ao estoque.',
@@ -414,21 +424,25 @@ export const REGRAS_DO_ASSISTENTE = [
 ].join('\n');
 
 /** O que muda por pessoa e por dia — fica depois do marcador de cache. */
-function contextoDaPessoa(ctx: Contexto, pendente: Proposta | null): string {
+function contextoDaPessoa(ctx: Contexto, pendentes: Proposta[]): string {
   const hoje = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   return [
     `Você está falando com ${ctx.falante.nome} (${ctx.falante.role === 'CEO' ? 'CEO' : ehAdmin(ctx.falante.role) ? 'administrador' : 'operador'}) da empresa ${ctx.falante.organizacao}. Hoje é ${hoje}.`,
     `Estoques que a pessoa vê: ${ctx.depositos.map((d) => `${d.nome} [${d.modo}${podeOperar(ctx.acessos, d.id) ? ', opera' : ', consulta'}]`).join('; ') || 'nenhum'}.`,
     `Operações liberadas para ela pelo WhatsApp: ${ctx.falante.operacoes.map((o) => NOME_DA_OPERACAO_WHATSAPP[o]).join(', ') || 'nenhuma (só consulta)'}.`,
-    pendente ? `Há uma ação esperando confirmação: "${pendente.resumo}". Se a pessoa mudar de assunto, atenda; se quiser cancelar, diga que pode responder NÃO.` : '',
+    pendentes.length === 1
+      ? `Há uma ação esperando confirmação: "${pendentes[0].resumo}". Se a pessoa mudar de assunto, atenda; se quiser cancelar, diga que pode responder NÃO.`
+      : pendentes.length > 1
+        ? `Há ${pendentes.length} ações esperando um único SIM: ${pendentes.map((p, i) => `${i + 1}) ${p.resumo}`).join('; ')}. Se a pessoa mudar de assunto, atenda; se quiser cancelar, diga que pode responder NÃO (cancela todas).`
+        : '',
     `Dica de suporte para esta pessoa: ${ehAdmin(ctx.falante.role) ? 'ela vê o estado da conexão e o simulador em Configurações → Stok Aí no WhatsApp' : 'o administrador da empresa dela também pode ajudar'}.`,
   ]
     .filter(Boolean)
     .join('\n');
 }
 
-function systemPrompt(ctx: Contexto, pendente: Proposta | null): BlocoDeSistema[] {
-  return systemComCache(REGRAS_DO_ASSISTENTE, contextoDaPessoa(ctx, pendente));
+function systemPrompt(ctx: Contexto, pendentes: Proposta[]): BlocoDeSistema[] {
+  return systemComCache(REGRAS_DO_ASSISTENTE, contextoDaPessoa(ctx, pendentes));
 }
 
 // ---------------------------------------------------------------------------
@@ -458,8 +472,8 @@ export function respondeuNumeroSemConsultar(texto: string, ferramentas: string[]
   return /[0-9]/.test(texto);
 }
 
-export function pediuConfirmacaoSemProposta(texto: string, nova: Proposta | null, pendente: Proposta | null): boolean {
-  if (nova || pendente) return false;
+export function pediuConfirmacaoSemProposta(texto: string, novas: Proposta[], pendentes: Proposta[]): boolean {
+  if (novas.length || pendentes.length) return false;
   return /\bSIM\b/.test(texto) || /\bconfirma\b/i.test(texto) || /registrad[ao]\b/i.test(texto);
 }
 
@@ -478,21 +492,41 @@ interface Conversa {
   id?: string;
   /** `erro` e `ferramentas` ficam só no registro (a IA não os vê): por que uma resposta falhou, o que ela chamou. */
   mensagens: Array<{ role: 'user' | 'assistant'; content: string; erro?: string; ferramentas?: string[] }>;
-  pendente: Proposta | null;
+  /**
+   * O que espera "SIM". Uma mensagem pode trazer várias movimentações ("saiu
+   * 3 bolas, 2 redes, e chegaram 10 coletes") — cada uma vira uma proposta, e
+   * um SIM só confirma todas. Uma mensagem nova com propostas substitui as
+   * anteriores: quem corrige a quantidade não pode acabar gravando as duas.
+   */
+  pendentes: Proposta[];
+}
+
+/**
+ * O que está gravado em `pendente` (jsonb) como lista válida. Antes era uma
+ * proposta só, então um objeto solto ainda pode aparecer; o vencido cai fora.
+ */
+export function pendentesValidos(bruto: unknown, agora = Date.now()): Proposta[] {
+  const lista = Array.isArray(bruto) ? bruto : bruto ? [bruto] : [];
+  return (lista as Proposta[]).filter((p) => p && typeof p === 'object' && new Date(p.expira_em).getTime() > agora);
 }
 
 async function carregarConversa(telefone: string): Promise<Conversa> {
   const { data } = await supabaseServer.from('whatsapp_conversas').select('id, mensagens, pendente').eq('telefone', telefone).maybeSingle();
-  if (!data) return { mensagens: [], pendente: null };
-  const pendente = data.pendente as Proposta | null;
-  return { id: data.id, mensagens: Array.isArray(data.mensagens) ? data.mensagens : [], pendente: pendente && new Date(pendente.expira_em).getTime() > Date.now() ? pendente : null };
+  if (!data) return { mensagens: [], pendentes: [] };
+  return { id: data.id, mensagens: Array.isArray(data.mensagens) ? data.mensagens : [], pendentes: pendentesValidos(data.pendente) };
 }
 
 async function salvarConversa(falante: Falante, telefone: string, c: Conversa) {
   // Seis mensagens bastam para o assunto continuar; cada uma a mais é reenviada
   // à IA em toda rodada, e o que a pessoa sente disso é demora.
   const mensagens = c.mensagens.slice(-6);
-  await supabaseServer.from('whatsapp_conversas').upsert({ organization_id: falante.organization_id, user_id: falante.id, telefone, mensagens, pendente: c.pendente, atualizado_em: new Date().toISOString() }, { onConflict: 'telefone' });
+  await supabaseServer.from('whatsapp_conversas').upsert({ organization_id: falante.organization_id, user_id: falante.id, telefone, mensagens, pendente: c.pendentes.length ? c.pendentes : null, atualizado_em: new Date().toISOString() }, { onConflict: 'telefone' });
+}
+
+/** A frase que fecha a resposta quando há proposta esperando: quantas são, e como confirmar. */
+export function pedidoDeConfirmacao(quantas: number, temPin: boolean): string {
+  const pin = temPin ? ' (com o PIN: "SIM 1234")' : '';
+  return quantas > 1 ? `Responda SIM para confirmar as ${quantas}${pin}, ou NÃO para cancelar todas.` : `Responda SIM para confirmar${pin}.`;
 }
 
 async function registrar(args: { organizationId: string | null; userId: number | null; telefone: string; direcao: 'entrada' | 'saida'; texto: string; uso?: Uso | null }) {
@@ -597,30 +631,36 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
   const conversa = await carregarConversa(telefone);
 
   // Confirmação ou cancelamento do que estava esperando — resolvido por código, não pela IA.
-  if (conversa.pendente) {
+  if (conversa.pendentes.length) {
     const c = lerConfirmacao(texto);
     if (c.confirma) {
       if (falante.temPin) {
         if (!c.pin) return { texto: `Para confirmar, responda SIM seguido do seu PIN (ex.: "SIM 1234").`, falante };
         if (!(await bcrypt.compare(c.pin, falante.pinHash as string))) return { texto: 'PIN incorreto. Tente de novo: "SIM 1234".', falante };
       }
-      const proposta = conversa.pendente;
-      conversa.pendente = null;
-      let resultado: string;
-      try {
-        resultado = await executarProposta(falante, proposta);
-      } catch (e: any) {
-        console.error('[whatsapp] executar:', e.message);
-        resultado = 'Deu erro ao registrar. Tente pelo painel ou mais tarde.';
+      const propostas = conversa.pendentes;
+      conversa.pendentes = [];
+      // Uma por vez, na ordem em que foram ditas; a que não der não impede as outras,
+      // e cada linha da resposta diz o que aconteceu com cada uma.
+      const linhas: string[] = [];
+      for (const proposta of propostas) {
+        try {
+          linhas.push(await executarProposta(falante, proposta));
+        } catch (e: any) {
+          console.error('[whatsapp] executar:', e.message);
+          linhas.push(`❌ ${proposta.resumo}: deu erro ao registrar. Tente pelo painel ou mais tarde.`);
+        }
       }
+      const resultado = linhas.join('\n\n');
       conversa.mensagens.push({ role: 'user', content: texto }, { role: 'assistant', content: resultado });
       await salvarConversa(falante, telefone, conversa);
       await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'saida', texto: resultado });
       return { texto: resultado, falante };
     }
     if (c.nega) {
-      conversa.pendente = null;
-      const r = 'Cancelado. Nada foi registrado.';
+      const quantas = conversa.pendentes.length;
+      conversa.pendentes = [];
+      const r = quantas > 1 ? `Cancelado. Nenhuma das ${quantas} foi registrada.` : 'Cancelado. Nada foi registrado.';
       conversa.mensagens.push({ role: 'user', content: texto }, { role: 'assistant', content: r });
       await salvarConversa(falante, telefone, conversa);
       await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'saida', texto: r });
@@ -642,7 +682,8 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
   if (!claudeConfigurado()) return { texto: 'O assistente ainda não está ligado neste servidor. Use o painel por enquanto.', falante };
 
   const ctx = await montarContexto(falante);
-  let novaProposta: Proposta | null = null;
+  // Cada propor_* que deu certo entra aqui; no fim, todas esperam o mesmo SIM.
+  const novasPropostas: Proposta[] = [];
   const historico: MensagemDoChat[] = [...conversa.mensagens.map((m) => ({ role: m.role, content: m.content })), { role: 'user', content: texto }];
   let resposta: string;
   let uso: Uso | undefined;
@@ -651,23 +692,23 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
   try {
     const executar = (name: string, input: Record<string, unknown>) =>
       executarFerramenta(ctx, name, input, (p) => {
-        novaProposta = p;
+        novasPropostas.push(p);
       });
     // effort low: conversa de WhatsApp não precisa de raciocínio longo, e cada token pensado é cobrado como saída.
-    let r = await conversar({ system: systemPrompt(ctx, conversa.pendente), historico, tools: FERRAMENTAS, executar, esforco: 'low' });
+    let r = await conversar({ system: systemPrompt(ctx, conversa.pendentes), historico, tools: FERRAMENTAS, executar, esforco: 'low' });
 
     // Duas maneiras de a IA falar além do que sabe: pedir SIM sem ter preparado
     // nada, e soltar número sem ter consultado. Nas duas, o código manda refazer
     // usando a ferramenta — e, se ela insistir, responde no lugar dela.
     const chamou = () => r.chamadas.map((c) => c.name);
-    const encenou = () => pediuConfirmacaoSemProposta(r.texto, novaProposta, conversa.pendente);
+    const encenou = () => pediuConfirmacaoSemProposta(r.texto, novasPropostas, conversa.pendentes);
     const chutou = () => respondeuNumeroSemConsultar(r.texto, chamou());
     if (encenou() || chutou()) {
       const cobranca = encenou()
         ? '[sistema] Você pediu confirmação sem chamar propor_movimentacao/propor_devolucao. Chame a ferramenta agora com o que a pessoa disse; se faltar dado, pergunte.'
         : '[sistema] Você respondeu com número sem consultar o sistema. Chame consultar_saldo (ou listar_pendencias/listar_estoques) e responda apenas com o que a ferramenta devolver.';
       const segunda = await conversar({
-        system: systemPrompt(ctx, conversa.pendente),
+        system: systemPrompt(ctx, conversa.pendentes),
         historico: [...historico, { role: 'assistant', content: r.texto }, { role: 'user', content: cobranca }],
         tools: FERRAMENTAS,
         executar,
@@ -690,9 +731,12 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
     resposta = 'Tive um problema para responder agora. Tente de novo em instantes ou use o painel.';
   }
 
-  if (novaProposta) {
-    conversa.pendente = novaProposta;
-    if (!/\bsim\b/i.test(resposta)) resposta += `\n\nResponda SIM para confirmar${falante.temPin ? ' (com o PIN: "SIM 1234")' : ''}.`;
+  if (novasPropostas.length) {
+    conversa.pendentes = novasPropostas;
+    // A IA pode ter pedido o SIM; se não pediu — ou se são várias e ela não disse quantas —, o código diz.
+    const pediuSim = /\bsim\b/i.test(resposta);
+    const disseQuantas = novasPropostas.length === 1 || resposta.includes(String(novasPropostas.length));
+    if (!pediuSim || !disseQuantas) resposta += `\n\n${pedidoDeConfirmacao(novasPropostas.length, falante.temPin)}`;
   }
   conversa.mensagens.push({ role: 'user', content: texto }, { role: 'assistant', content: resposta, ...(erro ? { erro } : {}), ...(ferramentas.length ? { ferramentas } : {}) });
   await salvarConversa(falante, telefone, conversa);

@@ -12,9 +12,10 @@ import { MaterialPicker } from '@/shared/ui/MaterialPicker';
 import { api } from '@/lib/api';
 import type { Deposito, Lote, Material } from '@/shared/types';
 import { formatNumber, saldoEm } from '@/features/estoque/utils';
-import { MODO_LABELS, OPERACOES_ALMOXARIFADO } from '@/shared/constants';
+import { MODO_LABELS, OPERACOES_ALMOXARIFADO, podeRegistrarOperacao } from '@/shared/constants';
 import { buscaInicial } from '@/store/busca';
 import { usePlano } from '@/features/planos/usePlano';
+import { useAuth } from '@/store/auth';
 import { Cadeado } from '@/features/planos/Cadeado';
 
 interface ValidadeProps {
@@ -90,12 +91,13 @@ export function Validade({ deposito, materials, lotes, outrosEstoques, refetch, 
   const diasAviso = deposito.dias_aviso_validade ?? 30;
   const planoAtual = usePlano();
   const podeTransferir = planoAtual.libera('transferencia');
+  const cargo = useAuth((s) => s.user?.role ?? '');
 
   // As operações ligadas neste estoque; "Transferir" só com outro estoque na unidade — e com o plano que a inclui.
   const operacoes = useMemo(
     () =>
-      OPERACOES_ALMOXARIFADO.filter((o) => (!deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes(o.value)) && (o.value !== 'TRANSFERENCIA' || (outrosEstoques.length > 0 && podeTransferir))).map((o) => ({ ...o, color: CORES[o.value] })),
-    [deposito.operacoes_permitidas, outrosEstoques.length, podeTransferir],
+      OPERACOES_ALMOXARIFADO.filter((o) => podeRegistrarOperacao(cargo, o.value) && (!deposito.operacoes_permitidas || deposito.operacoes_permitidas.includes(o.value)) && (o.value !== 'TRANSFERENCIA' || (outrosEstoques.length > 0 && podeTransferir))).map((o) => ({ ...o, color: CORES[o.value] })),
+    [cargo, deposito.operacoes_permitidas, outrosEstoques.length, podeTransferir],
   );
   const transferenciaTravada = !podeTransferir && outrosEstoques.length > 0;
 
