@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
+import { RefreshCw, WifiOff } from 'lucide-react';
+import { Button } from '@/shared/ui/Button';
 import { AnimatePresence, motion } from 'motion/react';
 import { useAuth } from '@/store/auth';
 import { useEstoqueData } from '@/features/estoque/useEstoqueData';
@@ -80,7 +82,7 @@ const VIEW_TITLES: Record<string, string> = {
 function InventoryApp({ role }: { role: string }) {
   const [view, setView] = useState<AppView | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, estoquesVisiveis, categorias, emprestimos, lotes, itens: itensDePatrimonio, bloqueio, loading, atualizadoEm, refetch } = useEstoqueData();
+  const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, estoquesVisiveis, categorias, emprestimos, lotes, itens: itensDePatrimonio, bloqueio, loading, semResposta, atualizadoEm, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
 
   const isAdmin = ADMIN_ROLES.includes(role);
@@ -107,6 +109,26 @@ function InventoryApp({ role }: { role: string }) {
 
   // Conta bloqueada (avaliação terminou, cartão recusado): só a tela de assinar.
   if (bloqueio) return <ContaBloqueada conta={bloqueio} />;
+
+  // O servidor não respondeu e nada chegou: dizer isso é o certo. Antes, a
+  // tela concluía "a empresa não tem estoque" — uma afirmação falsa sobre o
+  // negócio do cliente, causada por uma falha de rede.
+  if (semResposta) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-6 text-center">
+        <div className="max-w-sm">
+          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--vermelho)]/12 text-[var(--vermelho)]">
+            <WifiOff size={22} />
+          </span>
+          <p className="mt-4 text-lg font-bold text-[var(--text)]">Não consegui carregar seus dados.</p>
+          <p className="mt-1 text-sm text-[var(--text-muted)]">Pode ser a sua conexão ou uma instabilidade nossa. Seus dados estão salvos — nada se perdeu.</p>
+          <Button className="mt-5" icon={<RefreshCw size={15} />} onClick={() => refetch()}>
+            Tentar de novo
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   // Organização sem estoque nenhum: o primeiro acesso pergunta qual é.
   if (depositos.length === 0) {

@@ -59,6 +59,8 @@ export function useEstoqueData() {
   // Conta bloqueada (avaliação terminou, cartão recusado): o servidor recusa
   // o /api/data com 402 e diz a situação. A tela de bloqueio assume dali.
   const [bloqueio, setBloqueio] = useState<Conta | null>(null);
+  // Falhou e nunca chegou a carregar: a tela não pode concluir nada sobre a empresa.
+  const [semResposta, setSemResposta] = useState(false);
   const unidadeEscolhida = useUnidade((s) => s.unidadeId);
   const setUnidade = useUnidade((s) => s.setUnidade);
   const setOrganizacao = useMarca((s) => s.setOrganizacao);
@@ -66,6 +68,10 @@ export function useEstoqueData() {
   // Uma busca de cada vez: aba voltando ao foco no meio de um carregamento
   // não pode empilhar pedidos, senão a tela pisca com respostas fora de ordem.
   const buscando = useRef(false);
+  // Se ALGUMA busca já trouxe dados. Num ref, não numa dependência: ler
+  // `atualizadoEm` dentro do refetch faria o hook se recriar a cada sucesso
+  // e o efeito disparar de novo — um laço infinito de requisições.
+  const jaCarregou = useRef(false);
   const refetch = useCallback(async (opcoes: { silencioso?: boolean } = {}) => {
     if (buscando.current) return;
     buscando.current = true;
@@ -74,6 +80,8 @@ export function useEstoqueData() {
       setData({ ...VAZIO, ...result });
       setAtualizadoEm(new Date());
       setBloqueio(null);
+      setSemResposta(false);
+      jaCarregou.current = true;
       // Veste a cor e o logo desta organização assim que se sabe qual é.
       setOrganizacao(result.organizacao ?? null);
     } catch (err: any) {
@@ -81,6 +89,9 @@ export function useEstoqueData() {
         setBloqueio(err.body.conta ?? { situacao: 'bloqueada', renovacao: null, plano: 'avaliacao', ate: null, dias_restantes: 0 });
         return;
       }
+      // Nunca carregou? A tela precisa dizer que não conseguiu — e não
+      // desenhar uma empresa vazia que não existe.
+      if (!jaCarregou.current) setSemResposta(true);
       // Atualização de fundo que falha (queda de rede, servidor reiniciando)
       // não vira aviso: a tela continua com o que tinha e tenta de novo.
       if (!opcoes.silencioso) toast.error(err.message || 'Erro ao carregar dados do estoque.');
@@ -194,6 +205,7 @@ export function useEstoqueData() {
     /** A situação quando o servidor bloqueou a conta; null quando está tudo bem. */
     bloqueio,
     loading,
+    semResposta,
     /** Quando os dados chegaram pela última vez — o "última atualização" do painel. */
     atualizadoEm,
     refetch,
