@@ -27,6 +27,7 @@ import { Usuarios } from '@/pages/Usuarios/Usuarios';
 import { Ajuda } from '@/pages/Ajuda/Ajuda';
 import { Configuracoes } from '@/pages/Configuracoes/Configuracoes';
 import { UpdateBanner } from '@/features/changelog/UpdateGuide';
+import { Jatoba } from '@/features/jatoba/Jatoba';
 import { useUnidade } from '@/store/unidade';
 import { Sidebar, navItemsFor, estoqueDaView, type AppView } from '@/app/Sidebar';
 import { TopBar } from '@/app/TopBar';
@@ -231,6 +232,8 @@ function InventoryApp({ role }: { role: string }) {
           </ViewTransition>
         </main>
       </div>
+      {/* O Jatobá acompanha todas as telas: consulta, prepara movimentações e leva até a tela certa. */}
+      <Jatoba modo="painel" onNavigate={(v) => setView(v as AppView)} onDados={() => refetch()} />
     </div>
   );
 }

@@ -14,7 +14,9 @@ export type Evento =
   | 'home_demo_submit' // enviou o formulário
   | 'home_plano_click' // clicou em começar num cartão de plano
   | 'assinatura_iniciar' // foi para o checkout do Mercado Pago
-  | 'assinatura_confirmada'; // voltou do checkout com a assinatura ativa
+  | 'assinatura_confirmada' // voltou do checkout com a assinatura ativa
+  | 'jatoba_abrir' // abriu o assistente, em qual porta (home/painel)
+  | 'jatoba_pergunta'; // mandou uma pergunta
 
 type Props = Record<string, string | number | boolean>;
 

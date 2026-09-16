@@ -4,8 +4,20 @@
     {
       "name": "estoque-app",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3001
+    },
+    {
+      "name": "estoque-app-3002",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set PORT=3002&& npx tsx server.ts"
+      ],
+      "port": 3002
     }
   ]
 }

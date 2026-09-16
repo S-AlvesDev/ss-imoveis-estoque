@@ -23,6 +23,7 @@ import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes'
 import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone, baixarMidia, criarInstancia, qrDaInstancia, apagarInstancia, mostrarDigitando } from './evolution';
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
+import { responderNaHome, responderNoPainel, confirmarPropostas, falantePelaSessao, sanearHistorico, registrarJatoba, perguntasNaHomeHoje, mensagensNoPainelNoMes, LIMITE_HOME_DIA, LIMITE_PAINEL_MES, TAMANHO_MAXIMO_DA_MENSAGEM, NOME as JATOBA } from './jatoba';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
 import { vigiarWhatsapp, vigiarWhatsappDasEmpresas, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores, apagarContasVencidas } from './rotinas';
 import { iniciarErros } from './erros';
@@ -3176,6 +3177,74 @@ export function createApp() {
    * Material que já existe pelo nome não é erro nem sobrescrita: é pulado,
    * e a resposta diz quais foram.
    */
+  // --------------------------- JATOBÁ (o assistente do site) ---------------------------
+  /**
+   * A porta pública: quem está na Home pergunta sobre o produto. Sem login e
+   * sem dado de ninguém — só o conhecimento do produto. Dois tetos: por IP
+   * (uma pessoa) e por dia no total (um robô a partir de muitos IPs).
+   */
+  const jatobaHomeLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    limit: 20,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: `O ${JATOBA} já respondeu bastante por aqui. Fale com a equipe pelo WhatsApp ou volte em uma hora.` },
+  });
+
+  app.post('/api/jatoba/home', jatobaHomeLimiter, async (req, res) => {
+    try {
+      const pergunta = String(req.body?.pergunta ?? '').trim().slice(0, TAMANHO_MAXIMO_DA_MENSAGEM);
+      if (!pergunta) return res.status(400).json({ error: 'Escreva a pergunta.' });
+      if (!claudeConfigurado()) return res.status(503).json({ error: `O ${JATOBA} está descansando. Fale com a equipe pelo WhatsApp.` });
+      if ((await perguntasNaHomeHoje()) >= LIMITE_HOME_DIA) return res.status(429).json({ error: `O ${JATOBA} atingiu o limite de hoje. Fale com a equipe pelo WhatsApp.` });
+
+      const historico = sanearHistorico(req.body?.historico);
+      const r = await responderNaHome(historico, pergunta);
+      await registrarJatoba({ canal: 'home', organizationId: null, userId: null, ip: req.ip ?? null, pergunta, resposta: r.texto, uso: r.uso });
+      res.json({ texto: r.texto });
+    } catch (err: any) {
+      console.error('[POST /api/jatoba/home] erro:', err.message);
+      res.status(500).json({ error: `O ${JATOBA} não conseguiu responder agora. Tente de novo em instantes.` });
+    }
+  });
+
+  /**
+   * A porta do painel: o mesmo assistente do WhatsApp, com a sessão como
+   * prova de quem é. A resposta pode trazer propostas (assinadas — o navegador
+   * só devolve o carimbo) e uma tela para abrir.
+   */
+  app.post('/api/jatoba', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+    try {
+      const texto = String(req.body?.texto ?? '').trim().slice(0, TAMANHO_MAXIMO_DA_MENSAGEM);
+      if (!texto) return res.status(400).json({ error: 'Escreva a mensagem.' });
+      if (!claudeConfigurado()) return res.status(503).json({ error: `O ${JATOBA} ainda não está ligado neste servidor.` });
+      if ((await mensagensNoPainelNoMes(req.user!.organization_id)) >= LIMITE_PAINEL_MES) {
+        return res.status(429).json({ error: `A empresa chegou ao limite de ${LIMITE_PAINEL_MES} mensagens ao ${JATOBA} neste mês.` });
+      }
+      const falante = await falantePelaSessao(req.user!);
+      const r = await responderNoPainel(falante, sanearHistorico(req.body?.historico), texto);
+      await registrarJatoba({ canal: 'painel', organizationId: req.user!.organization_id, userId: req.user!.id, ip: null, pergunta: texto, resposta: r.texto, ferramentas: r.ferramentas, uso: r.uso });
+      res.json({ texto: r.texto, propostas: r.propostas, abrir: r.abrir });
+    } catch (err: any) {
+      console.error('[POST /api/jatoba] erro:', err.message);
+      res.status(500).json({ error: `O ${JATOBA} não conseguiu responder agora. Tente de novo em instantes.` });
+    }
+  });
+
+  /** Confirmar no cartão: só o servidor executa, e só o que ele mesmo assinou para esta pessoa. */
+  app.post('/api/jatoba/confirmar', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), async (req, res) => {
+    try {
+      const tokens: unknown[] = Array.isArray(req.body?.propostas) ? req.body.propostas : [];
+      if (tokens.length === 0) return res.status(400).json({ error: 'Nada para confirmar.' });
+      const falante = await falantePelaSessao(req.user!);
+      const resultados = await confirmarPropostas(falante, tokens.map(String));
+      res.json({ resultados });
+    } catch (err: any) {
+      console.error('[POST /api/jatoba/confirmar] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível confirmar agora.' });
+    }
+  });
+
   app.post('/api/materials/importar', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const brutas: unknown[] = Array.isArray(req.body?.linhas) ? req.body.linhas : [];

@@ -5,6 +5,7 @@ import { Hero } from './Hero';
 import { Prova, Dor, Recursos, NoWhatsapp, ComoFunciona, AntesDepois, Multiunidade, Planos, Evolucao, CtaFinal } from './secoes';
 import { Footer } from './Footer';
 import { DemoModal } from './DemoModal';
+import { Jatoba } from '@/features/jatoba/Jatoba';
 
 /**
  * A Home pública do Stok Aí: problema → solução → prova → produto → ação.
@@ -66,6 +67,8 @@ export function Home() {
       </main>
       <Footer onDemo={() => abrirDemo('rodape')} />
       <DemoModal open={demo.aberto} origem={demo.origem} onClose={fecharDemo} />
+      {/* O Jatobá: tira dúvidas de quem está conhecendo o produto, sem sair da página. */}
+      <Jatoba modo="home" />
     </div>
   );
 }

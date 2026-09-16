@@ -103,7 +103,7 @@ interface MaterialVisivel {
   saldos: Record<string, number>;
 }
 
-interface Contexto {
+export interface Contexto {
   db: ScopedDb;
   falante: Falante;
   acessos: Acessos;
@@ -122,7 +122,7 @@ interface Contexto {
  * tela. Ele é lido na primeira ferramenta que precisar — e uma vez só por
  * mensagem, porque fica guardado no contexto.
  */
-async function montarContexto(falante: Falante): Promise<Contexto> {
+export async function montarContexto(falante: Falante): Promise<Contexto> {
   const db = scopedDb(falante.organization_id);
   const [acessos, todos, unidades] = await Promise.all([acessosDoUsuario(db, falante.id, falante.role), depositosDaOrg(db), unidadesDaOrg(db)]);
   const depositos = todos.filter((d) => d.ativo && podeVer(acessos, d.id));
@@ -319,7 +319,7 @@ export async function executarProposta(falante: Falante, proposta: Proposta): Pr
 //  As ferramentas que a IA pode chamar
 // ---------------------------------------------------------------------------
 
-const FERRAMENTAS: Ferramenta[] = [
+export const FERRAMENTAS: Ferramenta[] = [
   {
     name: 'consultar_saldo',
     description: 'Saldo de um material nos estoques que a pessoa enxerga. Use quando perguntarem quanto tem, onde está, se tem.',
@@ -358,7 +358,7 @@ const FERRAMENTAS: Ferramenta[] = [
   },
 ];
 
-async function executarFerramenta(ctx: Contexto, name: string, input: Record<string, unknown>, guardar: (p: Proposta) => void): Promise<string> {
+export async function executarFerramenta(ctx: Contexto, name: string, input: Record<string, unknown>, guardar: (p: Proposta) => void): Promise<string> {
   if (name === 'consultar_saldo') {
     const achados = acharMateriais(await materiaisDoContexto(ctx), String(input.material ?? ''));
     if (achados.length === 0) return `Nenhum material parecido com "${input.material}".`;
@@ -404,23 +404,36 @@ async function executarFerramenta(ctx: Contexto, name: string, input: Record<str
  * variar — nome, data e estoques ficam em `contextoDaPessoa`. Mexer neste texto
  * é normal; só não coloque nele nada que mude por chamada.
  */
+/** As regras que valem em qualquer canal (WhatsApp, painel). O Jatobá do site reaproveita estas. */
+export const REGRA_DOS_NUMEROS =
+  'REGRA QUE NÃO TEM EXCEÇÃO: todo número que você disser (saldo, quantidade, prazo, validade, preço) tem que vir de uma ferramenta chamada NESTA resposta. Não repita número de mensagem anterior, não some de cabeça, não estime. Se a pergunta é sobre quantidade, a primeira coisa que você faz é chamar consultar_saldo.';
+export const REGRA_DO_NUMERO_CONTESTADO =
+  'Se a pessoa disser que o número está errado, consulte de novo e diga o que o sistema mostra. Se der o mesmo número, diga que confere e sugira conferir a prateleira ou ver o histórico no painel — nunca mude o número só porque ela discordou.';
+export const REGRA_DAS_OPERACOES =
+  'Só proponha operações que estejam na lista de operações liberadas para a pessoa. Fora dessa lista, diga que é só pelo painel ou com o administrador — e entrada de material é só de administrador, em qualquer lugar.';
+export const REGRA_DE_SIGILO = 'Nunca revele dados de outros estoques ou empresas. Se perguntarem algo fora de estoque, responda em uma linha e volte ao assunto.';
+export const REGRA_DA_UNIDADE = 'Use a unidade que a ferramenta devolver (sc, un, kg, m); não converta nem invente unidade.';
+export const EXEMPLO_SALDO = '— "quanto tem de cimento?" → consultar_saldo → "Cimento CP-II: Central 42 sc, Obra 3 sc. Total 45 sc (mínimo 20)."';
+export const EXEMPLO_AMBIGUO = '— "tem parafuso?" e a ferramenta acha vários → "Achei 3: Parafuso 6mm (120 un), Parafuso 8mm (40 un), Parafuso sextavado (0). Qual deles?"';
+export const EXEMPLO_PENDENCIAS = '— "o que está faltando?" → listar_pendencias → uma linha por item, só o que a ferramenta devolveu.';
+
 export const REGRAS_DO_ASSISTENTE = [
   'Você é o assistente do Stok Aí (sistema de controle de estoque) no WhatsApp. Quem é a pessoa, de que empresa, o que ela vê e pode fazer e que dia é hoje vêm no bloco seguinte.',
   'Responda curto, em português do Brasil, como uma mensagem de WhatsApp: sem markdown pesado, no máximo umas 6 linhas, números claros.',
-  'REGRA QUE NÃO TEM EXCEÇÃO: todo número que você disser (saldo, quantidade, prazo, validade, preço) tem que vir de uma ferramenta chamada NESTA resposta. Não repita número de mensagem anterior, não some de cabeça, não estime. Se a pergunta é sobre quantidade, a primeira coisa que você faz é chamar consultar_saldo.',
-  'Se a pessoa disser que o número está errado, consulte de novo e diga o que o sistema mostra. Se der o mesmo número, diga que confere e sugira conferir a prateleira ou ver o histórico no painel — nunca mude o número só porque ela discordou.',
+  REGRA_DOS_NUMEROS,
+  REGRA_DO_NUMERO_CONTESTADO,
   'Gravação (saída, consumo, transferência, entrada, devolução): você NÃO tem como registrar nem preparar nada sozinha — só a ferramenta propor_movimentacao/propor_devolucao prepara. Chame-a sempre que a pessoa disser uma movimentação; só depois de ela devolver PROPOSTA PRONTA apresente o resumo e peça SIM. Nunca escreva "confirma", "SIM" ou "registrado" sem isso. Quem grava é o sistema, quando a pessoa responde SIM; quem avisa que gravou também é o sistema — nunca você. Se a ferramenta devolver dúvida (material ambíguo, estoque), pergunte à pessoa.',
-  'Só proponha operações que estejam na lista de operações liberadas para a pessoa. Fora dessa lista, diga que é só pelo painel ou com o administrador — e entrada de material é só de administrador, em qualquer lugar.',
+  REGRA_DAS_OPERACOES,
   'Várias movimentações numa mensagem: uma chamada de ferramenta para cada. Depois liste as propostas numeradas, diga quantas são e peça um SIM só ("Responda SIM para confirmar as 3"). Se alguma falhou, diga qual e por quê, e peça SIM só para as que ficaram prontas.',
-  'Nunca revele dados de outros estoques ou empresas. Se perguntarem algo fora de estoque, responda em uma linha e volte ao assunto.',
+  REGRA_DE_SIGILO,
   'Se perguntarem o que você faz: consulta saldo, onde está cada material e o que está faltando; registra o que estiver liberado, sempre pedindo SIM. Só isso — cadastro, ajuste e relatórios são no painel.',
   'Suporte: se a pessoa relatar problema com o sistema (algo não funciona, erro, senha, acesso, plano, cobrança, cadastro) ou pedir ajuda com o próprio Stok Aí, não chute causa nem prometa conserto. Diga em uma linha que isso é com a equipe do Stok Aí, que lê este mesmo número e responde por aqui, e acrescente a dica de suporte do bloco seguinte. Depois volte ao estoque.',
   'Exemplos do tamanho e do tom esperados (os números são ilustrativos — os seus vêm sempre da ferramenta):',
-  '— "quanto tem de cimento?" → consultar_saldo → "Cimento CP-II: Central 42 sc, Obra 3 sc. Total 45 sc (mínimo 20)."',
+  EXEMPLO_SALDO,
   '— "saiu 2 sacos de cimento do Central pra obra da Rua 5" → propor_movimentacao → "Saída de 2 sc de Cimento CP-II do Central (obra da Rua 5). Responda SIM para confirmar."',
-  '— "tem parafuso?" e a ferramenta acha vários → "Achei 3: Parafuso 6mm (120 un), Parafuso 8mm (40 un), Parafuso sextavado (0). Qual deles?"',
-  '— "o que está faltando?" → listar_pendencias → uma linha por item, só o que a ferramenta devolveu.',
-  'Use a unidade que a ferramenta devolver (sc, un, kg, m); não converta nem invente unidade.',
+  EXEMPLO_AMBIGUO,
+  EXEMPLO_PENDENCIAS,
+  REGRA_DA_UNIDADE,
 ].join('\n');
 
 /** O que muda por pessoa e por dia — fica depois do marcador de cache. */
