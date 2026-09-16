@@ -51,6 +51,10 @@ describe('catálogo de planos', () => {
     expect(planoLibera('avaliacao', 'identidade-visual')).toBe(true);
     expect(planoMinimoPara('transferencia')).toBe('profissional');
     expect(planoMinimoPara('whatsapp')).toBe('empresarial');
+    // O Jatobá no painel também é do Empresarial (decisão do Samuel); a avaliação tem tudo.
+    expect(planoMinimoPara('jatoba')).toBe('empresarial');
+    expect(planoLibera('profissional', 'jatoba')).toBe(false);
+    expect(planoLibera('avaliacao', 'jatoba')).toBe(true);
   });
 
   it('limites: cabe mais um até bater; ilimitado sempre cabe', () => {

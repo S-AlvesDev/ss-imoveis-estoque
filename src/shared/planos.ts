@@ -35,7 +35,9 @@ export type Recurso =
   /** O assistente no WhatsApp: a equipe consulta e registra pelo celular. */
   | 'whatsapp'
   /** Cotações e pedidos a fornecedores pelo WhatsApp. */
-  | 'cotacoes';
+  | 'cotacoes'
+  /** O Jatobá dentro do painel: consulta, prepara movimentações e ensina a usar o sistema. (Na Home é de todo mundo.) */
+  | 'jatoba';
 
 /** Os limites numéricos. `null` = ilimitado (sujeito a uso justo). */
 export type Limite = 'unidades' | 'depositosPorUnidade' | 'usuarios';
@@ -86,9 +88,9 @@ export const DEFINICOES: Record<Plano, DefinicaoDoPlano> = {
     preco: 1200,
     publico: 'Operações maiores',
     limites: { unidades: 4, depositosPorUnidade: null, usuarios: null },
-    recursos: ['transferencia', 'identidade-visual', 'exportacoes', 'alertas-por-email', 'relatorios-automaticos', 'whatsapp', 'cotacoes'],
+    recursos: ['transferencia', 'identidade-visual', 'exportacoes', 'alertas-por-email', 'relatorios-automaticos', 'whatsapp', 'cotacoes', 'jatoba'],
     niveis: { auditoria: 'Avançada', alertas: 'Automáticos', dashboard: 'Avançado', relatorios: 'Avançados', permissoes: 'Avançadas', suporte: 'Prioridade máxima' },
-    destaques: ['4 unidades, depósitos ilimitados*', 'Usuários ilimitados*', 'Tudo do Profissional', 'Stok Aí no WhatsApp: a equipe opera pelo celular', 'Cotações a fornecedores pelo WhatsApp', 'Avisos diários e resumo semanal', 'Acesso antecipado a novos módulos'],
+    destaques: ['4 unidades, depósitos ilimitados*', 'Usuários ilimitados*', 'Tudo do Profissional', 'Stok Aí no WhatsApp: a equipe opera pelo celular', 'Jatobá no painel: o assistente consulta, registra e ensina', 'Cotações a fornecedores pelo WhatsApp', 'Avisos diários e resumo semanal', 'Acesso antecipado a novos módulos'],
     servicos: ['Implantação e treinamento da equipe', 'Acompanhamento dedicado', 'Prioridade máxima no suporte'],
   },
 };
@@ -322,6 +324,7 @@ export function mensagemDeRecurso(recurso: Recurso): string {
     'relatorios-automaticos': 'Relatórios automáticos',
     whatsapp: 'Stok Aí no WhatsApp',
     cotacoes: 'Cotações pelo WhatsApp',
+    jatoba: 'Jatobá no painel',
   };
   return `${oque[recurso]}: disponível a partir do plano ${nome}.`;
 }

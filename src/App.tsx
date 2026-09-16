@@ -28,6 +28,7 @@ import { Ajuda } from '@/pages/Ajuda/Ajuda';
 import { Configuracoes } from '@/pages/Configuracoes/Configuracoes';
 import { UpdateBanner } from '@/features/changelog/UpdateGuide';
 import { Jatoba } from '@/features/jatoba/Jatoba';
+import { usePlano } from '@/features/planos/usePlano';
 import { useUnidade } from '@/store/unidade';
 import { Sidebar, navItemsFor, estoqueDaView, type AppView } from '@/app/Sidebar';
 import { TopBar } from '@/app/TopBar';
@@ -85,6 +86,8 @@ function InventoryApp({ role }: { role: string }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { materials, catalogo, materialMovements, staff, unidades, unidadesAtivas, depositos, depositosDaUnidade, unidade, nivelEm, estoquesVisiveis, categorias, emprestimos, lotes, itens: itensDePatrimonio, bloqueio, loading, semResposta, atualizadoEm, refetch } = useEstoqueData();
   const setUnidade = useUnidade((s) => s.setUnidade);
+  // O Jatobá no painel é do Empresarial (e da avaliação, que tem tudo); na Home é de todo mundo.
+  const temJatoba = usePlano().libera('jatoba');
 
   const isAdmin = ADMIN_ROLES.includes(role);
   const itens = navItemsFor(role, estoquesVisiveis);
@@ -233,7 +236,7 @@ function InventoryApp({ role }: { role: string }) {
         </main>
       </div>
       {/* O Jatobá acompanha todas as telas: consulta, prepara movimentações e leva até a tela certa. */}
-      <Jatoba modo="painel" onNavigate={(v) => setView(v as AppView)} onDados={() => refetch()} />
+      {temJatoba && <Jatoba modo="painel" onNavigate={(v) => setView(v as AppView)} onDados={() => refetch()} />}
     </div>
   );
 }

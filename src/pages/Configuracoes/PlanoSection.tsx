@@ -79,6 +79,7 @@ const RECURSOS_VISIVEIS: Array<{ id: Recurso; nome: string }> = [
   { id: 'exportacoes', nome: 'Auditoria em PDF e exportações' },
   { id: 'alertas-por-email', nome: 'Alertas por e-mail' },
   { id: 'whatsapp', nome: 'Stok Aí no WhatsApp' },
+  { id: 'jatoba', nome: 'Jatobá no painel (assistente)' },
   { id: 'cotacoes', nome: 'Cotações a fornecedores pelo WhatsApp' },
   { id: 'relatorios-automaticos', nome: 'Resumo semanal por e-mail' },
 ];

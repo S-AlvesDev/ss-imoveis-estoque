@@ -3217,6 +3217,9 @@ export function createApp() {
     try {
       const texto = String(req.body?.texto ?? '').trim().slice(0, TAMANHO_MAXIMO_DA_MENSAGEM);
       if (!texto) return res.status(400).json({ error: 'Escreva a mensagem.' });
+      // No painel o Jatobá é do plano Empresarial (a Home é de todo mundo).
+      const negada = negarRecurso(req.plano!, 'jatoba');
+      if (negada) return res.status(negada.status).json(negada.body);
       if (!claudeConfigurado()) return res.status(503).json({ error: `O ${JATOBA} ainda não está ligado neste servidor.` });
       if ((await mensagensNoPainelNoMes(req.user!.organization_id)) >= LIMITE_PAINEL_MES) {
         return res.status(429).json({ error: `A empresa chegou ao limite de ${LIMITE_PAINEL_MES} mensagens ao ${JATOBA} neste mês.` });
@@ -3236,6 +3239,8 @@ export function createApp() {
     try {
       const tokens: unknown[] = Array.isArray(req.body?.propostas) ? req.body.propostas : [];
       if (tokens.length === 0) return res.status(400).json({ error: 'Nada para confirmar.' });
+      const negada = negarRecurso(req.plano!, 'jatoba');
+      if (negada) return res.status(negada.status).json(negada.body);
       const falante = await falantePelaSessao(req.user!);
       const resultados = await confirmarPropostas(falante, tokens.map(String));
       res.json({ resultados });
