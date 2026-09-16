@@ -1,0 +1,21 @@
+-- =============================================================================
+--  027 — Tokens lidos do cache nas respostas do assistente
+--
+--  O prompt do assistente passou a usar o cache da Anthropic: as regras e as
+--  ferramentas, iguais em toda chamada, são reaproveitadas a 10% do preço.
+--  Para saber quanto cada resposta custou de verdade, os tokens de entrada
+--  agora vêm em dois números:
+--
+--    tokens_entrada  — cobrados a preço cheio (o que não estava em cache,
+--                      mais o que foi gravado nele);
+--    tokens_cache    — lidos do cache (10% do preço de entrada).
+--
+--  Custo ≈ tokens_entrada × preço_entrada + tokens_cache × preço_entrada/10
+--        + tokens_saida × preço_saida.
+--
+--  tokens_cache em zero em todas as respostas = o cache não está pegando
+--  (modelo Haiku, cujo mínimo cacheável é maior que o nosso prompt, ou algo
+--  variável entrou no bloco fixo).
+-- =============================================================================
+
+alter table whatsapp_mensagens add column if not exists tokens_cache integer;

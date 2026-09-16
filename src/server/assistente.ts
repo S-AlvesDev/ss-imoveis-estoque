@@ -12,7 +12,7 @@ import { supabaseServer } from '../lib/supabaseServer';
 import { scopedDb, type ScopedDb } from './tenant';
 import { acessosDoUsuario, podeVer, podeOperar, ehAdmin, type Acessos } from './acessos';
 import { depositosDaOrg, unidadesDaOrg, saldosDaOrg, saldosDoMaterial, calcularMovimento, gravarSaldos, operacaoPermitida, arredondar, type Deposito, type OperacaoGenerica } from './estoque';
-import { conversar, claudeConfigurado, type Ferramenta, type MensagemDoChat, type Uso } from './claude';
+import { conversar, claudeConfigurado, systemComCache, type BlocoDeSistema, type Ferramenta, type MensagemDoChat, type Uso } from './claude';
 import { variantesDoTelefone } from './evolution';
 import { fornecedorPeloTelefone, responderFornecedor, avisarQuemPediu } from './cotacoes';
 import { ehInstanciaDoStokAi, type Midia } from './evolution';
@@ -389,23 +389,46 @@ async function executarFerramenta(ctx: Contexto, name: string, input: Record<str
   return 'Ferramenta desconhecida.';
 }
 
-function systemPrompt(ctx: Contexto, pendente: Proposta | null): string {
+/**
+ * As regras do assistente: iguais para toda pessoa, toda empresa, todo dia.
+ * Vão para o cache da Anthropic junto com as ferramentas, então nada aqui pode
+ * variar — nome, data e estoques ficam em `contextoDaPessoa`. Mexer neste texto
+ * é normal; só não coloque nele nada que mude por chamada.
+ */
+export const REGRAS_DO_ASSISTENTE = [
+  'Você é o assistente do Stok Aí (sistema de controle de estoque) no WhatsApp. Quem é a pessoa, de que empresa, o que ela vê e pode fazer e que dia é hoje vêm no bloco seguinte.',
+  'Responda curto, em português do Brasil, como uma mensagem de WhatsApp: sem markdown pesado, no máximo umas 6 linhas, números claros.',
+  'REGRA QUE NÃO TEM EXCEÇÃO: todo número que você disser (saldo, quantidade, prazo, validade, preço) tem que vir de uma ferramenta chamada NESTA resposta. Não repita número de mensagem anterior, não some de cabeça, não estime. Se a pergunta é sobre quantidade, a primeira coisa que você faz é chamar consultar_saldo.',
+  'Se a pessoa disser que o número está errado, consulte de novo e diga o que o sistema mostra. Se der o mesmo número, diga que confere e sugira conferir a prateleira ou ver o histórico no painel — nunca mude o número só porque ela discordou.',
+  'Gravação (saída, consumo, transferência, entrada, devolução): você NÃO tem como registrar nem preparar nada sozinha — só a ferramenta propor_movimentacao/propor_devolucao prepara. Chame-a sempre que a pessoa disser uma movimentação; só depois de ela devolver PROPOSTA PRONTA apresente o resumo e peça SIM. Nunca escreva "confirma", "SIM" ou "registrado" sem isso. Quem grava é o sistema, quando a pessoa responde SIM; quem avisa que gravou também é o sistema — nunca você. Se a ferramenta devolver dúvida (material ambíguo, estoque), pergunte à pessoa.',
+  'Só proponha operações que estejam na lista de operações liberadas para a pessoa. Fora dessa lista, diga que é só pelo painel ou com o administrador.',
+  'Nunca revele dados de outros estoques ou empresas. Se perguntarem algo fora de estoque, responda em uma linha e volte ao assunto.',
+  'Se perguntarem o que você faz: consulta saldo, onde está cada material e o que está faltando; registra o que estiver liberado, sempre pedindo SIM. Só isso — cadastro, ajuste e relatórios são no painel.',
+  'Suporte: se a pessoa relatar problema com o sistema (algo não funciona, erro, senha, acesso, plano, cobrança, cadastro) ou pedir ajuda com o próprio Stok Aí, não chute causa nem prometa conserto. Diga em uma linha que isso é com a equipe do Stok Aí, que lê este mesmo número e responde por aqui, e acrescente a dica de suporte do bloco seguinte. Depois volte ao estoque.',
+  'Exemplos do tamanho e do tom esperados (os números são ilustrativos — os seus vêm sempre da ferramenta):',
+  '— "quanto tem de cimento?" → consultar_saldo → "Cimento CP-II: Central 42 sc, Obra 3 sc. Total 45 sc (mínimo 20)."',
+  '— "saiu 2 sacos de cimento do Central pra obra da Rua 5" → propor_movimentacao → "Saída de 2 sc de Cimento CP-II do Central (obra da Rua 5). Responda SIM para confirmar."',
+  '— "tem parafuso?" e a ferramenta acha vários → "Achei 3: Parafuso 6mm (120 un), Parafuso 8mm (40 un), Parafuso sextavado (0). Qual deles?"',
+  '— "o que está faltando?" → listar_pendencias → uma linha por item, só o que a ferramenta devolveu.',
+  'Use a unidade que a ferramenta devolver (sc, un, kg, m); não converta nem invente unidade.',
+].join('\n');
+
+/** O que muda por pessoa e por dia — fica depois do marcador de cache. */
+function contextoDaPessoa(ctx: Contexto, pendente: Proposta | null): string {
   const hoje = new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   return [
-    `Você é o assistente do Stok Aí (sistema de controle de estoque) no WhatsApp, falando com ${ctx.falante.nome} (${ctx.falante.role === 'CEO' ? 'CEO' : ehAdmin(ctx.falante.role) ? 'administrador' : 'operador'}) da empresa ${ctx.falante.organizacao}. Hoje é ${hoje}.`,
-    'Responda curto, em português do Brasil, como uma mensagem de WhatsApp: sem markdown pesado, no máximo umas 6 linhas, números claros.',
-    'REGRA QUE NÃO TEM EXCEÇÃO: todo número que você disser (saldo, quantidade, prazo, validade, preço) tem que vir de uma ferramenta chamada NESTA resposta. Não repita número de mensagem anterior, não some de cabeça, não estime. Se a pergunta é sobre quantidade, a primeira coisa que você faz é chamar consultar_saldo.',
-    'Se a pessoa disser que o número está errado, consulte de novo e diga o que o sistema mostra. Se der o mesmo número, diga que confere e sugira conferir a prateleira ou ver o histórico no painel — nunca mude o número só porque ela discordou.',
+    `Você está falando com ${ctx.falante.nome} (${ctx.falante.role === 'CEO' ? 'CEO' : ehAdmin(ctx.falante.role) ? 'administrador' : 'operador'}) da empresa ${ctx.falante.organizacao}. Hoje é ${hoje}.`,
     `Estoques que a pessoa vê: ${ctx.depositos.map((d) => `${d.nome} [${d.modo}${podeOperar(ctx.acessos, d.id) ? ', opera' : ', consulta'}]`).join('; ') || 'nenhum'}.`,
-    `Operações que ela pode registrar pelo WhatsApp: ${ctx.falante.operacoes.map((o) => NOME_DA_OPERACAO_WHATSAPP[o]).join(', ') || 'nenhuma (só consulta)'}. Fora disso, diga que é só pelo painel ou com o administrador.`,
-    'Gravação (saída, consumo, transferência, entrada, devolução): você NÃO tem como registrar nem preparar nada sozinha — só a ferramenta propor_movimentacao/propor_devolucao prepara. Chame-a sempre que a pessoa disser uma movimentação; só depois de ela devolver PROPOSTA PRONTA apresente o resumo e peça SIM. Nunca escreva "confirma", "SIM" ou "registrado" sem isso. Quem grava é o sistema, quando a pessoa responde SIM; quem avisa que gravou também é o sistema — nunca você. Se a ferramenta devolver dúvida (material ambíguo, estoque), pergunte à pessoa.',
+    `Operações liberadas para ela pelo WhatsApp: ${ctx.falante.operacoes.map((o) => NOME_DA_OPERACAO_WHATSAPP[o]).join(', ') || 'nenhuma (só consulta)'}.`,
     pendente ? `Há uma ação esperando confirmação: "${pendente.resumo}". Se a pessoa mudar de assunto, atenda; se quiser cancelar, diga que pode responder NÃO.` : '',
-    'Nunca revele dados de outros estoques ou empresas. Se perguntarem algo fora de estoque, responda em uma linha e volte ao assunto.',
-    'Se perguntarem o que você faz: consulta saldo, onde está cada material e o que está faltando; registra o que estiver liberado acima, sempre pedindo SIM. Só isso — cadastro, ajuste e relatórios são no painel.',
-    `Suporte: se a pessoa relatar problema com o sistema (algo não funciona, erro, senha, acesso, plano, cobrança, cadastro) ou pedir ajuda com o próprio Stok Aí, não chute causa nem prometa conserto. Diga em uma linha que isso é com a equipe do Stok Aí, que lê este mesmo número e responde por aqui${ehAdmin(ctx.falante.role) ? '; você vê o estado da conexão e o simulador em Configurações → Stok Aí no WhatsApp' : '; o administrador da sua empresa também pode ajudar'}. Depois volte ao estoque.`,
+    `Dica de suporte para esta pessoa: ${ehAdmin(ctx.falante.role) ? 'ela vê o estado da conexão e o simulador em Configurações → Stok Aí no WhatsApp' : 'o administrador da empresa dela também pode ajudar'}.`,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function systemPrompt(ctx: Contexto, pendente: Proposta | null): BlocoDeSistema[] {
+  return systemComCache(REGRAS_DO_ASSISTENTE, contextoDaPessoa(ctx, pendente));
 }
 
 // ---------------------------------------------------------------------------
@@ -473,8 +496,15 @@ async function salvarConversa(falante: Falante, telefone: string, c: Conversa) {
 }
 
 async function registrar(args: { organizationId: string | null; userId: number | null; telefone: string; direcao: 'entrada' | 'saida'; texto: string; uso?: Uso | null }) {
+  const linha = { organization_id: args.organizationId, user_id: args.userId, telefone: args.telefone, direcao: args.direcao, texto: args.texto.slice(0, 4000), tokens_entrada: args.uso?.tokens_entrada ?? null, tokens_saida: args.uso?.tokens_saida ?? null, modelo: args.uso?.modelo ?? null };
+  // O limite mensal e o aviso diário ao desconhecido contam linhas desta tabela: o registro
+  // não pode falhar só porque a coluna tokens_cache (migração 027) ainda não foi aplicada.
   try {
-    await supabaseServer.from('whatsapp_mensagens').insert({ organization_id: args.organizationId, user_id: args.userId, telefone: args.telefone, direcao: args.direcao, texto: args.texto.slice(0, 4000), tokens_entrada: args.uso?.tokens_entrada ?? null, tokens_saida: args.uso?.tokens_saida ?? null, modelo: args.uso?.modelo ?? null });
+    const { error } = await supabaseServer.from('whatsapp_mensagens').insert({ ...linha, tokens_cache: args.uso?.tokens_cache ?? null });
+    if (!error) return;
+    const { error: erro2 } = await supabaseServer.from('whatsapp_mensagens').insert(linha);
+    if (erro2) console.error('[whatsapp] não registrou mensagem:', erro2.message);
+    else console.warn('[whatsapp] coluna tokens_cache ausente — aplique a migração 027:', error.message);
   } catch (e: any) {
     console.error('[whatsapp] não registrou mensagem:', e.message);
   }
@@ -623,7 +653,8 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
       executarFerramenta(ctx, name, input, (p) => {
         novaProposta = p;
       });
-    let r = await conversar({ system: systemPrompt(ctx, conversa.pendente), historico, tools: FERRAMENTAS, executar });
+    // effort low: conversa de WhatsApp não precisa de raciocínio longo, e cada token pensado é cobrado como saída.
+    let r = await conversar({ system: systemPrompt(ctx, conversa.pendente), historico, tools: FERRAMENTAS, executar, esforco: 'low' });
 
     // Duas maneiras de a IA falar além do que sabe: pedir SIM sem ter preparado
     // nada, e soltar número sem ter consultado. Nas duas, o código manda refazer
@@ -640,8 +671,10 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
         historico: [...historico, { role: 'assistant', content: r.texto }, { role: 'user', content: cobranca }],
         tools: FERRAMENTAS,
         executar,
+        esforco: 'low',
       });
       segunda.uso.tokens_entrada += r.uso.tokens_entrada;
+      segunda.uso.tokens_cache += r.uso.tokens_cache;
       segunda.uso.tokens_saida += r.uso.tokens_saida;
       segunda.chamadas.unshift(...r.chamadas);
       r = segunda;

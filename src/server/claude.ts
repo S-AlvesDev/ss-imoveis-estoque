@@ -6,7 +6,11 @@
 
 export interface AmbienteClaude {
   ANTHROPIC_API_KEY?: string;
-  /** Padrão: claude-sonnet-5. Haiku 4.5 (claude-haiku-4-5-20251001) é mais barato para conversa simples. */
+  /**
+   * Padrão: claude-sonnet-5. Haiku 4.5 (claude-haiku-4-5-20251001) é mais
+   * barato por token, mas não aceita `effort` e só guarda em cache prompts a
+   * partir de 4.096 tokens — o nosso é menor, então nele o cache não pega.
+   */
   ASSISTENTE_MODELO?: string;
 }
 
@@ -27,6 +31,30 @@ export interface Ferramenta {
   input_schema: Record<string, unknown>;
 }
 
+/** Um pedaço do system prompt; o marcado com cache_control (e tudo antes dele) fica guardado entre chamadas. */
+export interface BlocoDeSistema {
+  type: 'text';
+  text: string;
+  cache_control?: { type: 'ephemeral' };
+}
+
+/**
+ * System prompt em duas partes para o cache da Anthropic aproveitar: o que é
+ * igual em toda chamada (regras) vai primeiro e marcado; o que muda por pessoa
+ * ou por dia (nome, estoques, data) vai depois, fora do cache.
+ *
+ * O cache é por prefixo: qualquer byte diferente antes do marcador invalida
+ * tudo. Por isso nada de data ou nome no bloco fixo. As ferramentas entram no
+ * prefixo antes do system, então também precisam ser sempre as mesmas.
+ * Reaproveitado, o prefixo custa 10% do preço; dura 5 minutos renovados a cada uso.
+ */
+export function systemComCache(fixo: string, variavel: string): BlocoDeSistema[] {
+  return [
+    { type: 'text', text: fixo, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: variavel },
+  ];
+}
+
 export type BlocoDeConteudo =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
@@ -40,24 +68,42 @@ export interface MensagemDoChat {
 }
 
 export interface Uso {
+  /** Cobrados a preço cheio: o que não estava em cache, mais o que foi gravado nele. */
   tokens_entrada: number;
+  /** Lidos do cache: custam 10% do preço de entrada. Zero em toda chamada = o cache não está pegando. */
+  tokens_cache: number;
   tokens_saida: number;
   modelo: string;
+}
+
+/** Quanto o modelo pensa antes de responder. `low` basta para conversa curta e corta o custo de saída. */
+export type Esforco = 'low' | 'medium' | 'high';
+
+/** Haiku 4.5 e Sonnet 4.5 rejeitam o parâmetro `effort` (400); nos demais ele é aceito. */
+export function aceitaEsforco(modelo: string): boolean {
+  return !/haiku|sonnet-4-5/i.test(modelo);
 }
 
 interface RespostaDaApi {
   content: BlocoDeConteudo[];
   stop_reason: 'end_turn' | 'tool_use' | 'max_tokens' | string;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
   model?: string;
 }
 
-async function chamar(args: { system: string; messages: MensagemDoChat[]; tools: Ferramenta[]; env: AmbienteClaude; maxTokens: number }): Promise<RespostaDaApi> {
+async function chamar(args: { system: string | BlocoDeSistema[]; messages: MensagemDoChat[]; tools: Ferramenta[]; env: AmbienteClaude; maxTokens: number; esforco?: Esforco }): Promise<RespostaDaApi> {
   const modelo = args.env.ASSISTENTE_MODELO || MODELO_PADRAO;
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': chave(args.env), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: modelo, max_tokens: args.maxTokens, system: args.system, messages: args.messages, tools: args.tools.length ? args.tools : undefined }),
+    body: JSON.stringify({
+      model: modelo,
+      max_tokens: args.maxTokens,
+      system: args.system,
+      messages: args.messages,
+      tools: args.tools.length ? args.tools : undefined,
+      output_config: args.esforco && aceitaEsforco(modelo) ? { effort: args.esforco } : undefined,
+    }),
   });
   const corpo: any = await r.json().catch(() => null);
   if (!r.ok) throw new Error(`Anthropic ${r.status}: ${corpo?.error?.message ?? 'falha'}`);
@@ -77,7 +123,7 @@ export interface ResultadoDoChat {
  * de rodadas, para nunca ficar preso).
  */
 export async function conversar(args: {
-  system: string;
+  system: string | BlocoDeSistema[];
   historico: MensagemDoChat[];
   tools: Ferramenta[];
   executar: (name: string, input: Record<string, unknown>) => Promise<string>;
@@ -85,18 +131,22 @@ export async function conversar(args: {
   maxRodadas?: number;
   /** Teto da resposta. Menor = mais rápido: cada palavra gerada é tempo de espera. */
   maxTokens?: number;
+  /** Sem informar, o modelo usa o padrão dele (alto). Os tokens de raciocínio são cobrados como saída. */
+  esforco?: Esforco;
 }): Promise<ResultadoDoChat> {
   const env = args.env ?? (process.env as AmbienteClaude);
   if (!claudeConfigurado(env)) throw new Error('ANTHROPIC_API_KEY não configurada.');
   const messages: MensagemDoChat[] = [...args.historico];
-  const uso: Uso = { tokens_entrada: 0, tokens_saida: 0, modelo: env.ASSISTENTE_MODELO || MODELO_PADRAO };
+  const uso: Uso = { tokens_entrada: 0, tokens_cache: 0, tokens_saida: 0, modelo: env.ASSISTENTE_MODELO || MODELO_PADRAO };
   const chamadas: ResultadoDoChat['chamadas'] = [];
   let texto = '';
 
   for (let rodada = 0; rodada < (args.maxRodadas ?? 6); rodada++) {
-    const resposta = await chamar({ system: args.system, messages, tools: args.tools, env, maxTokens: args.maxTokens ?? 400 });
-    uso.tokens_entrada += resposta.usage?.input_tokens ?? 0;
-    uso.tokens_saida += resposta.usage?.output_tokens ?? 0;
+    const resposta = await chamar({ system: args.system, messages, tools: args.tools, env, maxTokens: args.maxTokens ?? 400, esforco: args.esforco });
+    const u = resposta.usage ?? {};
+    uso.tokens_entrada += (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+    uso.tokens_cache += u.cache_read_input_tokens ?? 0;
+    uso.tokens_saida += u.output_tokens ?? 0;
     if (resposta.model) uso.modelo = resposta.model;
 
     const textos = resposta.content.filter((b): b is Extract<BlocoDeConteudo, { type: 'text' }> => b.type === 'text').map((b) => b.text.trim()).filter(Boolean);

@@ -1,11 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
 import { normalizarTelefone, lerEvento, evolutionConfigurada, variantesDoTelefone } from './evolution';
-import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO, pediuConfirmacaoSemProposta, respondeuNumeroSemConsultar } from './assistente';
+import { operacoesPadrao, operacoesDoUsuario, lerConfirmacao, acharMateriais, acharDepositoPorNome, MENSAGEM_PARA_DESCONHECIDO, pediuConfirmacaoSemProposta, respondeuNumeroSemConsultar, REGRAS_DO_ASSISTENTE } from './assistente';
 import { formatarWhatsapp } from '../shared/whatsapp';
-import { claudeConfigurado } from './claude';
+import { claudeConfigurado, conversar, systemComCache, aceitaEsforco } from './claude';
 
 describe('telefone', () => {
   it('normaliza para dígitos com DDI, assumindo Brasil', () => {
@@ -133,5 +133,64 @@ describe('achar material e estoque', () => {
     expect(acharDepositoPorNome(deps, 'obra').map((d) => d.nome)).toEqual(['Obra Bairro Norte']);
     expect(acharDepositoPorNome(deps, 'epi').map((d) => d.nome)).toEqual(['EPI']);
     expect(acharDepositoPorNome(deps, null)).toEqual([]);
+  });
+});
+
+describe('custo da IA: cache, esforço e contagem', () => {
+  const env = { ANTHROPIC_API_KEY: 'sk-teste' };
+  /** Finge a API: devolve as respostas na ordem e guarda cada corpo enviado. */
+  function apiFalsa(respostas: object[]) {
+    const corpos: any[] = [];
+    let i = 0;
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: any) => {
+      corpos.push(JSON.parse(init.body));
+      return { ok: true, json: async () => respostas[i++] } as any;
+    }));
+    return corpos;
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('as regras vão primeiro e marcadas para cache; o que muda por pessoa vai depois, sem marca', () => {
+    const blocos = systemComCache(REGRAS_DO_ASSISTENTE, 'Você está falando com Ana. Hoje é 16/09/2026.');
+    expect(blocos[0]).toMatchObject({ type: 'text', text: REGRAS_DO_ASSISTENTE, cache_control: { type: 'ephemeral' } });
+    expect(blocos[1]).toEqual({ type: 'text', text: 'Você está falando com Ana. Hoje é 16/09/2026.' });
+    // Nada que mude por chamada pode estar no bloco fixo — senão o cache nunca pega.
+    expect(REGRAS_DO_ASSISTENTE).not.toMatch(/\d{2}\/\d{2}\/\d{4}/);
+    expect(REGRAS_DO_ASSISTENTE).not.toMatch(/\$\{/);
+  });
+
+  it('manda o system em blocos e effort low no Sonnet; no Haiku, sem effort (a API rejeita)', async () => {
+    expect(aceitaEsforco('claude-sonnet-5')).toBe(true);
+    expect(aceitaEsforco('claude-haiku-4-5-20251001')).toBe(false);
+    expect(aceitaEsforco('claude-sonnet-4-5')).toBe(false);
+
+    const resposta = { content: [{ type: 'text', text: 'Oi!' }], stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 3 } };
+    const system = systemComCache('regras', 'pessoa');
+    let corpos = apiFalsa([resposta]);
+    await conversar({ system, historico: [{ role: 'user', content: 'oi' }], tools: [], executar: async () => '', env, esforco: 'low' });
+    expect(corpos[0].system).toEqual(system);
+    expect(corpos[0].output_config).toEqual({ effort: 'low' });
+    expect(corpos[0].tools).toBeUndefined();
+
+    corpos = apiFalsa([resposta]);
+    await conversar({ system, historico: [{ role: 'user', content: 'oi' }], tools: [], executar: async () => '', env: { ...env, ASSISTENTE_MODELO: 'claude-haiku-4-5-20251001' }, esforco: 'low' });
+    expect(corpos[0].output_config).toBeUndefined();
+
+    // Sem pedir esforço (cotações), o modelo fica no padrão dele.
+    corpos = apiFalsa([resposta]);
+    await conversar({ system: 'texto simples', historico: [{ role: 'user', content: 'oi' }], tools: [], executar: async () => '', env });
+    expect(corpos[0].output_config).toBeUndefined();
+    expect(corpos[0].system).toBe('texto simples');
+  });
+
+  it('soma preço cheio (novo + gravado no cache) separado do lido do cache, em todas as rodadas', async () => {
+    apiFalsa([
+      { content: [{ type: 'tool_use', id: 't1', name: 'consultar_saldo', input: { material: 'cimento' } }], stop_reason: 'tool_use', usage: { input_tokens: 100, cache_creation_input_tokens: 1200, cache_read_input_tokens: 0, output_tokens: 20 } },
+      { content: [{ type: 'text', text: 'Cimento: 42 sc.' }], stop_reason: 'end_turn', usage: { input_tokens: 150, cache_creation_input_tokens: 0, cache_read_input_tokens: 1200, output_tokens: 15 }, model: 'claude-sonnet-5' },
+    ]);
+    const r = await conversar({ system: systemComCache('regras', 'pessoa'), historico: [{ role: 'user', content: 'quanto tem de cimento?' }], tools: [{ name: 'consultar_saldo', description: 'x', input_schema: { type: 'object' } }], executar: async () => 'Cimento — Central: 42', env, esforco: 'low' });
+    expect(r.uso).toEqual({ tokens_entrada: 100 + 1200 + 150, tokens_cache: 1200, tokens_saida: 35, modelo: 'claude-sonnet-5' });
+    expect(r.texto).toBe('Cimento: 42 sc.');
+    expect(r.chamadas.map((c) => c.name)).toEqual(['consultar_saldo']);
   });
 });
