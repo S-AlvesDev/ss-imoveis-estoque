@@ -12,8 +12,11 @@ import { horaDe, rotuloDoDia, tamanhoBonito, duracaoBonita } from './util';
  * Mídia carrega a URL assinada sob demanda (vale 10 min; recarrega ao
  * falhar).
  */
+/** Uma referência só: um `?? []` dentro do seletor criaria um array novo por render e o zustand entraria em loop. */
+const SEM_MENSAGENS: Mensagem[] = [];
+
 export function Mensagens({ conversaId }: { conversaId: string }) {
-  const mensagens = useCentral((s) => s.mensagens[conversaId] ?? []);
+  const mensagens = useCentral((s) => s.mensagens[conversaId]) ?? SEM_MENSAGENS;
   const carregando = useCentral((s) => s.carregandoConversa);
   const carregarMaisAntigas = useCentral((s) => s.carregarMaisAntigas);
   const fim = useRef<HTMLDivElement>(null);
