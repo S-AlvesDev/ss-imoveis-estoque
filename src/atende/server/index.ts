@@ -13,6 +13,8 @@ import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from
 import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa } from './whatsapp';
 import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular } from './triagem';
+import { montarDashboard, PERIODOS } from './dashboard';
+import type { PeriodoDoDashboard } from '../shared/tipos';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
 
 /**
@@ -582,6 +584,16 @@ export function criarRouterAtende(): express.Router {
       res.json({ conversa: await definirEtiquetas(req, req.params.id, req.body?.etiquetas) });
     } catch (err: any) {
       tratar(res, err, 'PUT /api/atende/conversas/:id/etiquetas', 'Não foi possível salvar as etiquetas.');
+    }
+  });
+
+  // ---- Dashboard (Etapa 5): contagens do banco, no período pedido
+  r.get('/dashboard', exigir('dashboard.ver'), async (req: RequisicaoAtende, res) => {
+    try {
+      const periodo = (PERIODOS as readonly string[]).includes(String(req.query.periodo)) ? (String(req.query.periodo) as PeriodoDoDashboard) : '7d';
+      res.json(await montarDashboard(req, periodo));
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/dashboard', 'Erro ao montar o dashboard.');
     }
   });
 

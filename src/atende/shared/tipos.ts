@@ -277,3 +277,76 @@ export interface SimulacaoDaTriagem {
   /** false = sem chave da IA neste servidor; a triagem usou palavras-chave. */
   ia: boolean;
 }
+
+// ---------------------------------------------------------------------------
+//  Etapa 5: o dashboard — só o que está no banco, contado
+// ---------------------------------------------------------------------------
+
+export type PeriodoDoDashboard = 'hoje' | '7d' | '30d' | '90d';
+export const NOME_DO_PERIODO: Record<PeriodoDoDashboard, string> = { hoje: 'Hoje', '7d': '7 dias', '30d': '30 dias', '90d': '90 dias' };
+
+export interface LinhaPorPessoa {
+  usuario_id: number;
+  conversas: number;
+  encerradas: number;
+  primeira_resposta_mediana_s: number | null;
+  primeira_resposta_media_s: number | null;
+  mensagens_enviadas: number;
+  leads_convertidos: number;
+  valor_convertido: number;
+}
+
+export interface LinhaPorSetor {
+  /** null = conversas sem setor. */
+  time_id: string | null;
+  conversas: number;
+  encerradas: number;
+  na_fila_agora: number;
+  primeira_resposta_mediana_s: number | null;
+  leads_convertidos: number;
+}
+
+export interface Dashboard {
+  periodo: { de: string; ate: string };
+  atendimentos: {
+    abertas_no_periodo: number;
+    encerradas_no_periodo: number;
+    abertas_agora: number;
+    na_fila_agora: number;
+    /** Abertas pelo cliente no período que ninguém da equipe respondeu ainda. */
+    sem_resposta_humana: number;
+    primeira_resposta_mediana_s: number | null;
+    primeira_resposta_media_s: number | null;
+    resolucao_mediana_s: number | null;
+    resolucao_media_s: number | null;
+    mensagens_do_cliente: number;
+    mensagens_da_equipe: number;
+    mensagens_da_ia: number;
+  };
+  /** Conversas abertas por dia, cada dia do período (zero incluído). */
+  serie: Array<{ dia: string; conversas: number }>;
+  leads: {
+    total: number;
+    funil: Record<EstadoDoLead, number>;
+    convertidos: number;
+    perdidos: number;
+    /** % de convertidos entre os decididos (convertido + perdido); nulo sem decisão. */
+    taxa_de_conversao: number | null;
+    valor_convertido: number;
+    sugestoes_da_ia: Record<string, number>;
+  };
+  ia: {
+    triagens: number;
+    decisoes: number;
+    conversas_triadas: number;
+    esclarecimentos: number;
+    corrigidas: number;
+    taxa_de_correcao: number | null;
+    confianca_media: number | null;
+    intencoes: Record<string, number>;
+    tokens: { entrada: number; cache: number; saida: number };
+    modelos: string[];
+  };
+  por_pessoa: LinhaPorPessoa[];
+  por_setor: LinhaPorSetor[];
+}

@@ -85,14 +85,14 @@ export function Supervisao() {
         <p className="mt-1 text-sm text-[var(--text-muted)]">{sessao.papel === 'admin' ? 'Toda a equipe, agora.' : `Seus times, agora: ${meusTimes.map((t) => t.nome).join(', ') || 'nenhum time para supervisionar'}.`} Atualiza sozinho.</p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Online agora" value={online} icon={<Wifi size={18} />} accent="green" sublabel={`de ${pessoas.length} na equipe`} />
         <StatCard label="Na fila" value={naFila.length} icon={<Inbox size={18} />} accent="amber" sublabel={naFila.length ? `mais antiga há ${duracao(agora - Date.parse(maisAntiga(naFila)))}` : 'ninguém esperando'} />
         <StatCard label="Em atendimento" value={emAtendimento.length} icon={<MessageSquareText size={18} />} accent="brand" sublabel={`${abertas.filter((c) => c.estado === 'aguardando_cliente').length} aguardando o cliente`} />
         <StatCard label="Sem resposta há 5+ min" value={emAlerta.length} icon={<AlertTriangle size={18} />} accent={emAlerta.length ? 'red' : 'slate'} sublabel={emAlerta.length ? `a mais antiga há ${duracao(emAlerta[0].espera)}` : 'todo mundo respondido'} />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-[3fr_2fr]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[3fr_2fr]">
         <Card className="p-5">
           <CardHeader icon={<Clock size={14} />} title="Cliente esperando resposta" actions={<span className="text-xs text-[var(--text-muted)]">{esperando.length} {esperando.length === 1 ? 'conversa' : 'conversas'}</span>} />
           {esperando.length === 0 ? (
@@ -107,17 +107,18 @@ export function Supervisao() {
                   <li key={c.id} className="flex flex-wrap items-center gap-3 py-2.5">
                     <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-extrabold ${alerta ? 'bg-rose-500/15 text-rose-600' : 'bg-[var(--brand)]/12 text-[var(--brand)]'}`}>{iniciais(nomeDoCliente(c.cliente))}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2">
-                        <span className="truncate text-sm font-bold text-[var(--text)]">{nomeDoCliente(c.cliente)}</span>
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${COR_DO_ESTADO[c.estado]}`}>{NOME_DO_ESTADO[c.estado]}</span>
-                        {c.prioridade === 'alta' || c.prioridade === 'urgente' ? <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-bold text-rose-600">{c.prioridade}</span> : null}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate text-sm font-bold text-[var(--text)]">{nomeDoCliente(c.cliente)}</span>
+                        <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${COR_DO_ESTADO[c.estado]}`}>{NOME_DO_ESTADO[c.estado]}</span>
+                        {c.prioridade === 'alta' || c.prioridade === 'urgente' ? <span className="shrink-0 whitespace-nowrap rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-bold text-rose-600">{c.prioridade}</span> : null}
                       </span>
                       <span className="block truncate text-xs text-[var(--text-muted)]">
                         {[time, atendente ? `com ${atendente.nome}` : c.estado === 'na_fila' ? 'sem atendente' : null, c.assunto].filter(Boolean).join(' · ') || c.ultima_mensagem_texto}
                       </span>
                     </span>
                     <span className={`shrink-0 text-sm font-extrabold tabular-nums ${alerta ? 'text-rose-600' : 'text-[var(--text)]'}`}>{duracao(espera)}</span>
-                    <span className="flex shrink-0 gap-1">
+                    {/* No celular, os botões descem para a linha de baixo, alinhados ao texto. */}
+                    <span className="flex w-full shrink-0 gap-1 pl-12 sm:w-auto sm:pl-0">
                       <Button size="sm" variant="outline" icon={<Eye size={13} />} onClick={() => ir(TELAS.central, c.id)}>
                         Abrir
                       </Button>

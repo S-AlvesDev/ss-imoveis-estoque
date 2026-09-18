@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { motion } from 'motion/react';
-import { BarChart3, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Acesso } from './pages/Acesso';
 import { Empresa } from './pages/Empresa';
@@ -11,7 +11,7 @@ import { Conta } from './pages/Conta';
 import { Whatsapp } from './pages/Whatsapp';
 import { Central } from './pages/central/Central';
 import { Supervisao } from './pages/Supervisao';
-import { EmConstrucao } from './pages/EmConstrucao';
+import { Dashboard } from './pages/Dashboard';
 import { Shell, itensDoMenu } from './Shell';
 import { Simbolo } from './Marca';
 import { lerCaminho, TELAS, TELAS_PUBLICAS, useRotaAtende, type Tela } from './router';
@@ -104,7 +104,7 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
     <Shell tela={tela}>
       {tela === TELAS.central && <Central conversaId={resto || null} />}
       {tela === TELAS.supervisao && pode(sessao.papel, 'conversas.supervisionar') && <Supervisao />}
-      {tela === TELAS.dashboard && <EmConstrucao titulo="Dashboard" etapa="Etapa 5" icone={<BarChart3 size={24} />} descricao="Leads, atendimentos, conversões, tempo de primeira resposta, desempenho por pessoa e por setor. Só números reais, do banco." />}
+      {tela === TELAS.dashboard && pode(sessao.papel, 'dashboard.ver') && <Dashboard />}
       {tela === TELAS.empresa && pode(sessao.papel, 'empresa.gerir') && <Empresa />}
       {tela === TELAS.times && pode(sessao.papel, 'times.gerir') && <Times />}
       {tela === TELAS.equipe && <Equipe />}
