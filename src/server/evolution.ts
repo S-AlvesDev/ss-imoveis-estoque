@@ -85,6 +85,78 @@ export async function enviarTexto(telefone: string, texto: string, instancia?: s
   await evo(`/message/sendText/${encodeURIComponent(inst)}`, { method: 'POST', body: JSON.stringify({ number: telefone, text: texto }) }, env);
 }
 
+// ---------------------------------------------------------------------------
+//  Envio completo (Atende Aí): id da mensagem de volta, mídia, áudio,
+//  localização, contato, lida. O Stok Aí continua com enviarTexto acima.
+// ---------------------------------------------------------------------------
+
+/** O que a Evolution devolve ao enviar: a chave da mensagem no WhatsApp. */
+export interface Enviada {
+  /** O id da mensagem no WhatsApp — é por ele que chegam "entregue" e "lida". */
+  waId: string | null;
+}
+
+function lerEnviada(r: any): Enviada {
+  return { waId: r?.key?.id ?? r?.messageId ?? null };
+}
+
+const inst = (instancia: string | null | undefined, env: AmbienteEvolution) => encodeURIComponent(instancia || (env.EVOLUTION_INSTANCE as string));
+
+/** Texto, devolvendo o id. `citando` responde a uma mensagem específica. */
+export async function enviarTextoComId(telefone: string, texto: string, instancia: string | null, opcoes: { citando?: { id: string; remoteJid: string; fromMe: boolean } } = {}, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<Enviada> {
+  const body: Record<string, unknown> = { number: telefone, text: texto };
+  if (opcoes.citando) body.quoted = { key: opcoes.citando };
+  return lerEnviada(await evo(`/message/sendText/${inst(instancia, env)}`, { method: 'POST', body: JSON.stringify(body) }, env));
+}
+
+export type TipoDeMidia = 'image' | 'video' | 'document';
+
+/**
+ * Imagem, vídeo ou documento (PDF, planilha…), com legenda opcional.
+ * `conteudo` é base64 OU uma URL — a Evolution aceita os dois e baixa a URL
+ * ela mesma (é assim que o arquivo não passa pelo nosso servidor).
+ */
+export async function enviarMidia(telefone: string, midia: { tipo: TipoDeMidia; conteudo: string; mimetype: string; nomeArquivo?: string; legenda?: string }, instancia: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<Enviada> {
+  const body: Record<string, unknown> = { number: telefone, mediatype: midia.tipo, mimetype: midia.mimetype, media: midia.conteudo };
+  if (midia.legenda) body.caption = midia.legenda;
+  if (midia.nomeArquivo) body.fileName = midia.nomeArquivo;
+  return lerEnviada(await evo(`/message/sendMedia/${inst(instancia, env)}`, { method: 'POST', body: JSON.stringify(body) }, env));
+}
+
+/** Áudio como mensagem de voz (a Evolution converte para o formato do WhatsApp). `conteudo`: base64 ou URL. */
+export async function enviarAudio(telefone: string, conteudo: string, instancia: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<Enviada> {
+  return lerEnviada(await evo(`/message/sendWhatsAppAudio/${inst(instancia, env)}`, { method: 'POST', body: JSON.stringify({ number: telefone, audio: conteudo, encoding: true }) }, env));
+}
+
+export async function enviarLocalizacao(telefone: string, local: { latitude: number; longitude: number; nome?: string; endereco?: string }, instancia: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<Enviada> {
+  return lerEnviada(await evo(`/message/sendLocation/${inst(instancia, env)}`, { method: 'POST', body: JSON.stringify({ number: telefone, latitude: local.latitude, longitude: local.longitude, name: local.nome ?? '', address: local.endereco ?? '' }) }, env));
+}
+
+export async function enviarContato(telefone: string, contato: { nome: string; telefone: string }, instancia: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<Enviada> {
+  const digitos = contato.telefone.replace(/\D/g, '');
+  return lerEnviada(await evo(`/message/sendContact/${inst(instancia, env)}`, { method: 'POST', body: JSON.stringify({ number: telefone, contact: [{ fullName: contato.nome, wuid: digitos, phoneNumber: `+${digitos}` }] }) }, env));
+}
+
+/** Marca mensagens recebidas como lidas (os dois tracinhos azuis do lado do cliente). Falha em silêncio: é aparência. */
+export async function marcarLidas(chaves: Array<{ id: string; remoteJid: string; fromMe: boolean }>, instancia: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
+  if (!chaves.length) return;
+  try {
+    await evo(`/chat/markMessageAsRead/${inst(instancia, env)}`, { method: 'POST', body: JSON.stringify({ readMessages: chaves }) }, env);
+  } catch {
+    // aparência
+  }
+}
+
+/** Foto de perfil de um contato, quando o WhatsApp deixa ver. */
+export async function fotoDoContato(telefone: string, instancia: string | null, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<string | null> {
+  try {
+    const r = await evo<{ profilePictureUrl?: string }>(`/chat/fetchProfilePictureUrl/${inst(instancia, env)}`, { method: 'POST', body: JSON.stringify({ number: telefone }) }, env);
+    return r.profilePictureUrl ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** Estado da conexão de uma instância: 'open' = conectada. */
 export interface Midia {
   base64: string;
@@ -180,22 +252,25 @@ function lerQr(r: any): QrCode {
   return { base64: base64 ? (String(base64).startsWith('data:') ? String(base64) : `data:image/png;base64,${base64}`) : null, codigo: q?.pairingCode ?? q?.code ?? null };
 }
 
+/** Os eventos que o webhook do Stok Aí recebe. O Atende Aí pede mais (ver EVENTOS_DO_ATENDE). */
+export const EVENTOS_PADRAO: readonly string[] = ['MESSAGES_UPSERT'];
+
 /** Cria a instância (idempotente: se já existe, só segue) e aponta o webhook para nós. */
-export async function criarInstancia(nome: string, webhookUrl: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
+export async function criarInstancia(nome: string, webhookUrl: string, env: AmbienteEvolution = process.env as AmbienteEvolution, eventos: readonly string[] = EVENTOS_PADRAO): Promise<void> {
   try {
-    await evo(`/instance/create`, { method: 'POST', body: JSON.stringify({ instanceName: nome, integration: 'WHATSAPP-BAILEYS', qrcode: true, webhook: { url: webhookUrl, byEvents: false, base64: false, events: ['MESSAGES_UPSERT'] } }) }, env);
+    await evo(`/instance/create`, { method: 'POST', body: JSON.stringify({ instanceName: nome, integration: 'WHATSAPP-BAILEYS', qrcode: true, webhook: { url: webhookUrl, byEvents: false, base64: false, events: [...eventos] } }) }, env);
   } catch (e: any) {
     if (!/already|exist|em uso|in use/i.test(String(e.message))) throw e;
   }
-  await configurarWebhook(nome, webhookUrl, env);
+  await configurarWebhook(nome, webhookUrl, env, eventos);
 }
 
 /** Garante o webhook da instância (formato da v2; cai para o da v1 se a Evolution for antiga). */
-export async function configurarWebhook(nome: string, webhookUrl: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
+export async function configurarWebhook(nome: string, webhookUrl: string, env: AmbienteEvolution = process.env as AmbienteEvolution, eventos: readonly string[] = EVENTOS_PADRAO): Promise<void> {
   try {
-    await evo(`/webhook/set/${encodeURIComponent(nome)}`, { method: 'POST', body: JSON.stringify({ webhook: { enabled: true, url: webhookUrl, byEvents: false, base64: false, events: ['MESSAGES_UPSERT'] } }) }, env);
+    await evo(`/webhook/set/${encodeURIComponent(nome)}`, { method: 'POST', body: JSON.stringify({ webhook: { enabled: true, url: webhookUrl, byEvents: false, base64: false, events: [...eventos] } }) }, env);
   } catch {
-    await evo(`/webhook/set/${encodeURIComponent(nome)}`, { method: 'POST', body: JSON.stringify({ enabled: true, url: webhookUrl, webhook_by_events: false, events: ['MESSAGES_UPSERT'] }) }, env);
+    await evo(`/webhook/set/${encodeURIComponent(nome)}`, { method: 'POST', body: JSON.stringify({ enabled: true, url: webhookUrl, webhook_by_events: false, events: [...eventos] }) }, env);
   }
 }
 

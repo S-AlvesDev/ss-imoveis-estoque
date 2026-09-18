@@ -1,13 +1,15 @@
 import { useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { motion } from 'motion/react';
-import { BarChart3, Eye, MessageSquare, RefreshCw } from 'lucide-react';
+import { BarChart3, Eye, RefreshCw } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Acesso } from './pages/Acesso';
 import { Empresa } from './pages/Empresa';
 import { Times } from './pages/Times';
 import { Equipe } from './pages/Equipe';
 import { Conta } from './pages/Conta';
+import { Whatsapp } from './pages/Whatsapp';
+import { Central } from './pages/central/Central';
 import { EmConstrucao } from './pages/EmConstrucao';
 import { Shell, itensDoMenu } from './Shell';
 import { Simbolo } from './Marca';
@@ -25,7 +27,7 @@ export default function App() {
   const path = useRotaAtende((s) => s.path);
   const ir = useRotaAtende((s) => s.ir);
   const sessao = useSessaoAtende((s) => s.sessao);
-  const { tela } = lerCaminho(path);
+  const { tela, resto } = lerCaminho(path);
 
   // Raiz (/atende) e caminho desconhecido: para onde faz sentido.
   useEffect(() => {
@@ -56,7 +58,7 @@ export default function App() {
 
   return (
     <>
-      <Dentro tela={tela} />
+      <Dentro tela={tela} resto={resto} />
       <Toaster position="top-right" richColors />
     </>
   );
@@ -66,7 +68,7 @@ function primeiraTela(papel: string): Tela {
   return itensDoMenu(papel)[0]?.tela ?? TELAS.conta;
 }
 
-function Dentro({ tela }: { tela: Tela }) {
+function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
   const sessao = useSessaoAtende((s) => s.sessao)!;
   const { carregado, erro, carregar } = useDadosAtende();
   const ir = useRotaAtende((s) => s.ir);
@@ -99,12 +101,13 @@ function Dentro({ tela }: { tela: Tela }) {
 
   return (
     <Shell tela={tela}>
-      {tela === TELAS.central && <EmConstrucao titulo="Central" etapa="Etapa 2" icone={<MessageSquare size={24} />} descricao="Conversas do WhatsApp da empresa, com mídia, ficha do cliente e o contexto que a IA preparou. Depois de conectar o número, é aqui que a equipe atende." />}
+      {tela === TELAS.central && <Central conversaId={resto || null} />}
       {tela === TELAS.supervisao && <EmConstrucao titulo="Supervisão" etapa="Etapa 4" icone={<Eye size={24} />} descricao="A equipe em tempo real — quem está online, quantas conversas, há quanto tempo sem responder — e a triagem da IA para corrigir, orientar, assumir ou transferir." />}
       {tela === TELAS.dashboard && <EmConstrucao titulo="Dashboard" etapa="Etapa 5" icone={<BarChart3 size={24} />} descricao="Leads, atendimentos, conversões, tempo de primeira resposta, desempenho por pessoa e por setor. Só números reais, do banco." />}
       {tela === TELAS.empresa && pode(sessao.papel, 'empresa.gerir') && <Empresa />}
       {tela === TELAS.times && pode(sessao.papel, 'times.gerir') && <Times />}
       {tela === TELAS.equipe && <Equipe />}
+      {tela === TELAS.whatsapp && pode(sessao.papel, 'whatsapp.gerir') && <Whatsapp />}
       {tela === TELAS.conta && <Conta />}
     </Shell>
   );

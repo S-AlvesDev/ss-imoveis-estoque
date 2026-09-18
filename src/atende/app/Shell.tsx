@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react';
-import { BarChart3, Building2, Eye, LogOut, Menu, MessageSquare, UserCircle, Users, UsersRound, X } from 'lucide-react';
+import { BarChart3, Building2, Eye, LogOut, Menu, MessageSquare, Smartphone, UserCircle, Users, UsersRound, X } from 'lucide-react';
 import { MarcaAtende } from './Marca';
 import { TELAS, useRotaAtende, type Tela } from './router';
 import { useSessaoAtende } from './store/sessao';
 import { useDadosAtende } from './store/dados';
+import { useCentral } from './store/central';
 import { pode, NOME_DO_PAPEL, type Permissao } from '../shared/papeis';
 
 /**
@@ -25,6 +26,7 @@ const ITENS: Item[] = [
   { tela: TELAS.empresa, nome: 'Empresa', icone: <Building2 size={17} />, permissao: 'empresa.gerir' },
   { tela: TELAS.times, nome: 'Times', icone: <UsersRound size={17} />, permissao: 'times.gerir' },
   { tela: TELAS.equipe, nome: 'Equipe', icone: <Users size={17} />, permissao: 'equipe.ver' },
+  { tela: TELAS.whatsapp, nome: 'WhatsApp', icone: <Smartphone size={17} />, permissao: 'whatsapp.gerir' },
 ];
 
 export function itensDoMenu(papel: string): Item[] {
@@ -36,6 +38,7 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
   const sessao = useSessaoAtende((s) => s.sessao)!;
   const sair = useSessaoAtende((s) => s.sair);
   const limpar = useDadosAtende((s) => s.limpar);
+  const limparCentral = useCentral((s) => s.limpar);
   const empresa = useDadosAtende((s) => s.empresa);
   const ir = useRotaAtende((s) => s.ir);
   const itens = itensDoMenu(sessao.papel);
@@ -89,6 +92,7 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
           type="button"
           onClick={() => {
             limpar();
+            limparCentral();
             sair();
             ir(TELAS.entrar);
           }}

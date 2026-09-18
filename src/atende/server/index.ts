@@ -1,5 +1,6 @@
 import express from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { supabaseServer } from '../../lib/supabaseServer';
 import { getTransporter } from '../../server/mail';
@@ -9,6 +10,8 @@ import { emailDeBoasVindasAtende, emailDeConviteAtende, emailDeRecuperacaoAtende
 import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, validarEdicaoDeFuncionario, validarEmail, validarSenha } from '../shared/validacao';
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
+import { processarWebhook, conectar, situacaoDaConexao, desconectar } from './whatsapp';
+import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, ErroDeConversa, type Filtro } from './conversas';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
 
 /**
@@ -38,6 +41,26 @@ async function enviarEmail(para: string, conteudo: { subject: string; html: stri
 
 export function criarRouterAtende(): express.Router {
   const r = express.Router();
+
+  // O corpo. Arquivos NÃO passam por aqui: sobem direto para o Storage por URL assinada.
+  r.use(express.json({ limit: '1mb' }));
+
+  // O teto geral do produto: por pessoa (o id do token, sem validar — a validação vem depois),
+  // ou por IP para quem não está logado. Folgado para a central atualizando a cada 4 s.
+  r.use(
+    rateLimit({
+      windowMs: 15 * 60 * 1000,
+      limit: 4000,
+      standardHeaders: 'draft-7',
+      legacyHeaders: false,
+      keyGenerator: (req) => {
+        const token = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null;
+        const id = token ? (jwt.decode(token) as any)?.id : null;
+        return typeof id === 'number' ? `u:${id}` : ipKeyGenerator(req.ip ?? '');
+      },
+      message: { error: 'Muitas requisições. Aguarde alguns minutos.' },
+    }),
+  );
 
   // -------------------------------------------------------------------------
   //  Limites (próprios do produto; o geral do /api continua valendo por cima)
@@ -190,6 +213,24 @@ export function criarRouterAtende(): express.Router {
       if (err instanceof ErroDaPonte) return res.status(err.status).json({ error: err.message });
       console.error('[POST /api/atende/ponte/entrar] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível entrar com a conta do Stok Aí agora.' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  //  O webhook da Evolution (uma instância por empresa; a empresa vem do nome
+  //  da instância). Trabalha antes de responder: na Vercel, a função congela
+  //  quando a resposta sai.
+  // -------------------------------------------------------------------------
+  r.post('/webhooks/whatsapp', async (req, res) => {
+    const esperado = process.env.EVOLUTION_WEBHOOK_TOKEN;
+    if (!esperado) return res.status(503).json({ error: 'Webhook do WhatsApp não configurado (EVOLUTION_WEBHOOK_TOKEN).' });
+    if (req.query.token !== esperado) return res.status(401).json({ error: 'Token inválido.' });
+    try {
+      const r2 = await processarWebhook(req.body);
+      res.json({ ok: true, ...r2 });
+    } catch (err: any) {
+      console.error('[atende webhook] erro:', err.message);
+      res.status(500).json({ error: 'Falha ao processar.' });
     }
   });
 
@@ -410,6 +451,170 @@ export function criarRouterAtende(): express.Router {
     } catch (err: any) {
       console.error('[DELETE /api/atende/equipe/:id] erro:', err.message);
       res.status(500).json({ error: 'Erro ao desativar a pessoa.' });
+    }
+  });
+
+  // ---- WhatsApp da empresa
+  r.get('/whatsapp', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await situacaoDaConexao(req.sessao!.empresa_id));
+    } catch (err: any) {
+      console.error('[GET /api/atende/whatsapp] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível consultar o WhatsApp.' });
+    }
+  });
+  r.post('/whatsapp/conectar', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await conectar(req.sessao!.empresa_id));
+    } catch (err: any) {
+      console.error('[POST /api/atende/whatsapp/conectar] erro:', err.message);
+      res.status(502).json({ error: `Não foi possível falar com o WhatsApp: ${err.message}` });
+    }
+  });
+  r.delete('/whatsapp', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      await desconectar(req.sessao!.empresa_id);
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error('[DELETE /api/atende/whatsapp] erro:', err.message);
+      res.status(502).json({ error: `Não foi possível desconectar: ${err.message}` });
+    }
+  });
+
+  // ---- Conversas
+  const tratar = (res: express.Response, err: any, rotulo: string, mensagem: string) => {
+    if (err instanceof ErroDeConversa) return res.status(err.status).json({ error: err.message });
+    console.error(`[${rotulo}] erro:`, err.message);
+    return res.status(500).json({ error: mensagem });
+  };
+  const FILTROS: readonly Filtro[] = ['abertas', 'minhas', 'fila', 'aguardando', 'encerradas', 'todas'];
+
+  r.get('/conversas', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      const filtro = (FILTROS as readonly string[]).includes(String(req.query.filtro)) ? (String(req.query.filtro) as Filtro) : 'abertas';
+      res.json({ conversas: await listarConversas(req, { filtro, timeId: typeof req.query.time === 'string' ? req.query.time : null, busca: typeof req.query.busca === 'string' ? req.query.busca : '' }) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/conversas', 'Erro ao listar as conversas.');
+    }
+  });
+
+  r.get('/sync', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      const desde = typeof req.query.desde === 'string' && !Number.isNaN(Date.parse(req.query.desde)) ? req.query.desde : null;
+      res.json(await delta(req, desde));
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/sync', 'Erro ao sincronizar.');
+    }
+  });
+
+  r.get('/conversas/:id', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      const conversa = await conversaPorId(req, req.params.id);
+      if (!conversa) return res.status(404).json({ error: 'Conversa não encontrada.' });
+      const [mensagens, anteriores] = await Promise.all([mensagensDaConversa(req, conversa.id, { antesDe: typeof req.query.antes_de === 'string' ? req.query.antes_de : null }), conversasDoCliente(req, conversa.cliente_id)]);
+      res.json({ conversa, mensagens, anteriores: anteriores.filter((c) => c.id !== conversa.id) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/conversas/:id', 'Erro ao abrir a conversa.');
+    }
+  });
+
+  /** Passo 1 de um arquivo/áudio: a URL para o navegador subir direto no Storage. */
+  r.post('/conversas/:id/midias/url', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await prepararUpload(req, req.params.id, req.body ?? {}));
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/midias/url', 'Não foi possível preparar o envio.');
+    }
+  });
+
+  r.post('/conversas/:id/mensagens', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.status(201).json({ mensagem: await enviarMensagem(req, req.params.id, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/mensagens', 'Não foi possível enviar.');
+    }
+  });
+
+  r.post('/conversas/:id/notas', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.status(201).json({ mensagem: await notaInterna(req, req.params.id, req.body?.texto) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/notas', 'Não foi possível anotar.');
+    }
+  });
+
+  r.post('/conversas/:id/assumir', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ conversa: await assumir(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/assumir', 'Não foi possível assumir.');
+    }
+  });
+
+  r.post('/conversas/:id/encerrar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ conversa: await encerrar(req, req.params.id, req.body?.motivo) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/encerrar', 'Não foi possível encerrar.');
+    }
+  });
+
+  r.post('/conversas/:id/reabrir', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ conversa: await reabrir(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/reabrir', 'Não foi possível reabrir.');
+    }
+  });
+
+  r.post('/conversas/:id/lida', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      await marcarComoLida(req, req.params.id);
+      res.json({ ok: true });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/lida', 'Não foi possível marcar como lida.');
+    }
+  });
+
+  r.put('/conversas/:id/etiquetas', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ conversa: await definirEtiquetas(req, req.params.id, req.body?.etiquetas) });
+    } catch (err: any) {
+      tratar(res, err, 'PUT /api/atende/conversas/:id/etiquetas', 'Não foi possível salvar as etiquetas.');
+    }
+  });
+
+  /** A URL assinada de uma mídia (vale 10 min). `?download=1` força o download com o nome original. */
+  r.get('/midias/:mensagemId', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      const url = await urlDaMidia(req, req.params.mensagemId, req.query.download === '1');
+      if (!url) return res.status(404).json({ error: 'Arquivo não encontrado.' });
+      res.json({ url });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/midias/:id', 'Não foi possível abrir o arquivo.');
+    }
+  });
+
+  r.patch('/clientes/:id', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ cliente: await atualizarCliente(req, req.params.id, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'PATCH /api/atende/clientes/:id', 'Não foi possível salvar o cliente.');
+    }
+  });
+
+  r.get('/etiquetas', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ etiquetas: await listarEtiquetas(req) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/etiquetas', 'Erro ao listar etiquetas.');
+    }
+  });
+  r.post('/etiquetas', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.status(201).json({ etiquetas: await criarEtiqueta(req, req.body?.nome, req.body?.cor) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/etiquetas', 'Não foi possível criar a etiqueta.');
     }
   });
 

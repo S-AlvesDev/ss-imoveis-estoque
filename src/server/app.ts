@@ -304,7 +304,12 @@ export function createApp() {
 
   // Abaixo do padrão do body-parser (100kb). A maior carga real é a recontagem
   // dos 317 materiais, que dá 13KB — 64kb deixa folga de sobra.
-  app.use(express.json({ limit: '64kb' }));
+  // O Atende Aí cuida do próprio corpo e do próprio limite de requisições (a
+  // central atualiza por polling) — ver src/atende.
+  // Tudo que não é dele passa por aqui como sempre.
+  const doAtende = (req: express.Request) => req.originalUrl.startsWith('/api/atende');
+  const jsonDoEstoque = express.json({ limit: '64kb' });
+  app.use((req, res, next) => (doAtende(req) ? next() : jsonDoEstoque(req, res, next)));
 
   /**
    * Tentativas de login por CONTA.
@@ -356,7 +361,7 @@ export function createApp() {
     message: { error: 'Muitas requisições. Aguarde alguns minutos.' },
   });
 
-  app.use('/api/', apiLimiter);
+  app.use('/api/', (req, res, next) => (doAtende(req) ? next() : apiLimiter(req, res, next)));
 
   // --------------------------- AUTH ---------------------------
   app.post('/api/login', loginIpLimiter, loginAccountLimiter, async (req, res) => {

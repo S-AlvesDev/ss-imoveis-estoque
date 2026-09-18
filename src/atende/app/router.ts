@@ -21,6 +21,7 @@ export const TELAS = {
   empresa: 'empresa',
   times: 'times',
   equipe: 'equipe',
+  whatsapp: 'whatsapp',
   conta: 'conta',
 } as const;
 
