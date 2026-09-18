@@ -124,7 +124,7 @@ export function Empresa() {
         <p className="text-sm text-[var(--text-muted)]">A IA lê cada conversa nova, escolhe o setor e a prioridade, resume para o atendente e dá uma primeira resposta. Ela nunca vende nem negocia — só encaminha.</p>
         <div className="space-y-2">
           <Interruptor ligado={form.triagem_ativa} onChange={(v) => campo('triagem_ativa', v)} titulo="Triagem ligada" descricao="Desligada, toda conversa nova cai direto na fila geral, sem setor, e a IA não fala com o cliente." />
-          <Interruptor ligado={form.responde_fora_do_horario} onChange={(v) => campo('responde_fora_do_horario', v)} titulo="Responder fora do horário" descricao="Fora do horário, a IA ainda tria e manda a mensagem de fora do horário (abaixo). Desligado, ela tria em silêncio e o cliente só ouve a equipe quando abrir." />
+          <Interruptor ligado={form.responde_fora_do_horario} onChange={(v) => campo('responde_fora_do_horario', v)} titulo="Responder fora do horário" descricao="Fora do horário, a IA ainda tria e manda a mensagem de fora do horário (acima). Desligado, ela tria em silêncio e o cliente só ouve a equipe quando abrir." />
         </div>
         <div>
           <p className="mb-1.5 flex items-center gap-1 text-xs font-bold text-[var(--text)]">

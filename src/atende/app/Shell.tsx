@@ -6,6 +6,10 @@ import { TELAS, useRotaAtende, type Tela } from './router';
 import { useSessaoAtende } from './store/sessao';
 import { useDadosAtende } from './store/dados';
 import { useCentral } from './store/central';
+import { api } from './lib/api';
+import { toast } from 'sonner';
+import { presencaEfetiva } from '../shared/presenca';
+import { useSincronizacao } from './store/useSincronizacao';
 import { pode, NOME_DO_PAPEL, type Permissao } from '../shared/papeis';
 import { ATENDE } from '../shared/produto';
 
@@ -99,6 +103,9 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
   const ir = useRotaAtende((s) => s.ir);
   const grupos = gruposDoMenu(sessao.papel);
 
+  // O relógio do sync mora aqui: em qualquer tela a pessoa continua presente e as contagens da barra continuam certas.
+  useSincronizacao({ carregarLista: false });
+
   // As contagens da barra: não lidas nas minhas conversas e na fila (Central); quantas na fila (Supervisão).
   const { naoLidas, naFila } = useMemo(() => {
     let naoLidas = 0;
@@ -115,7 +122,20 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
     ir(t);
     setGavetaAberta(false);
   }
+  const minhaPresenca = useCentral((s) => s.presenca[sessao.id]);
+  const estadoDaPresenca = presencaEfetiva(minhaPresenca, Date.now());
+  async function alternarPresenca() {
+    const nova = estadoDaPresenca === 'ausente' ? 'online' : 'ausente';
+    try {
+      await api.post('/presenca', { presenca: nova });
+      useCentral.setState((s) => ({ presenca: { ...s.presenca, [sessao.id]: { presenca: nova, presenca_em: new Date().toISOString() } } }));
+      toast.success(nova === 'ausente' ? 'Você está ausente: a IA não te manda conversas novas.' : 'Você está online.');
+    } catch {
+      toast.error('Não foi possível mudar a presença.');
+    }
+  }
   function sairDaConta() {
+    void api.post('/presenca', { presenca: 'offline' }).catch(() => undefined);
     limpar();
     limparCentral();
     sair();
@@ -193,6 +213,11 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
             <span className="block truncate text-sm font-semibold text-white">{sessao.nome}</span>
             <span className="block truncate text-[11px] text-[var(--sidebar-muted)]">{NOME_DO_PAPEL[sessao.papel]}</span>
           </span>
+        </button>
+        <button type="button" onClick={alternarPresenca} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs transition-colors hover:bg-white/[0.06]" title={estadoDaPresenca === 'ausente' ? 'Voltar a ficar online' : 'Ficar ausente (não recebe conversas novas da IA)'}>
+          <span className={`ml-1 h-2.5 w-2.5 shrink-0 rounded-full ${estadoDaPresenca === 'online' ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : estadoDaPresenca === 'ausente' ? 'bg-amber-400' : 'bg-slate-500'}`} />
+          <span className="flex-1 font-semibold text-[var(--sidebar-text)]">{estadoDaPresenca === 'online' ? 'Online' : estadoDaPresenca === 'ausente' ? 'Ausente' : 'Conectando…'}</span>
+          <span className="text-[10px] text-[var(--sidebar-muted)]">{estadoDaPresenca === 'ausente' ? 'voltar' : 'ficar ausente'}</span>
         </button>
         <button type="button" onClick={sairDaConta} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-[var(--sidebar-text)] transition-colors hover:bg-white/[0.06] hover:text-white">
           <LogOut size={18} className="text-[var(--sidebar-muted)]" />

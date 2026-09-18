@@ -76,3 +76,13 @@ export function lerComoBase64(arquivo: Blob): Promise<string> {
     r.readAsDataURL(arquivo);
   });
 }
+
+/** Tempo decorrido, curto: 90 s → "1 min"; 1h30 → "1 h 30"; 2 dias → "2 d". */
+export function duracao(ms: number): string {
+  const min = Math.max(0, Math.floor(ms / 60_000));
+  if (min < 1) return 'agora';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} h${min % 60 ? ` ${String(min % 60).padStart(2, '0')}` : ''}`;
+  return `${Math.floor(h / 24)} d`;
+}

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { motion } from 'motion/react';
-import { BarChart3, Eye, RefreshCw } from 'lucide-react';
+import { BarChart3, RefreshCw } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Acesso } from './pages/Acesso';
 import { Empresa } from './pages/Empresa';
@@ -10,6 +10,7 @@ import { Equipe } from './pages/Equipe';
 import { Conta } from './pages/Conta';
 import { Whatsapp } from './pages/Whatsapp';
 import { Central } from './pages/central/Central';
+import { Supervisao } from './pages/Supervisao';
 import { EmConstrucao } from './pages/EmConstrucao';
 import { Shell, itensDoMenu } from './Shell';
 import { Simbolo } from './Marca';
@@ -102,7 +103,7 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
   return (
     <Shell tela={tela}>
       {tela === TELAS.central && <Central conversaId={resto || null} />}
-      {tela === TELAS.supervisao && <EmConstrucao titulo="Supervisão" etapa="Etapa 4" icone={<Eye size={24} />} descricao="A equipe em tempo real — quem está online, quantas conversas, há quanto tempo sem responder — e a triagem da IA para corrigir, orientar, assumir ou transferir." />}
+      {tela === TELAS.supervisao && pode(sessao.papel, 'conversas.supervisionar') && <Supervisao />}
       {tela === TELAS.dashboard && <EmConstrucao titulo="Dashboard" etapa="Etapa 5" icone={<BarChart3 size={24} />} descricao="Leads, atendimentos, conversões, tempo de primeira resposta, desempenho por pessoa e por setor. Só números reais, do banco." />}
       {tela === TELAS.empresa && pode(sessao.papel, 'empresa.gerir') && <Empresa />}
       {tela === TELAS.times && pode(sessao.papel, 'times.gerir') && <Times />}

@@ -5,6 +5,7 @@ import type { ScopedDb } from '../../server/tenant';
 import { previaDe } from './eventos';
 import { caminhoDaMidia, tipoPeloMimetype, urlAssinada, urlDeUpload, tamanhoDaMidia, MIDIA_MAX_BYTES } from './midias';
 import type { RequisicaoAtende } from './auth';
+import { pode } from '../shared/papeis';
 import { ESTADOS_DO_LEAD, type Conversa, type Mensagem, type Cliente, type Delta, type Etiqueta, type TipoDaMensagem, type Filtro, type Triagem, type Lead } from '../shared/tipos';
 
 /**
@@ -312,6 +313,8 @@ export async function notaInterna(req: RequisicaoAtende, conversaId: string, tex
   const { data, error } = await req.dbAtende!.from('atende_mensagens').insert({ conversa_id: c.id, direcao: 'interna', autor_tipo: s.papel === 'supervisor' ? 'supervisor' : 'atendente', autor_id: s.id, tipo: 'texto', texto: t, status: 'entregue' }).select(MENSAGEM_COLUNAS).single();
   if (error || !data) throw error ?? new Error('não gravou a nota');
   await req.dbAtende!.from('atende_conversas').update({ atualizado_em: new Date().toISOString() }).eq('id', c.id);
+  // Supervisor anotando na conversa de outra pessoa: é orientação, e fica na auditoria.
+  if (pode(s.papel, 'conversas.supervisionar') && c.atendente_id && c.atendente_id !== s.id) await registrarEvento(req.dbAtende!, c.id, s.id, 'orientacao', { para: c.atendente_id, mensagem_id: data.id });
   return montarMensagem(data);
 }
 
@@ -419,14 +422,17 @@ export async function definirEtiquetas(req: RequisicaoAtende, conversaId: string
 /**
  * O que mudou desde `desde`: conversas (com cliente), mensagens novas ou com
  * status novo, presença da equipe, e a conexão. Serve de heartbeat da
- * presença de quem pergunta. O cursor devolvido sobrepõe 2 s ao anterior —
- * a tela deduplica por id, e nada se perde entre dois pedidos.
+ * presença de quem pergunta.
+ *
+ * O cursor é o relógio do BANCO, não o do servidor: o maior `atualizado_em`
+ * que veio nesta rodada (ver cursorDoDelta). Um relógio de servidor
+ * adiantado — aconteceu no desenvolvimento, 22 s — faria cada mudança
+ * nascer "no passado" do cursor e nunca chegar.
  */
 export async function delta(req: RequisicaoAtende, desde: string | null): Promise<Delta> {
   const db = req.dbAtende!;
   const s = req.sessao!;
   const inicio = Date.now();
-  const cursor = new Date(inicio - 2000).toISOString();
   const visao = await visaoDe(req);
   const f = filtroDaVisao(visao);
 
@@ -434,11 +440,11 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
     (() => {
       let q = db.from('atende_conversas').select(COM_CLIENTE).order('atualizado_em', { ascending: false }).limit(200);
       if (f) q = q.or(f);
-      if (desde) q = q.gt('atualizado_em', desde);
+      if (desde) q = q.gte('atualizado_em', desde);
       else q = q.neq('estado', 'encerrada');
       return q;
     })(),
-    desde ? db.from('atende_mensagens').select(MENSAGEM_COLUNAS).gt('atualizado_em', desde).order('atualizado_em', { ascending: true }).limit(300) : Promise.resolve({ data: [], error: null }),
+    desde ? db.from('atende_mensagens').select(`${MENSAGEM_COLUNAS}, atualizado_em`).gte('atualizado_em', desde).order('atualizado_em', { ascending: true }).limit(300) : Promise.resolve({ data: [], error: null }),
     db.from('atende_usuarios').select('id, presenca, presenca_em').eq('ativo', true),
     supabaseServer.from('atende_conexoes').select('id, instancia, numero, estado, conectado_em, ultimo_evento_em').eq('empresa_id', s.empresa_id).maybeSingle(),
   ]);
@@ -446,8 +452,9 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
   if (mensagensRes.error) throw mensagensRes.error;
 
   const conversas = ((conversasRes.data || []) as any[]).map(montarConversa);
+  const cursor = cursorDoDelta([...((conversasRes.data || []) as any[]), ...((mensagensRes.data || []) as any[])].map((l) => l.atualizado_em), desde, inicio);
   const visiveis = new Set(conversas.map((c) => c.id));
-  let mensagens = ((mensagensRes.data || []) as any[]).map(montarMensagem);
+  let mensagens = ((mensagensRes.data || []) as any[]).map(({ atualizado_em: _carimbo, ...m }) => montarMensagem(m));
 
   // Mensagem de conversa que não veio no delta (não mudou): confere se a pessoa vê aquela conversa.
   const faltando = [...new Set(mensagens.map((m) => m.conversa_id).filter((id) => !visiveis.has(id)))];
@@ -459,8 +466,10 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
     mensagens = mensagens.filter((m) => visiveis.has(m.conversa_id));
   }
 
-  // Heartbeat: quem sincroniza está online.
-  void db.from('atende_usuarios').update({ presenca: 'online', presenca_em: new Date().toISOString() }).eq('id', s.id).then(() => undefined, () => undefined);
+  // Heartbeat: quem sincroniza está aqui. 'ausente' é escolha da pessoa e fica; o resto vira 'online'.
+  const batida = new Date().toISOString();
+  void db.from('atende_usuarios').update({ presenca: 'online', presenca_em: batida }).eq('id', s.id).neq('presenca', 'ausente').then(() => undefined, () => undefined);
+  void db.from('atende_usuarios').update({ presenca_em: batida }).eq('id', s.id).eq('presenca', 'ausente').then(() => undefined, () => undefined);
 
   return {
     cursor,
@@ -469,6 +478,22 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
     equipe: ((equipeRes.data || []) as any[]).map((u) => ({ id: Number(u.id), presenca: u.presenca, presenca_em: u.presenca_em })),
     conexao: (conexaoRes.data as any) ?? null,
   };
+}
+
+/**
+ * O maior carimbo visto (a consulta seguinte usa >=, então a linha da
+ * fronteira volta uma vez — a tela deduplica — e nada que nasça com o mesmo
+ * carimbo se perde). Sem nada novo, o cursor anterior fica; na primeira vez
+ * sem nada, 5 min atrás do relógio do servidor: repetir é barato, perder não.
+ */
+export function cursorDoDelta(carimbos: Array<string | null | undefined>, desde: string | null, agora: number): string {
+  let maior: number | null = null;
+  for (const c of carimbos) {
+    const t = c ? Date.parse(c) : NaN;
+    if (Number.isFinite(t) && (maior === null || t > maior)) maior = t;
+  }
+  if (maior !== null) return new Date(maior).toISOString();
+  return desde ?? new Date(agora - 5 * 60_000).toISOString();
 }
 
 // ---------------------------------------------------------------------------
@@ -569,4 +594,85 @@ export async function atualizarLead(req: RequisicaoAtende, conversaId: string, d
   await registrarEvento(db, c.id, s.id, 'lead_alterado', { de: atual?.estado ?? null, para: linha.estado, valor: linha.valor });
   await db.from('atende_conversas').update({ atualizado_em: new Date().toISOString() }).eq('id', c.id);
   return montarLead(linha);
+}
+
+// ---------------------------------------------------------------------------
+//  Etapa 4: supervisão — transferir, orientar, auditar, presença
+// ---------------------------------------------------------------------------
+
+/**
+ * Transfere para uma pessoa (a conversa passa a ser dela) ou para um setor
+ * (volta para a fila daquele time, sem atendente). Quem pode: o dono da
+ * conversa, quem supervisiona, ou qualquer um se ela está na fila.
+ */
+export async function transferir(req: RequisicaoAtende, conversaId: string, dados: { atendente_id?: unknown; time_id?: unknown; motivo?: unknown }): Promise<Conversa> {
+  const c = await exigirConversa(req, conversaId);
+  const s = req.sessao!;
+  const db = req.dbAtende!;
+  if (c.estado === 'encerrada') throw new ErroDeConversa('Reabra a conversa antes de transferir.');
+  const naFila = c.estado === 'na_fila' || c.estado === 'nova' || c.estado === 'em_triagem';
+  if (!pode(s.papel, 'conversas.supervisionar') && c.atendente_id !== s.id && !naFila) throw new ErroDeConversa('Só quem está atendendo (ou um supervisor) pode transferir esta conversa.', 403);
+  const motivo = String(dados.motivo ?? '').trim().slice(0, 300) || null;
+
+  const patch: Record<string, unknown> = {};
+  let texto: string;
+  let para: { atendente_id: number | null; time_id: string | null };
+  if (dados.atendente_id !== undefined && dados.atendente_id !== null && dados.atendente_id !== '') {
+    const alvoId = Number(dados.atendente_id);
+    if (!Number.isInteger(alvoId)) throw new ErroDeConversa('Pessoa inválida.');
+    if (alvoId === c.atendente_id) throw new ErroDeConversa('A conversa já está com essa pessoa.');
+    const { data: alvo } = await db.from('atende_usuarios').select('id, nome, ativo').eq('id', alvoId).maybeSingle();
+    if (!alvo || !alvo.ativo) throw new ErroDeConversa('Pessoa não encontrada ou desativada.', 404);
+    patch.atendente_id = alvoId;
+    patch.estado = 'em_atendimento';
+    // Se a pessoa é de um setor só, a conversa herda o setor; se já tem setor, fica.
+    if (!c.time_id) {
+      const { data: times } = await db.from('atende_time_membros').select('time_id').eq('usuario_id', alvoId);
+      if (times && times.length === 1) patch.time_id = times[0].time_id;
+    }
+    para = { atendente_id: alvoId, time_id: (patch.time_id as string | undefined) ?? c.time_id };
+    texto = `${s.nome} transferiu a conversa para ${alvo.nome}${motivo ? ` — ${motivo}` : ''}.`;
+  } else if (typeof dados.time_id === 'string' && dados.time_id) {
+    const { data: time } = await db.from('atende_times').select('id, nome').eq('id', dados.time_id).eq('ativo', true).maybeSingle();
+    if (!time) throw new ErroDeConversa('Setor não encontrado.', 404);
+    if (time.id === c.time_id && !c.atendente_id) throw new ErroDeConversa('A conversa já está na fila deste setor.');
+    patch.time_id = time.id;
+    patch.atendente_id = null;
+    patch.estado = 'na_fila';
+    para = { atendente_id: null, time_id: time.id };
+    texto = `${s.nome} transferiu a conversa para a fila de ${time.nome}${motivo ? ` — ${motivo}` : ''}.`;
+  } else throw new ErroDeConversa('Escolha uma pessoa ou um setor.');
+
+  const { error } = await db.from('atende_conversas').update(patch).eq('id', c.id);
+  if (error) throw error;
+  await registrarEvento(db, c.id, s.id, 'transferida', { de: { atendente_id: c.atendente_id, time_id: c.time_id }, para, motivo });
+  await db.from('atende_mensagens').insert({ conversa_id: c.id, direcao: 'sistema', autor_tipo: 'sistema', tipo: 'texto', texto, status: 'entregue' });
+  return (await conversaPorId(req, c.id))!;
+}
+
+export interface EventoDaConversa {
+  id: string;
+  tipo: string;
+  usuario_id: number | null;
+  dados: Record<string, unknown> | null;
+  criado_em: string;
+}
+
+/** A auditoria de uma conversa: quem fez o quê, em ordem. */
+export async function eventosDaConversa(req: RequisicaoAtende, conversaId: string): Promise<EventoDaConversa[]> {
+  const c = await exigirConversa(req, conversaId);
+  const { data, error } = await req.dbAtende!.from('atende_eventos').select('id, tipo, usuario_id, dados, criado_em').eq('conversa_id', c.id).order('criado_em', { ascending: true }).limit(200);
+  if (error) throw error;
+  return ((data || []) as any[]).map((e) => ({ ...e, usuario_id: e.usuario_id === null ? null : Number(e.usuario_id) }));
+}
+
+/**
+ * A pessoa escolhe ficar ausente (não recebe conversa da triagem) ou voltar.
+ * 'offline' é o que a tela manda ao sair. O batimento do sync não desfaz
+ * 'ausente' — só a própria pessoa.
+ */
+export async function definirPresenca(req: RequisicaoAtende, presenca: unknown): Promise<void> {
+  if (presenca !== 'online' && presenca !== 'ausente' && presenca !== 'offline') throw new ErroDeConversa('Presença inválida.');
+  const { error } = await req.dbAtende!.from('atende_usuarios').update({ presenca, presenca_em: new Date().toISOString() }).eq('id', req.sessao!.id);
+  if (error) throw error;
 }

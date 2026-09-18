@@ -2,6 +2,7 @@ import { supabaseServer } from '../../lib/supabaseServer';
 import { conversar, systemComCache, claudeConfigurado, type Ferramenta, type Uso, type MensagemDoChat } from '../../server/claude';
 import { enviarTextoComId } from '../../server/evolution';
 import { previaDe } from './eventos';
+import { presencaEfetiva, PRESENCA_VALIDA_MS } from '../shared/presenca';
 import type { HorarioDeAtendimento, DiaDaSemana, Prioridade, PerguntaFrequente, TipoDaMensagem } from '../shared/tipos';
 
 /**
@@ -20,8 +21,7 @@ import type { HorarioDeAtendimento, DiaDaSemana, Prioridade, PerguntaFrequente, 
  */
 
 export const FUSO_PADRAO = 'America/Sao_Paulo';
-/** Alguém que sincronizou há menos que isto está online para receber conversa. */
-export const PRESENCA_VALIDA_MS = 2 * 60_000;
+export { PRESENCA_VALIDA_MS };
 /** Rodadas de esclarecimento: a IA pergunta no máximo duas vezes; na terceira encaminha com o que tem. */
 export const MAX_RODADAS_DE_ESCLARECIMENTO = 2;
 /** Quantas mensagens da conversa a IA lê (as últimas). */
@@ -290,7 +290,7 @@ export interface CandidatoAAtender {
 
 /** Entre quem está online agora, quem tem menos conversas abertas. Ninguém online → null (vai para a fila). */
 export function escolherAtendente(candidatos: CandidatoAAtender[], agora = Date.now()): number | null {
-  const online = candidatos.filter((c) => c.presenca === 'online' && c.presenca_em && agora - Date.parse(c.presenca_em) <= PRESENCA_VALIDA_MS);
+  const online = candidatos.filter((c) => presencaEfetiva(c, agora) === 'online');
   if (!online.length) return null;
   online.sort((a, b) => a.abertas - b.abertas || a.id - b.id);
   return online[0].id;

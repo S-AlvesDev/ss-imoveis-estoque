@@ -15,7 +15,7 @@
       "runtimeExecutable": "cmd",
       "runtimeArgs": [
         "/c",
-        "set PORT=3002&& npx tsx server.ts"
+        "set PORT=3002&& set EVOLUTION_WEBHOOK_TOKEN=teste-local&& npx tsx server.ts"
       ],
       "port": 3002
     }

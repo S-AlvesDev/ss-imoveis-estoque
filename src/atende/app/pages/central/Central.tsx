@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle2, Hand, MessageSquare, RotateCcw, Search, WifiOff } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, CheckCircle2, Hand, MessageSquare, RotateCcw, Search, WifiOff } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { api, ErroDaApi } from '../../lib/api';
 import { useCentral, conversasVisiveis, type Filtro } from '../../store/central';
@@ -12,6 +12,7 @@ import { NOME_DO_ESTADO, type Conversa } from '../../../shared/tipos';
 import { Mensagens } from './Mensagens';
 import { Composer } from './Composer';
 import { PainelDoCliente } from './PainelDoCliente';
+import { Transferir } from './Transferir';
 import { iniciais, nomeDoCliente, quando, telefoneBonito, COR_DO_ESTADO } from './util';
 
 /**
@@ -31,7 +32,7 @@ const ABAS: Array<{ id: Filtro; nome: string }> = [
 export function Central({ conversaId }: { conversaId: string | null }) {
   const sessao = useSessaoAtende((s) => s.sessao)!;
   const ir = useRotaAtende((s) => s.ir);
-  const { filtro, busca, setFiltro, setBusca, carregarLista, sincronizar, abrir, selecionada, carregandoLista, conexao } = useCentral();
+  const { filtro, busca, setFiltro, setBusca, carregarLista, abrir, selecionada, carregandoLista, conexao } = useCentral();
   const conversasMap = useCentral((s) => s.conversas);
   const lista = useMemo(() => conversasVisiveis({ conversas: conversasMap, filtro, busca }, sessao.id), [conversasMap, filtro, busca, sessao.id]);
   const aberta = selecionada ? conversasMap[selecionada] : null;
@@ -42,38 +43,10 @@ export function Central({ conversaId }: { conversaId: string | null }) {
     if (conversaId !== selecionada) void abrir(conversaId);
   }, [conversaId, selecionada, abrir]);
 
-  // Carga inicial + o relógio do sync.
-  const sincronizando = useRef(false);
+  // A lista inteira do filtro atual; o relógio do sync roda no Shell, para toda tela.
   useEffect(() => {
     void carregarLista();
-    let ativo = true;
-    async function tique() {
-      if (!ativo || sincronizando.current) return;
-      sincronizando.current = true;
-      try {
-        await sincronizar();
-      } catch {
-        /* o próximo tique tenta de novo */
-      } finally {
-        sincronizando.current = false;
-      }
-    }
-    void tique();
-    let relogio = window.setInterval(tique, document.hidden ? 15_000 : 4_000);
-    function visibilidade() {
-      window.clearInterval(relogio);
-      relogio = window.setInterval(tique, document.hidden ? 15_000 : 4_000);
-      if (!document.hidden) void tique();
-    }
-    document.addEventListener('visibilitychange', visibilidade);
-    window.addEventListener('focus', visibilidade);
-    return () => {
-      ativo = false;
-      window.clearInterval(relogio);
-      document.removeEventListener('visibilitychange', visibilidade);
-      window.removeEventListener('focus', visibilidade);
-    };
-  }, [carregarLista, sincronizar]);
+  }, [carregarLista]);
 
   // Busca: no que já está na tela, na hora; no servidor, depois de parar de digitar.
   useEffect(() => {
@@ -180,7 +153,10 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
   const aplicarConversa = useCentral((s) => s.aplicarConversa);
   const abrir = useCentral((s) => s.abrir);
   const [agindo, setAgindo] = useState(false);
+  const [transferindo, setTransferindo] = useState(false);
   const minha = conversa.atendente_id === sessao.id;
+  const naFila = conversa.estado === 'na_fila' || conversa.estado === 'nova' || conversa.estado === 'em_triagem';
+  const podeTransferir = conversa.estado !== 'encerrada' && (minha || naFila || pode(sessao.papel, 'conversas.supervisionar'));
   const atendente = conversa.atendente_id ? equipe.find((f) => f.id === conversa.atendente_id)?.nome : null;
 
   async function acao(rota: 'assumir' | 'encerrar' | 'reabrir', corpo?: unknown) {
@@ -216,6 +192,11 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
             Assumir
           </Button>
         )}
+        {podeTransferir && (
+          <Button size="sm" variant="ghost" icon={<ArrowRightLeft size={14} />} onClick={() => setTransferindo(true)}>
+            Transferir
+          </Button>
+        )}
         {conversa.estado !== 'encerrada' ? (
           <Button size="sm" variant="ghost" icon={<CheckCircle2 size={14} />} loading={agindo} onClick={() => acao('encerrar')}>
             Encerrar
@@ -226,6 +207,7 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
           </Button>
         )}
       </div>
+      <Transferir conversa={conversa} aberto={transferindo} onFechar={() => setTransferindo(false)} />
     </header>
   );
 }

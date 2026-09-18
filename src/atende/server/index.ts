@@ -11,7 +11,7 @@ import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, v
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
 import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa } from './whatsapp';
-import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, ErroDeConversa, type Filtro } from './conversas';
+import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular } from './triagem';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
 
@@ -582,6 +582,32 @@ export function criarRouterAtende(): express.Router {
       res.json({ conversa: await definirEtiquetas(req, req.params.id, req.body?.etiquetas) });
     } catch (err: any) {
       tratar(res, err, 'PUT /api/atende/conversas/:id/etiquetas', 'Não foi possível salvar as etiquetas.');
+    }
+  });
+
+  // ---- Supervisão (Etapa 4): transferir, auditoria, presença
+  r.post('/conversas/:id/transferir', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ conversa: await transferir(req, req.params.id, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/transferir', 'Não foi possível transferir.');
+    }
+  });
+
+  r.get('/conversas/:id/eventos', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ eventos: await eventosDaConversa(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/conversas/:id/eventos', 'Erro ao carregar o histórico.');
+    }
+  });
+
+  r.post('/presenca', async (req: RequisicaoAtende, res) => {
+    try {
+      await definirPresenca(req, req.body?.presenca);
+      res.json({ ok: true });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/presenca', 'Não foi possível mudar a presença.');
     }
   });
 

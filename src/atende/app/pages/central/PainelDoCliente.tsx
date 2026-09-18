@@ -9,6 +9,7 @@ import type { Cliente, Conversa } from '../../../shared/tipos';
 import { NOME_DO_ESTADO } from '../../../shared/tipos';
 import { iniciais, nomeDoCliente, quando, telefoneBonito, COR_DO_ESTADO } from './util';
 import { TriagemDaIa } from './TriagemDaIa';
+import { Historico } from './Historico';
 
 /**
  * A coluna da direita: quem é o cliente (editável), o que a IA decidiu na
@@ -144,6 +145,8 @@ export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
           Cliente desde {new Date(c.primeiro_contato_em).toLocaleDateString('pt-BR')}{c.nome_whatsapp ? ` · no WhatsApp: ${c.nome_whatsapp}` : ''}
         </p>
       </section>
+
+      <Historico conversa={conversa} />
 
       {anteriores.length > 0 && (
         <section>
