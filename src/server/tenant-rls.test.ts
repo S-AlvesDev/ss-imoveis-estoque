@@ -8,7 +8,8 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = 'chave-de-servico';
 process.env.SUPABASE_ANON_KEY = 'chave-anonima';
 process.env.SUPABASE_JWT_SECRET = 'segredo-do-postgrest';
 
-const ORG = '5e7e0000-0000-4000-8000-000000000001';
+// Um id só deste arquivo: o cache de clientes é do módulo, e outro teste com o mesmo id (em outro modo) poderia deixar uma entrada para trás.
+const ORG = '5e7e0000-0000-4000-8000-000000000aa1';
 
 let tenant: typeof import('./tenant');
 beforeAll(async () => {
