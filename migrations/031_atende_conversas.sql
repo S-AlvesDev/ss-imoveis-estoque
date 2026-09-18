@@ -170,7 +170,18 @@ begin
   end loop;
 end $$;
 
--- `atualizado_em` da conversa e da mensagem sozinhos.
+-- `atualizado_em` da conversa e da mensagem sozinhos. A função nasce na 029;
+-- fica recriada aqui (idempotente) para esta migração não depender de a 029
+-- ter chegado ao fim.
+create or replace function atende_toca_atualizado_em() returns trigger
+  language plpgsql
+as $$
+begin
+  new.atualizado_em := now();
+  return new;
+end;
+$$;
+
 drop trigger if exists atende_conversas_atualizado_em on atende_conversas;
 create trigger atende_conversas_atualizado_em before update on atende_conversas
   for each row execute function atende_toca_atualizado_em();
