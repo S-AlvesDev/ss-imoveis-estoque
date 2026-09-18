@@ -220,3 +220,27 @@ Supabase Realtime · cobrança e planos do Atende (generalizar `assinaturas` por
 4. **Polling por delta no MVP**, Realtime logo depois — ok?
 5. **Um toque no código compartilhado**: generalizar `scopedDb` (aditivo, coberto por testes) e acrescentar funções em `evolution.ts` (aditivo). Autorizado?
 6. Arquivos da marca (logo horizontal claro/escuro, símbolo, favicon) em `public/atende/`.
+
+---
+
+## O que foi entregue (Etapas 1–5, setembro de 2026)
+
+| Etapa | Estado | Onde |
+|---|---|---|
+| 1 — Fundação | feita | migrações 029/030, `src/atende/{shared,server,app}`, `/atende` |
+| 2 — WhatsApp + Central | feita | migração 031, `whatsapp.ts`, `eventos.ts`, `midias.ts`, `conversas.ts`, `pages/central/*` |
+| 3 — Triagem da IA | feita | migração 032, `triagem.ts`, `TriagemDaIa.tsx`, `SimuladorDaTriagem.tsx` |
+| 4 — Supervisão | feita | `Supervisao.tsx`, `Transferir.tsx`, `Historico.tsx`, `shared/presenca.ts`, `store/useSincronizacao.ts` |
+| 5 — Dashboard | feita | `dashboard.ts` (agregação pura, paginada), `Dashboard.tsx` |
+
+Decisões tomadas na implementação, que diferem ou detalham o texto acima:
+
+- **Triagem em rodadas**: a IA pode pedir esclarecimento até 2 vezes (conversa fica `em_triagem`); na terceira encaminha com o que tem. Fora do horário com "responder fora do horário" desligado, não pergunta — encaminha. A conversa nasce `nova` (ou `na_fila`, se a empresa desligou a triagem) e é **reivindicada** para `em_triagem` antes da chamada — duas mensagens em rajada não disparam duas triagens.
+- **Sem chave da Anthropic**, a triagem cai para palavras-chave dos times (modelo `palavras-chave`), sem falar com o cliente. Qualquer falha manda a conversa para a fila geral e registra `triagem` com `desfecho: 'falhou'` — nunca fica presa.
+- **Resposta estruturada** por `tool_choice` (`forcarFerramenta` em `claude.ts`, aditivo). Regras + contexto da empresa no bloco em cache; data e cliente fora.
+- **Lead** nasce com a triagem (`atende_leads`, 1:1 com a conversa), a IA só sugere (`sugestao_ia`); a equipe move o estado no painel do cliente.
+- **Presença** com uma regra só (`presencaEfetiva`): heartbeat do `sync` (< 2 min = presente), `ausente` é escolha da pessoa e não recebe conversa da triagem, Sair grava `offline`. O relógio do sync roda no Shell (toda tela).
+- **Cursor do sync** vem do relógio do banco (maior `atualizado_em` visto, consulta seguinte com `>=`), não do servidor — o relógio do servidor adiantado fazia mudanças nunca chegarem.
+- **Transferir** (pessoa ou setor) pode quem atende a conversa, quem supervisiona, ou qualquer um se ela está na fila. **Orientar** = nota interna de quem supervisiona na conversa de outra pessoa (evento `orientacao`).
+- **Dashboard sem views** por enquanto: páginas de 1000 linhas com colunas mínimas + agregação pura (`agregarDashboard`, testada). Primeira resposta só conta respostas humanas em conversas abertas pelo cliente. Conversão = convertidos / (convertidos + perdidos). Quando o volume pedir, vira view materializada sem mudar a resposta.
+- Pendentes desta fase: teste com WhatsApp real depois do deploy (webhook precisa de URL pública); apagar a empresa "Teste Atende Aí (apagar)"; Realtime; cobrança; domínio `atendeai.app`.
