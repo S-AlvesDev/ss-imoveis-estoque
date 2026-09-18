@@ -1,0 +1,82 @@
+/*
+ * O tema do Cloud Aí: navy profundo e o espectro da casa — laranja (Stok Aí),
+ * violeta (Atende Aí), ciano (a nuvem). Herda o esqueleto de src/index.css.
+ */
+@import '../index.css';
+
+.cloud {
+  --navy: #050b18;
+  --navy-2: #0b1426;
+  --ciano: #22d3ee;
+  --laranja: #ff8a24;
+  --violeta: #7c3aed;
+  --brand: #22d3ee;
+  --texto: #e6e9f2;
+  --texto-suave: #98a2b8;
+  --linha: rgba(255, 255, 255, 0.08);
+  color-scheme: dark;
+  background-color: var(--navy);
+  color: var(--texto);
+}
+
+.cloud .aurora {
+  background-image:
+    radial-gradient(ellipse 60% 45% at 12% 18%, rgba(255, 138, 36, 0.22), transparent 60%),
+    radial-gradient(ellipse 55% 45% at 88% 12%, rgba(124, 58, 237, 0.28), transparent 60%),
+    radial-gradient(ellipse 50% 40% at 50% 100%, rgba(34, 211, 238, 0.14), transparent 60%);
+}
+
+.cloud .grade {
+  background-image: linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+.cloud .vidro {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(14px);
+}
+
+.cloud .texto-espectro {
+  background: linear-gradient(90deg, #ff8a24 0%, #c084fc 50%, #22d3ee 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.cloud .borda-espectro {
+  position: relative;
+}
+.cloud .borda-espectro::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(255, 138, 36, 0.8), rgba(124, 58, 237, 0.8), rgba(34, 211, 238, 0.8));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.cloud :focus-visible {
+  outline: 2px solid var(--ciano);
+  outline-offset: 2px;
+}
+
+.cloud [id] {
+  scroll-margin-top: 88px;
+}
+
+@keyframes cloud-flutuar {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.cloud .flutua {
+  animation: cloud-flutuar 6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cloud .flutua { animation: none; }
+}

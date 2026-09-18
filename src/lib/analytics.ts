@@ -16,7 +16,8 @@ export type Evento =
   | 'assinatura_iniciar' // foi para o checkout do Mercado Pago
   | 'assinatura_confirmada' // voltou do checkout com a assinatura ativa
   | 'jatoba_abrir' // abriu o assistente, em qual porta (home/painel)
-  | 'jatoba_pergunta'; // mandou uma pergunta
+  | 'jatoba_pergunta' // mandou uma pergunta
+  | 'cloud_cta'; // clique num botão do Cloud Aí (qual, em `alvo`)
 
 type Props = Record<string, string | number | boolean>;
 

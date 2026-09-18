@@ -15,10 +15,13 @@ async function startServer() {
   // atende.html; na Vercel isso é um rewrite em vercel.json. Aqui, o mesmo.
   // Caminho com extensão (/atende/logo.png) é arquivo de public/atende, não tela.
   const ehAtende = (p: string) => p === '/atende' || (p.startsWith('/atende/') && !/\.[a-z0-9]+$/i.test(p));
+  const ehCloud = (p: string) => p === '/cloud' || (p.startsWith('/cloud/') && !/\.[a-z0-9]+$/i.test(p));
+  const entradaDe = (p: string) => (ehAtende(p) ? '/atende.html' : ehCloud(p) ? '/cloud.html' : null);
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use((req, _res, next) => {
-      if (ehAtende(req.path)) req.url = '/atende.html';
+      const entrada = entradaDe(req.path);
+      if (entrada) req.url = entrada;
       next();
     });
     app.use(vite.middlewares);
@@ -26,7 +29,7 @@ async function startServer() {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, ehAtende(req.path) ? 'atende.html' : 'index.html'));
+      res.sendFile(path.join(distPath, (entradaDe(req.path) ?? '/index.html').slice(1)));
     });
   }
 

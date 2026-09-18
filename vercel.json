@@ -15,7 +15,15 @@
       "destination": "/atende.html"
     },
     {
-      "source": "/((?!api/|atende).*)",
+      "source": "/cloud",
+      "destination": "/cloud.html"
+    },
+    {
+      "source": "/cloud/:path*",
+      "destination": "/cloud.html"
+    },
+    {
+      "source": "/((?!api/|atende|cloud).*)",
       "destination": "/index.html"
     }
   ],
