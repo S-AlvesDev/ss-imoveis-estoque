@@ -61,15 +61,15 @@ export function Central({ conversaId }: { conversaId: string | null }) {
   const semWhatsapp = conexao === null || conexao.estado !== 'conectada';
 
   return (
-    <div className="-m-4 flex h-[calc(100dvh-57px)] overflow-hidden sm:-m-6 lg:h-screen">
+    <div className="altura-da-central -m-4 flex min-w-0 overflow-hidden sm:-m-6">
       {/* Coluna 1: a lista */}
-      <section className={`flex w-full shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)] md:w-80 lg:w-96 ${aberta ? 'hidden md:flex' : 'flex'}`}>
+      <section className={`flex w-full min-w-0 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)] md:w-80 lg:w-96 ${aberta ? 'hidden md:flex' : 'flex'}`}>
         <div className="border-b border-[var(--border)] p-3">
           <div className="relative">
             <Search size={15} className="pointer-events-none absolute left-3 top-2.5 text-[var(--text-muted)]" />
             <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nome ou telefone" className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] py-2 pl-9 pr-3 text-sm text-[var(--text)] outline-none focus:border-[var(--brand)]" />
           </div>
-          <div className="mt-2 flex gap-1 overflow-x-auto">
+          <div className="hide-scrollbar mt-2 flex gap-1 overflow-x-auto">
             {ABAS.map((a) => (
               <button key={a.id} type="button" onClick={() => setFiltro(a.id)} className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold transition-colors ${filtro === a.id ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-2)] text-[var(--text-muted)] hover:text-[var(--text)]'}`}>
                 {a.nome}
@@ -195,7 +195,7 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
   }
 
   return (
-    <header className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-3 py-2.5">
+    <header className="flex min-w-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface)] px-2 py-2.5 sm:gap-3 sm:px-3">
       <button type="button" onClick={onVoltar} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-2)] md:hidden" aria-label="Voltar">
         <ArrowLeft size={18} />
       </button>

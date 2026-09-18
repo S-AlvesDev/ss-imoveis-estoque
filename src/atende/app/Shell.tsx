@@ -228,7 +228,7 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
         ))}
       </nav>
 
-      <div className="relative shrink-0 space-y-3 p-4">
+      <div className="relative shrink-0 space-y-3 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
         <CartaoDoWhatsapp onClick={pode(sessao.papel, 'whatsapp.gerir') ? () => navegar(TELAS.whatsapp) : undefined} />
         <button type="button" onClick={() => navegar(TELAS.conta)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${tela === TELAS.conta ? 'bg-white/[0.08]' : 'hover:bg-white/[0.06]'}`}>
           <UserCircle size={18} className="shrink-0 text-[var(--sidebar-muted)]" />
@@ -258,7 +258,7 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
   );
 
   return (
-    <div className="flex min-h-screen bg-[var(--bg)]">
+    <div className="flex min-h-dvh bg-[var(--bg)]">
       <div className="hidden shrink-0 lg:sticky lg:top-0 lg:block lg:h-screen lg:self-start">{barra}</div>
       <AnimatePresence>
         {gavetaAberta && (
@@ -271,13 +271,13 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
         )}
       </AnimatePresence>
       <div className="min-w-0 flex-1">
-        <header className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3 lg:hidden">
+        <header className="flex h-[57px] shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 lg:hidden">
           <button type="button" onClick={() => setGavetaAberta(true)} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-2)]" aria-label="Abrir menu">
             <Menu size={20} />
           </button>
           <MarcaAtende tema="claro" tamanho={26} />
         </header>
-        <main className="p-4 sm:p-6">{children}</main>
+        <main className="min-w-0 p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );

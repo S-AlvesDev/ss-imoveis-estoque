@@ -38,3 +38,41 @@
     radial-gradient(60% 50% at 80% 0%, rgba(124, 58, 237, 0.35), transparent 60%),
     radial-gradient(40% 40% at 10% 100%, rgba(139, 92, 246, 0.18), transparent 60%);
 }
+
+/* -------------------------------------------------------------------------
+ *  Celular
+ * ------------------------------------------------------------------------- */
+
+/* A altura que a Central ocupa: a tela inteira menos o cabeçalho do celular
+ * (57px: botão do menu + marca + borda). No desktop (lg) não há cabeçalho.
+ * dvh acompanha a barra do navegador que aparece e some; vh é o fallback. */
+.atende {
+  --atende-topo: 57px;
+}
+@media (min-width: 1024px) {
+  .atende {
+    --atende-topo: 0px;
+  }
+}
+.atende .altura-da-central {
+  height: calc(100vh - var(--atende-topo));
+  height: calc(100dvh - var(--atende-topo));
+}
+
+/* O Safari do iPhone dá zoom na página ao focar um campo com fonte menor que
+ * 16px — e a página fica assim, maior que a tela. Em telas de toque os
+ * campos usam 16px; o desenho (altura, borda, cor) continua o mesmo. */
+@media (max-width: 1023px) {
+  .atende input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  .atende textarea,
+  .atende select {
+    font-size: 16px;
+  }
+}
+
+/* Mídia nunca maior que o balão: o player de áudio nasce com ~300px de
+ * largura intrínseca e não encolhe sozinho; vídeo e imagem idem. */
+.atende audio,
+.atende video {
+  max-width: 100%;
+}

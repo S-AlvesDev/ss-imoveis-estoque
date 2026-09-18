@@ -14,6 +14,9 @@ import { tamanhoBonito } from './util';
  */
 const MAX_BYTES = 20 * 1024 * 1024;
 
+/** Tela de toque/estreita: sem foco automático (abriria o teclado) e Enter quebra linha — o botão envia, como no WhatsApp. */
+const ehCelular = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches;
+
 export function Composer({ conversa }: { conversa: Conversa }) {
   const [texto, setTexto] = useState('');
   const [modoNota, setModoNota] = useState(false);
@@ -30,7 +33,7 @@ export function Composer({ conversa }: { conversa: Conversa }) {
   const aplicarConversa = useCentral((s) => s.aplicarConversa);
 
   useEffect(() => {
-    campo.current?.focus();
+    if (!ehCelular()) campo.current?.focus();
     setTexto('');
     setAnexo(null);
     setModoNota(false);
@@ -86,7 +89,7 @@ export function Composer({ conversa }: { conversa: Conversa }) {
   }
 
   function aoTeclar(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !ehCelular()) {
       e.preventDefault();
       void enviarTexto();
     }
@@ -136,7 +139,7 @@ export function Composer({ conversa }: { conversa: Conversa }) {
   const encerrada = conversa.estado === 'encerrada';
 
   return (
-    <div className={`border-t px-3 py-2.5 ${modoNota ? 'border-amber-400/40 bg-amber-50/60 dark:bg-amber-500/5' : 'border-[var(--border)] bg-[var(--surface)]'}`}>
+    <div className={`border-t px-2 pt-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] sm:px-3 ${modoNota ? 'border-amber-400/40 bg-amber-50/60 dark:bg-amber-500/5' : 'border-[var(--border)] bg-[var(--surface)]'}`}>
       {anexo && (
         <div className="mb-2 flex items-center gap-2 rounded-lg bg-[var(--bg-2)] px-3 py-2 text-xs text-[var(--text)]">
           <Paperclip size={13} />
@@ -149,20 +152,20 @@ export function Composer({ conversa }: { conversa: Conversa }) {
         </div>
       )}
       {encerrada && !modoNota && <p className="mb-2 text-xs text-[var(--text-muted)]">Conversa encerrada — responder reabre.</p>}
-      <div className="flex items-end gap-1.5">
-        <button type="button" onClick={() => setModoNota((v) => !v)} title={modoNota ? 'Voltar a responder o cliente' : 'Nota interna (o cliente não vê)'} className={`rounded-xl p-2.5 transition-colors ${modoNota ? 'bg-amber-400 text-amber-950' : 'text-[var(--text-muted)] hover:bg-[var(--bg-2)] hover:text-[var(--text)]'}`}>
+      <div className="flex min-w-0 items-end gap-1 sm:gap-1.5">
+        <button type="button" onClick={() => setModoNota((v) => !v)} title={modoNota ? 'Voltar a responder o cliente' : 'Nota interna (o cliente não vê)'} className={`shrink-0 rounded-xl p-2.5 transition-colors ${modoNota ? 'bg-amber-400 text-amber-950' : 'text-[var(--text-muted)] hover:bg-[var(--bg-2)] hover:text-[var(--text)]'}`}>
           <StickyNote size={18} />
         </button>
         {!modoNota && (
           <>
             <input ref={arquivo} type="file" className="hidden" onChange={(e) => setAnexo(e.target.files?.[0] ?? null)} />
-            <button type="button" onClick={() => arquivo.current?.click()} disabled={gravando} title="Anexar arquivo" className="rounded-xl p-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-40">
+            <button type="button" onClick={() => arquivo.current?.click()} disabled={gravando} title="Anexar arquivo" aria-label="Anexar arquivo" className="shrink-0 rounded-xl p-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-40">
               <Paperclip size={18} />
             </button>
           </>
         )}
         {gravando ? (
-          <div className="flex flex-1 items-center gap-3 rounded-xl border border-rose-400/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-rose-400/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />
             Gravando… {Math.floor(segundos / 60)}:{String(segundos % 60).padStart(2, '0')}
             <button type="button" onClick={() => pararGravacao(true)} className="ml-auto text-xs font-semibold underline">
@@ -177,22 +180,22 @@ export function Composer({ conversa }: { conversa: Conversa }) {
             onKeyDown={aoTeclar}
             rows={1}
             maxLength={4000}
-            placeholder={modoNota ? 'Nota interna — só a equipe vê…' : anexo ? 'Legenda (opcional)…' : 'Escreva a resposta… (Enter envia, Shift+Enter quebra linha)'}
-            className={`max-h-40 min-h-[42px] flex-1 resize-none rounded-xl border px-3 py-2.5 text-sm outline-none transition-colors ${modoNota ? 'border-amber-400/60 bg-white text-amber-950 focus:border-amber-500 dark:bg-amber-500/10 dark:text-amber-50' : 'border-[var(--border)] bg-[var(--bg)] text-[var(--text)] focus:border-[var(--brand)]'}`}
+            placeholder={modoNota ? 'Nota interna — só a equipe vê…' : anexo ? 'Legenda (opcional)…' : ehCelular() ? 'Mensagem' : 'Escreva a resposta… (Enter envia, Shift+Enter quebra linha)'}
+            className={`max-h-40 min-h-[42px] min-w-0 flex-1 resize-none rounded-xl border px-3 py-2.5 text-sm outline-none transition-colors ${modoNota ? 'border-amber-400/60 bg-white text-amber-950 focus:border-amber-500 dark:bg-amber-500/10 dark:text-amber-50' : 'border-[var(--border)] bg-[var(--bg)] text-[var(--text)] focus:border-[var(--brand)]'}`}
           />
         )}
         {!modoNota && !texto.trim() && !anexo ? (
           gravando ? (
-            <button type="button" onClick={() => pararGravacao(false)} title="Parar e enviar" className="rounded-xl bg-[var(--brand)] p-2.5 text-white">
+            <button type="button" onClick={() => pararGravacao(false)} title="Parar e enviar" aria-label="Parar e enviar" className="shrink-0 rounded-xl bg-[var(--brand)] p-2.5 text-white">
               <Square size={18} />
             </button>
           ) : (
-            <button type="button" onClick={comecarGravacao} disabled={enviando} title="Gravar áudio" className="rounded-xl p-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-40">
+            <button type="button" onClick={comecarGravacao} disabled={enviando} title="Gravar áudio" aria-label="Gravar áudio" className="shrink-0 rounded-xl p-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-40">
               <Mic size={18} />
             </button>
           )
         ) : (
-          <button type="button" onClick={enviarTexto} disabled={enviando || (!texto.trim() && !anexo)} title="Enviar" className={`rounded-xl p-2.5 text-white transition disabled:opacity-40 ${modoNota ? 'bg-amber-500' : 'bg-[var(--brand)]'}`}>
+          <button type="button" onClick={enviarTexto} disabled={enviando || (!texto.trim() && !anexo)} title="Enviar" aria-label="Enviar" className={`shrink-0 rounded-xl p-2.5 text-white transition disabled:opacity-40 ${modoNota ? 'bg-amber-500' : 'bg-[var(--brand)]'}`}>
             <Send size={18} />
           </button>
         )}

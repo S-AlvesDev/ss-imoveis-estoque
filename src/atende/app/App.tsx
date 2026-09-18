@@ -116,7 +116,7 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
 
 function Carregando() {
   return (
-    <div className="fundo-navy flex h-screen flex-col items-center justify-center gap-4">
+    <div className="fundo-navy flex h-dvh flex-col items-center justify-center gap-4">
       <motion.div animate={{ scale: [1, 1.08, 1], opacity: [0.85, 1, 0.85] }} transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }} className="rounded-2xl bg-white/10 p-3">
         <Simbolo tamanho={44} />
       </motion.div>

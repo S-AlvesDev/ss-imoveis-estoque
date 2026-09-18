@@ -52,7 +52,7 @@ export function Mensagens({ conversaId }: { conversaId: string }) {
 
   let diaAnterior = '';
   return (
-    <div ref={caixa} className="flex-1 space-y-1.5 overflow-y-auto px-4 py-3">
+    <div ref={caixa} className="min-w-0 flex-1 space-y-1.5 overflow-y-auto px-3 py-3 sm:px-4">
       {mensagens.length >= 60 && temMais && (
         <div className="flex justify-center pb-2">
           <button type="button" onClick={maisAntigas} disabled={buscandoMais} className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)] disabled:opacity-50">
@@ -89,14 +89,14 @@ function Balao({ m }: { m: Mensagem }) {
   const autor = m.autor_id ? equipe.find((f) => f.id === m.autor_id)?.nome : null;
 
   if (m.direcao === 'sistema') {
-    return <p className="my-2 text-center text-xs text-[var(--text-muted)]">{m.texto}</p>;
+    return <p className="my-2 wrap-anywhere text-center text-xs text-[var(--text-muted)]">{m.texto}</p>;
   }
   if (m.direcao === 'interna') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-2xl rounded-br-md border border-amber-400/40 bg-amber-100/70 px-3.5 py-2 text-sm text-amber-950 shadow-sm dark:bg-amber-500/10 dark:text-amber-100">
+        <div className="w-fit min-w-0 max-w-[85%] rounded-2xl rounded-br-md border border-amber-400/40 bg-amber-100/70 px-3.5 py-2 text-sm text-amber-950 shadow-sm sm:max-w-[78%] dark:bg-amber-500/10 dark:text-amber-100">
           <p className="mb-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">Nota interna · {autor ?? 'equipe'}</p>
-          <p className="whitespace-pre-wrap break-words">{m.texto}</p>
+          <p className="whitespace-pre-wrap wrap-anywhere">{m.texto}</p>
           <p className="mt-1 text-right text-[10px] text-amber-700/70 dark:text-amber-300/70">{horaDe(m.criado_em)}</p>
         </div>
       </div>
@@ -107,7 +107,7 @@ function Balao({ m }: { m: Mensagem }) {
   const rotulo = nossa ? (m.autor_tipo === 'aparelho' ? 'celular da empresa' : m.autor_tipo === 'ia' ? 'IA' : autor) : null;
   return (
     <div className={`flex ${nossa ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[78%] rounded-2xl px-3.5 py-2 text-sm shadow-sm ${nossa ? 'rounded-br-md bg-[var(--brand)] text-white' : 'rounded-bl-md bg-[var(--surface)] text-[var(--text)] ring-1 ring-[var(--border)]'}`}>
+      <div className={`w-fit min-w-0 max-w-[85%] rounded-2xl px-3.5 py-2 text-sm shadow-sm sm:max-w-[78%] ${nossa ? 'rounded-br-md bg-[var(--brand)] text-white' : 'rounded-bl-md bg-[var(--surface)] text-[var(--text)] ring-1 ring-[var(--border)]'}`}>
         {rotulo && <p className={`mb-0.5 text-[11px] font-bold ${nossa ? 'text-white/80' : 'text-[var(--text-muted)]'}`}>{rotulo}</p>}
         <Conteudo m={m} nossa={nossa} />
         <div className={`mt-1 flex items-center justify-end gap-1 text-[10px] ${nossa ? 'text-white/75' : 'text-[var(--text-muted)]'}`}>
@@ -133,15 +133,15 @@ function Tique({ status }: { status: Mensagem['status'] }) {
 }
 
 function Conteudo({ m, nossa }: { m: Mensagem; nossa: boolean }) {
-  const texto = m.texto ? <p className="whitespace-pre-wrap break-words">{m.texto}</p> : null;
+  const texto = m.texto ? <p className="whitespace-pre-wrap wrap-anywhere">{m.texto}</p> : null;
   if (m.tipo === 'texto' || m.tipo === 'outro') return texto ?? <p className="italic opacity-70">(mensagem sem texto)</p>;
   if (m.tipo === 'localizacao') {
     const { latitude, longitude } = m.midia ?? {};
     const href = `https://www.google.com/maps?q=${latitude},${longitude}`;
     return (
-      <a href={href} target="_blank" rel="noreferrer" className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${nossa ? 'bg-white/15' : 'bg-[var(--bg-2)]'}`}>
-        <MapPin size={18} />
-        <span>
+      <a href={href} target="_blank" rel="noreferrer" className={`flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 ${nossa ? 'bg-white/15' : 'bg-[var(--bg-2)]'}`}>
+        <MapPin size={18} className="shrink-0" />
+        <span className="min-w-0">
           <span className="block font-semibold">{m.texto ?? 'Localização'}</span>
           <span className="block text-[11px] opacity-80">
             {latitude?.toFixed(5)}, {longitude?.toFixed(5)} · abrir no mapa
@@ -153,9 +153,9 @@ function Conteudo({ m, nossa }: { m: Mensagem; nossa: boolean }) {
   if (m.tipo === 'contato') {
     const c = m.midia?.contato;
     return (
-      <div className={`flex items-center gap-2 rounded-lg px-2 py-1.5 ${nossa ? 'bg-white/15' : 'bg-[var(--bg-2)]'}`}>
-        <User size={18} />
-        <span>
+      <div className={`flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 ${nossa ? 'bg-white/15' : 'bg-[var(--bg-2)]'}`}>
+        <User size={18} className="shrink-0" />
+        <span className="min-w-0">
           <span className="block font-semibold">{c?.nome ?? m.texto}</span>
           {c?.telefone && <span className="block text-[11px] opacity-80">+{c.telefone}</span>}
         </span>
@@ -210,22 +210,22 @@ function Arquivo({ m, nossa }: { m: Mensagem; nossa: boolean }) {
   if (m.tipo === 'imagem' || m.tipo === 'figurinha') {
     return url ? (
       <a href={url} target="_blank" rel="noreferrer">
-        <img src={url} alt={m.texto ?? 'Imagem'} className={`max-h-72 rounded-lg object-contain ${m.tipo === 'figurinha' ? 'max-h-32' : ''}`} loading="lazy" />
+        <img src={url} alt={m.texto ?? 'Imagem'} className={`max-h-72 max-w-full rounded-lg object-contain ${m.tipo === 'figurinha' ? 'max-h-32' : ''}`} loading="lazy" />
       </a>
     ) : (
-      <div className="h-32 w-48 animate-pulse rounded-lg bg-black/10" />
+      <div className="h-32 w-48 max-w-full animate-pulse rounded-lg bg-black/10" />
     );
   }
   if (m.tipo === 'audio') {
-    return url ? <audio controls preload="metadata" src={url} className="max-w-[260px]" /> : <Caixinha nossa={nossa}>Carregando áudio{m.midia?.duracao ? ` (${duracaoBonita(m.midia.duracao)})` : ''}…</Caixinha>;
+    return url ? <audio controls preload="metadata" src={url} className="block w-[260px] max-w-full" /> : <Caixinha nossa={nossa}>Carregando áudio{m.midia?.duracao ? ` (${duracaoBonita(m.midia.duracao)})` : ''}…</Caixinha>;
   }
   if (m.tipo === 'video') {
-    return url ? <video controls preload="metadata" src={url} className="max-h-72 max-w-[320px] rounded-lg" /> : <Caixinha nossa={nossa}>Carregando vídeo…</Caixinha>;
+    return url ? <video controls preload="metadata" src={url} className="max-h-72 w-[320px] max-w-full rounded-lg" /> : <Caixinha nossa={nossa}>Carregando vídeo…</Caixinha>;
   }
   // Documento
   return (
     <Caixinha nossa={nossa}>
-      <FileText size={20} />
+      <FileText size={20} className="shrink-0" />
       <span className="min-w-0 flex-1">
         <span className="block truncate font-semibold">{m.midia?.nome ?? 'Documento'}</span>
         <span className="block text-[11px] opacity-80">{[m.midia?.mimetype?.split('/')[1]?.toUpperCase(), tamanhoBonito(m.midia?.tamanho)].filter(Boolean).join(' · ')}</span>
@@ -248,5 +248,5 @@ function BaixarLink({ m }: { m: Mensagem }) {
 }
 
 function Caixinha({ nossa, children }: { nossa: boolean; children: ReactNode }) {
-  return <div className={`flex min-w-[200px] items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${nossa ? 'bg-white/15' : 'bg-[var(--bg-2)]'}`}>{children}</div>;
+  return <div className={`flex w-[220px] max-w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-sm ${nossa ? 'bg-white/15' : 'bg-[var(--bg-2)]'}`}>{children}</div>;
 }
