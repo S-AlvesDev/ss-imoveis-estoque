@@ -1,16 +1,20 @@
-import { useState, type ReactNode } from 'react';
-import { BarChart3, Building2, Eye, LogOut, Menu, MessageSquare, Smartphone, UserCircle, Users, UsersRound, X } from 'lucide-react';
-import { MarcaAtende } from './Marca';
+import { useMemo, useState, type ReactNode } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { BarChart3, Building2, ChevronRight, Eye, LogOut, Menu, MessageSquare, Smartphone, UserCircle, Users, UsersRound, Wifi, WifiOff } from 'lucide-react';
+import { MarcaAtende, Simbolo } from './Marca';
 import { TELAS, useRotaAtende, type Tela } from './router';
 import { useSessaoAtende } from './store/sessao';
 import { useDadosAtende } from './store/dados';
 import { useCentral } from './store/central';
 import { pode, NOME_DO_PAPEL, type Permissao } from '../shared/papeis';
+import { ATENDE } from '../shared/produto';
 
 /**
- * A moldura do Atende Aí depois de entrar: barra lateral navy com a marca,
- * o menu por papel, quem está logado e o botão de sair. O conteúdo vem por
- * `children`. No celular, a barra vira gaveta.
+ * A moldura do Atende Aí depois de entrar — a mesma lógica da barra do Stok
+ * Aí: marca no topo, o contexto logo abaixo (lá é a unidade; aqui, a
+ * empresa), grupos de telas com rótulo, a pílula da tela ativa, contagens
+ * onde há o que contar (não lidas na Central, fila na Supervisão), um cartão
+ * de estado no rodapé (o WhatsApp da empresa) e Sair. No celular, gaveta.
  */
 interface Item {
   tela: Tela;
@@ -19,18 +23,69 @@ interface Item {
   permissao?: Permissao;
 }
 
-const ITENS: Item[] = [
-  { tela: TELAS.central, nome: 'Central', icone: <MessageSquare size={17} />, permissao: 'conversas.atender' },
-  { tela: TELAS.supervisao, nome: 'Supervisão', icone: <Eye size={17} />, permissao: 'conversas.supervisionar' },
-  { tela: TELAS.dashboard, nome: 'Dashboard', icone: <BarChart3 size={17} />, permissao: 'dashboard.ver' },
-  { tela: TELAS.empresa, nome: 'Empresa', icone: <Building2 size={17} />, permissao: 'empresa.gerir' },
-  { tela: TELAS.times, nome: 'Times', icone: <UsersRound size={17} />, permissao: 'times.gerir' },
-  { tela: TELAS.equipe, nome: 'Equipe', icone: <Users size={17} />, permissao: 'equipe.ver' },
-  { tela: TELAS.whatsapp, nome: 'WhatsApp', icone: <Smartphone size={17} />, permissao: 'whatsapp.gerir' },
-];
+interface Grupo {
+  rotulo: string;
+  itens: Item[];
+}
 
+function gruposDoMenu(papel: string): Grupo[] {
+  const so = (itens: Item[]) => itens.filter((i) => !i.permissao || pode(papel, i.permissao));
+  const grupos: Grupo[] = [
+    {
+      rotulo: 'Atendimento',
+      itens: so([
+        { tela: TELAS.central, nome: 'Central', icone: <MessageSquare size={18} />, permissao: 'conversas.atender' },
+        { tela: TELAS.supervisao, nome: 'Supervisão', icone: <Eye size={18} />, permissao: 'conversas.supervisionar' },
+        { tela: TELAS.dashboard, nome: 'Dashboard', icone: <BarChart3 size={18} />, permissao: 'dashboard.ver' },
+      ]),
+    },
+    {
+      rotulo: 'Empresa',
+      itens: so([
+        { tela: TELAS.empresa, nome: 'Empresa e IA', icone: <Building2 size={18} />, permissao: 'empresa.gerir' },
+        { tela: TELAS.times, nome: 'Times', icone: <UsersRound size={18} />, permissao: 'times.gerir' },
+        { tela: TELAS.equipe, nome: 'Equipe', icone: <Users size={18} />, permissao: 'equipe.ver' },
+        { tela: TELAS.whatsapp, nome: 'WhatsApp', icone: <Smartphone size={18} />, permissao: 'whatsapp.gerir' },
+      ]),
+    },
+  ];
+  return grupos.filter((g) => g.itens.length > 0);
+}
+
+/** Lista achatada — decide a tela inicial de cada papel. */
 export function itensDoMenu(papel: string): Item[] {
-  return ITENS.filter((i) => !i.permissao || pode(papel, i.permissao));
+  return gruposDoMenu(papel).flatMap((g) => g.itens);
+}
+
+/** O cartão do rodapé: o WhatsApp da empresa, como o Stok Aí mostra a saúde do estoque. */
+function CartaoDoWhatsapp({ onClick }: { onClick?: () => void }) {
+  const conexao = useCentral((s) => s.conexao);
+  const conectado = conexao?.estado === 'conectada';
+  const cor = conectado ? 'var(--verde)' : conexao ? 'var(--amarelo)' : 'var(--sidebar-muted)';
+  const texto = conectado ? 'Conectado' : conexao?.estado === 'conectando' || conexao?.estado === 'aguardando_qr' ? 'Aguardando QR' : conexao ? 'Desconectado' : 'Não conectado';
+  const conteudo = (
+    <>
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--brand)]/15 text-[var(--brand)]">{conectado ? <Wifi size={15} /> : <WifiOff size={15} />}</span>
+        <span className="text-sm font-bold text-white">WhatsApp da empresa</span>
+      </div>
+      <div className="mt-2 flex items-center justify-between text-[11px] text-[var(--sidebar-muted)]">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full" style={{ background: cor, boxShadow: conectado ? `0 0 8px ${cor}` : undefined }} />
+          <span className="font-semibold text-white">{texto}</span>
+          {conexao?.numero && <span>· +{conexao.numero}</span>}
+        </span>
+        {onClick && <ChevronRight size={14} />}
+      </div>
+    </>
+  );
+  const cls = 'w-full rounded-2xl border border-[var(--sidebar-border)] bg-white/[0.04] p-4 text-left';
+  if (!onClick) return <div className={cls}>{conteudo}</div>;
+  return (
+    <button type="button" onClick={onClick} className={`${cls} transition-colors hover:bg-white/[0.07]`}>
+      {conteudo}
+    </button>
+  );
 }
 
 export function Shell({ tela, children }: { tela: Tela | null; children: ReactNode }) {
@@ -40,79 +95,126 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
   const limpar = useDadosAtende((s) => s.limpar);
   const limparCentral = useCentral((s) => s.limpar);
   const empresa = useDadosAtende((s) => s.empresa);
+  const conversas = useCentral((s) => s.conversas);
   const ir = useRotaAtende((s) => s.ir);
-  const itens = itensDoMenu(sessao.papel);
+  const grupos = gruposDoMenu(sessao.papel);
+
+  // As contagens da barra: não lidas nas minhas conversas e na fila (Central); quantas na fila (Supervisão).
+  const { naoLidas, naFila } = useMemo(() => {
+    let naoLidas = 0;
+    let naFila = 0;
+    for (const c of Object.values(conversas)) {
+      if (c.estado === 'encerrada') continue;
+      if (c.estado === 'na_fila' || c.estado === 'nova' || c.estado === 'em_triagem') naFila++;
+      if (c.atendente_id === sessao.id || c.estado === 'na_fila') naoLidas += c.nao_lidas;
+    }
+    return { naoLidas, naFila };
+  }, [conversas, sessao.id]);
 
   function navegar(t: Tela) {
     ir(t);
     setGavetaAberta(false);
   }
+  function sairDaConta() {
+    limpar();
+    limparCentral();
+    sair();
+    ir(TELAS.entrar);
+  }
 
   const barra = (
-    <div className="flex h-full flex-col bg-[var(--sidebar-bg)] text-[var(--sidebar-text)]">
-      <div className="flex items-center justify-between px-5 py-5">
-        <MarcaAtende tema="escuro" tamanho={30} />
+    <aside className="relative flex h-full w-64 flex-col overflow-hidden border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)] text-[var(--sidebar-text)]">
+      <div className="grain pointer-events-none absolute inset-0 opacity-[0.25]" />
+      {/* O brilho que sobe do canto — violeta, a cor da casa aqui. */}
+      <div className="pointer-events-none absolute -bottom-32 -left-24 h-80 w-80 rounded-full bg-[var(--brand)]/25 blur-3xl" />
+
+      {/* A marca */}
+      <div className="relative flex h-[4.5rem] shrink-0 items-center justify-between px-5">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Simbolo tamanho={36} />
+          <div className="min-w-0 leading-tight">
+            <p className="text-sm font-extrabold text-white">
+              Atende <span className="text-[var(--lilas)]">Aí</span>
+            </p>
+            <p className="truncate font-mono text-[9px] uppercase tracking-[0.2em] text-[var(--sidebar-muted)]">{ATENDE.slogan}</p>
+          </div>
+        </div>
         <button type="button" onClick={() => setGavetaAberta(false)} className="rounded-lg p-1.5 text-[var(--sidebar-muted)] hover:bg-white/10 lg:hidden" aria-label="Fechar menu">
-          <X size={18} />
+          <ChevronRight size={18} className="rotate-180" />
         </button>
       </div>
+
+      {/* O contexto: a empresa (o equivalente à unidade no Stok Aí). */}
       {empresa && (
-        <div className="mx-4 mb-3 rounded-xl border border-[var(--sidebar-border)] bg-[var(--sidebar-bg-2)] px-3.5 py-2.5">
-          <p className="truncate text-sm font-bold text-white">{empresa.nome}</p>
-          <p className="truncate text-[11px] text-[var(--sidebar-muted)]">{empresa.segmento || 'Empresa'}</p>
+        <div className="relative px-4">
+          <div className="flex items-center gap-2.5 rounded-xl border border-[var(--sidebar-border)] bg-white/[0.04] px-3 py-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--brand)]/20 text-[var(--lilas)]">
+              <Building2 size={15} />
+            </span>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-sm font-bold text-white">{empresa.nome}</p>
+              <p className="truncate text-[11px] text-[var(--sidebar-muted)]">{empresa.segmento || 'Empresa'}</p>
+            </div>
+          </div>
         </div>
       )}
-      <nav className="flex-1 space-y-0.5 px-3">
-        {itens.map((i) => {
-          const ativo = tela === i.tela;
-          return (
-            <button
-              key={i.tela}
-              type="button"
-              onClick={() => navegar(i.tela)}
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors ${ativo ? 'bg-gradiente text-white shadow-lg shadow-[var(--brand)]/30' : 'text-[var(--sidebar-text)] hover:bg-white/[0.06]'}`}
-            >
-              <span className={ativo ? 'text-white' : 'text-[var(--sidebar-muted)]'}>{i.icone}</span>
-              {i.nome}
-            </button>
-          );
-        })}
+
+      <nav className="relative mt-3 flex-1 space-y-6 overflow-y-auto px-3 pb-2">
+        {grupos.map((g) => (
+          <div key={g.rotulo}>
+            <p className="px-3 pb-2 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--sidebar-muted)]">{g.rotulo}</p>
+            <div className="space-y-1">
+              {g.itens.map((i) => {
+                const ativo = tela === i.tela;
+                const contagem = i.tela === TELAS.central ? naoLidas : i.tela === TELAS.supervisao ? naFila : 0;
+                return (
+                  <button key={i.tela} type="button" onClick={() => navegar(i.tela)} className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium transition-colors ${ativo ? 'text-white' : 'text-[var(--sidebar-text)] hover:bg-white/[0.06] hover:text-white'}`}>
+                    {ativo && <motion.div layoutId="atende-sidebar-pill" className="absolute inset-0 rounded-xl bg-gradient-to-r from-[var(--brand)] to-[var(--brand)]/40 shadow-[0_8px_24px_-8px_var(--brand)]" transition={{ type: 'spring', stiffness: 400, damping: 32 }} />}
+                    <span className={`relative ${ativo ? 'text-white' : 'text-[var(--sidebar-muted)]'}`}>{i.icone}</span>
+                    <span className="relative flex-1 text-left">{i.nome}</span>
+                    {contagem > 0 && (
+                      <span className={`relative flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white ${i.tela === TELAS.central ? 'bg-[var(--vermelho)] shadow-[0_0_12px_rgba(239,68,68,0.5)]' : 'bg-[var(--amarelo)] text-[#1a1200]'}`}>
+                        {contagem > 99 ? '99+' : contagem}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
-      <div className="border-t border-[var(--sidebar-border)] p-3">
-        <button type="button" onClick={() => navegar(TELAS.conta)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${tela === TELAS.conta ? 'bg-white/[0.08]' : 'hover:bg-white/[0.06]'}`}>
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--brand)]/25 text-[var(--lilas)]">
-            <UserCircle size={20} />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-bold text-white">{sessao.nome}</span>
+
+      <div className="relative shrink-0 space-y-3 p-4">
+        <CartaoDoWhatsapp onClick={pode(sessao.papel, 'whatsapp.gerir') ? () => navegar(TELAS.whatsapp) : undefined} />
+        <button type="button" onClick={() => navegar(TELAS.conta)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors ${tela === TELAS.conta ? 'bg-white/[0.08]' : 'hover:bg-white/[0.06]'}`}>
+          <UserCircle size={18} className="shrink-0 text-[var(--sidebar-muted)]" />
+          <span className="min-w-0 flex-1 leading-tight">
+            <span className="block truncate text-sm font-semibold text-white">{sessao.nome}</span>
             <span className="block truncate text-[11px] text-[var(--sidebar-muted)]">{NOME_DO_PAPEL[sessao.papel]}</span>
           </span>
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            limpar();
-            limparCentral();
-            sair();
-            ir(TELAS.entrar);
-          }}
-          className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-[var(--sidebar-muted)] transition-colors hover:bg-white/[0.06] hover:text-white"
-        >
-          <LogOut size={16} /> Sair
+        <button type="button" onClick={sairDaConta} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-[var(--sidebar-text)] transition-colors hover:bg-white/[0.06] hover:text-white">
+          <LogOut size={18} className="text-[var(--sidebar-muted)]" />
+          Sair
         </button>
       </div>
-    </div>
+    </aside>
   );
 
   return (
     <div className="flex min-h-screen bg-[var(--bg)]">
-      <aside className="hidden w-64 shrink-0 lg:block">{barra}</aside>
-      {gavetaAberta && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setGavetaAberta(false)} />
-          <aside className="absolute inset-y-0 left-0 w-72 shadow-2xl">{barra}</aside>
-        </div>
-      )}
+      <div className="hidden shrink-0 lg:sticky lg:top-0 lg:block lg:h-screen lg:self-start">{barra}</div>
+      <AnimatePresence>
+        {gavetaAberta && (
+          <motion.div key="gaveta" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 lg:hidden">
+            <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={() => setGavetaAberta(false)} />
+            <motion.div initial={{ x: -280 }} animate={{ x: 0 }} exit={{ x: -280 }} transition={{ type: 'spring', stiffness: 380, damping: 34 }} className="absolute inset-y-0 left-0 h-full shadow-2xl">
+              {barra}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className="min-w-0 flex-1">
         <header className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3 lg:hidden">
           <button type="button" onClick={() => setGavetaAberta(true)} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-2)]" aria-label="Abrir menu">

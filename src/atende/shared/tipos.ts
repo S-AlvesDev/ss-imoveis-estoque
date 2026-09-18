@@ -75,6 +75,8 @@ export interface BootstrapAtende {
   empresa: Empresa;
   times: Time[];
   equipe: Funcionario[];
+  /** O WhatsApp da empresa, como está gravado (sem consultar a Evolution). */
+  conexao: Conexao | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
+import { useCentral } from './central';
 import type { BootstrapAtende, Empresa, Funcionario, Time } from '../../shared/tipos';
 
 /**
@@ -28,6 +29,8 @@ export const useDadosAtende = create<Dados>((set) => ({
     try {
       const b = await api.get<BootstrapAtende>('/bootstrap');
       set({ carregado: true, erro: null, empresa: b.empresa, times: b.times, equipe: b.equipe });
+      // O cartão do WhatsApp na barra lateral lê daqui; o sync da Central mantém atualizado depois.
+      useCentral.setState({ conexao: b.conexao });
       return b;
     } catch (e: any) {
       set({ carregado: true, erro: e.message || 'Não foi possível carregar.' });

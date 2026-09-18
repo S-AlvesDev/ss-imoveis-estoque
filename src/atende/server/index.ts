@@ -10,7 +10,7 @@ import { emailDeBoasVindasAtende, emailDeConviteAtende, emailDeRecuperacaoAtende
 import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, validarEdicaoDeFuncionario, validarEmail, validarSenha } from '../shared/validacao';
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
-import { processarWebhook, conectar, situacaoDaConexao, desconectar } from './whatsapp';
+import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa } from './whatsapp';
 import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, ErroDeConversa, type Filtro } from './conversas';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
 
@@ -289,8 +289,8 @@ export function criarRouterAtende(): express.Router {
 
   r.get('/bootstrap', async (req: RequisicaoAtende, res) => {
     try {
-      const [empresa, times, equipe] = await Promise.all([carregarEmpresa(req), carregarTimes(req), carregarEquipe(req)]);
-      const resposta: BootstrapAtende = { sessao: req.sessao!, empresa, times, equipe };
+      const [empresa, times, equipe, conexao] = await Promise.all([carregarEmpresa(req), carregarTimes(req), carregarEquipe(req), conexaoDaEmpresa(req.sessao!.empresa_id)]);
+      const resposta: BootstrapAtende = { sessao: req.sessao!, empresa, times, equipe, conexao: conexao ? { id: conexao.id, instancia: conexao.instancia, numero: conexao.numero, estado: conexao.estado, conectado_em: conexao.conectado_em, ultimo_evento_em: conexao.ultimo_evento_em } : null };
       res.json(resposta);
     } catch (err: any) {
       console.error('[GET /api/atende/bootstrap] erro:', err.message);
