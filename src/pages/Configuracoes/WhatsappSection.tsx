@@ -16,6 +16,8 @@ interface Status {
   evolution: boolean;
   instancia: string | null;
   ia: boolean;
+  /** A empresa deixou o assistente ligado? (Configurável aqui; o servidor sem chave também conta como desligado.) */
+  ia_ativa: boolean;
   liberado: boolean;
   mensagens_no_mes: number;
   limite_mes: number;
@@ -42,6 +44,7 @@ export function WhatsappSection() {
   const [texto, setTexto] = useState('');
   const [falas, setFalas] = useState<Fala[]>([]);
   const [enviando, setEnviando] = useState(false);
+  const [alternando, setAlternando] = useState(false);
   const fim = useRef<HTMLDivElement>(null);
 
   const carregar = useCallback(async () => {
@@ -88,8 +91,24 @@ export function WhatsappSection() {
     }
   }
 
+  async function alternarIa() {
+    if (!status) return;
+    const ativa = !status.ia_ativa;
+    setAlternando(true);
+    try {
+      await api.patch('/api/whatsapp/ia', { ativa });
+      setStatus({ ...status, ia_ativa: ativa });
+      toast.success(ativa ? 'Assistente ligado: a equipe volta a ser respondida no WhatsApp.' : 'Assistente desligado: quem escrever não recebe resposta automática.');
+    } catch (err: any) {
+      toast.error(err.message || 'Não foi possível salvar.');
+    } finally {
+      setAlternando(false);
+    }
+  }
+
   const conectado = status?.instancia === 'open';
   const liberado = planoAtual.libera('whatsapp');
+  const iaLigada = Boolean(status?.ia && status?.ia_ativa);
 
   return (
     <section className="space-y-4">
@@ -119,11 +138,17 @@ export function WhatsappSection() {
                 <span className="text-[var(--text)]">WhatsApp</span>
                 <Badge variant={conectado ? 'success' : status?.evolution ? 'warning' : 'neutral'}>{conectado ? 'conectado' : status?.evolution ? (status.instancia ?? 'desconectado') : 'não configurado'}</Badge>
               </li>
-              <li className="flex items-center gap-2">
-                <Bot size={14} className={status?.ia ? 'text-[var(--verde)]' : 'text-[var(--text-muted)]'} />
+              <li className="flex flex-wrap items-center gap-2">
+                <Bot size={14} className={iaLigada ? 'text-[var(--verde)]' : 'text-[var(--text-muted)]'} />
                 <span className="text-[var(--text)]">Assistente (IA)</span>
-                <Badge variant={status?.ia ? 'success' : 'neutral'}>{status?.ia ? 'ligado' : 'desligado'}</Badge>
+                <Badge variant={iaLigada ? 'success' : 'neutral'}>{!status?.ia ? 'não configurado' : status.ia_ativa ? 'ligado' : 'desligado'}</Badge>
+                {status?.ia && (
+                  <button type="button" role="switch" aria-checked={status.ia_ativa} onClick={alternarIa} disabled={alternando} title={status.ia_ativa ? 'Desligar o assistente para a empresa' : 'Ligar o assistente'} className={`relative ml-auto h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50 ${status.ia_ativa ? 'bg-[var(--verde)]' : 'bg-[var(--border)]'}`}>
+                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${status.ia_ativa ? 'left-[18px]' : 'left-0.5'}`} />
+                  </button>
+                )}
               </li>
+              {status?.ia && !status.ia_ativa && <li className="rounded-lg bg-amber-100/70 px-2 py-1.5 text-[11px] text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">Desligado: quem da equipe escrever para este número não recebe resposta automática. Cotações, pedidos e avisos continuam saindo normalmente.</li>}
               <li className="text-[var(--text-muted)]">
                 Mensagens neste mês: <strong className="text-[var(--text)]">{status?.mensagens_no_mes ?? 0}</strong> de {status?.limite_mes ?? '—'}.
               </li>

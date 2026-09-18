@@ -73,10 +73,17 @@ export interface Falante {
   operacoes: OperacaoWhatsapp[];
   temPin: boolean;
   pinHash: string | null;
+  /** A empresa pode desligar o assistente do WhatsApp (Configurações → WhatsApp): desligado, silêncio para a equipe dela. */
+  iaAtiva: boolean;
 }
 
 export async function falantePeloTelefone(telefone: string): Promise<Falante | null> {
-  const { data } = await supabaseServer.from('estoque_users').select('id, nome, matricula, role, organization_id, whatsapp_operacoes, whatsapp_pin, ativo, organizations(nome)').in('whatsapp', variantesDoTelefone(telefone)).limit(1).maybeSingle();
+  type Linha = { id: number; nome: string; matricula: string; role: string; organization_id: string; whatsapp_operacoes: string[] | null; whatsapp_pin: string | null; ativo: boolean | null; organizations: { nome?: string; whatsapp_ia_ativa?: boolean } | null };
+  const buscar = (colunasDaOrg: string): Promise<{ data: Linha | null; error: { message: string } | null }> =>
+    supabaseServer.from('estoque_users').select(`id, nome, matricula, role, organization_id, whatsapp_operacoes, whatsapp_pin, ativo, organizations(${colunasDaOrg})`).in('whatsapp', variantesDoTelefone(telefone)).limit(1).maybeSingle() as any;
+  let { data, error } = await buscar('nome, whatsapp_ia_ativa');
+  // Código no ar antes da migração 033: sem a coluna, o assistente continua ligado — nunca mudo para toda a equipe.
+  if (error && /whatsapp_ia_ativa/.test(error.message)) ({ data, error } = await buscar('nome'));
   if (!data || data.ativo === false) return null;
   return {
     id: Number(data.id),
@@ -88,6 +95,7 @@ export async function falantePeloTelefone(telefone: string): Promise<Falante | n
     operacoes: operacoesDoUsuario(data.role, data.whatsapp_operacoes),
     temPin: Boolean(data.whatsapp_pin),
     pinHash: data.whatsapp_pin ?? null,
+    iaAtiva: (data as any).organizations?.whatsapp_ia_ativa !== false,
   };
 }
 
@@ -600,13 +608,16 @@ export interface Resposta {
 /**
  * Uma mensagem chegou: descobre quem é, resolve confirmações, ou conversa
  * com a IA. Devolve o texto a mandar de volta (quem chama envia).
+ * `aoResponder` avisa quando vai haver resposta (o webhook mostra
+ * "digitando…"): quem vai ficar em silêncio não vê o balão.
  */
-export async function responder(telefone: string, texto: string | null, tipo: 'texto' | 'imagem' | 'audio' | 'documento' | 'outro' = 'texto', instancia: string | null = null, baixarMidia?: () => Promise<Midia | null>): Promise<Resposta> {
+export async function responder(telefone: string, texto: string | null, tipo: 'texto' | 'imagem' | 'audio' | 'documento' | 'outro' = 'texto', instancia: string | null = null, baixarMidia?: () => Promise<Midia | null>, aoResponder?: () => void): Promise<Resposta> {
   const falante = await falantePeloTelefone(telefone);
   if (!falante) {
     // Não é da equipe de ninguém: pode ser um fornecedor respondendo a uma cotação.
     const fornecedor = await fornecedorPeloTelefone(telefone, instancia);
     if (fornecedor) {
+      aoResponder?.();
       await registrar({ organizationId: fornecedor.organization_id, userId: null, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });
       let midia: Midia | null = null;
       if ((tipo === 'imagem' || tipo === 'documento') && baixarMidia) {
@@ -627,9 +638,14 @@ export async function responder(telefone: string, texto: string | null, tipo: 't
     // O número do assistente é o do atendimento: quem está conversando com uma pessoa da equipe
     // não pode receber o aviso automático a cada mensagem. Uma vez por dia basta.
     if (await jaAvisamosHoje(telefone)) return { texto: null, falante: null };
+    aoResponder?.();
     await registrar({ organizationId: null, userId: null, telefone, direcao: 'saida', texto: MENSAGEM_PARA_DESCONHECIDO });
     return { texto: MENSAGEM_PARA_DESCONHECIDO, falante: null };
   }
+  // A empresa desligou o assistente (Configurações → WhatsApp): silêncio — sem registro, sem contar
+  // no limite do mês. O mesmo número pode estar ligado ao Atende Aí, que aí responde sozinho.
+  if (!falante.iaAtiva) return { texto: null, falante };
+  aoResponder?.();
   await registrar({ organizationId: falante.organization_id, userId: falante.id, telefone, direcao: 'entrada', texto: texto ?? `[${tipo}]` });
 
   const conta = await contaDaOrg(falante.organization_id);

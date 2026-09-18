@@ -265,6 +265,8 @@ export async function falantePelaSessao(user: { id: number; nome: string; matric
     operacoes: operacoesPadrao(user.role),
     temPin: false,
     pinHash: null,
+    // A chave do WhatsApp não vale aqui: o Jatobá no painel não é o assistente do WhatsApp.
+    iaAtiva: true,
   };
 }
 

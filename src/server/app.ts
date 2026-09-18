@@ -3087,10 +3087,11 @@ export function createApp() {
     if (req.query.token !== esperado) return res.status(401).json({ error: 'Token inválido.' });
     const msg = lerEvento(req.body);
     if (!msg) return res.json({ ok: true, ignorado: true });
-    // "digitando…" antes de pensar: a espera de três segundos deixa de parecer mudez.
-    void mostrarDigitando(msg.telefone, msg.instancia || null);
     try {
-      const r = await responder(msg.telefone, msg.texto, msg.tipo, msg.instancia || null, msg.chave ? () => baixarMidia(msg.chave!, msg.instancia || null) : undefined);
+      // "digitando…" antes de pensar: a espera de três segundos deixa de parecer mudez.
+      // Só quando vai haver resposta — com o assistente desligado pela empresa, nem o balão aparece.
+      const digitar = () => void mostrarDigitando(msg.telefone, msg.instancia || null);
+      const r = await responder(msg.telefone, msg.texto, msg.tipo, msg.instancia || null, msg.chave ? () => baixarMidia(msg.chave!, msg.instancia || null) : undefined, digitar);
       if (r.texto === null) return res.json({ ok: true, respondido: false });
       try {
         await enviarTexto(msg.telefone, r.texto, msg.instancia || null);
@@ -3114,7 +3115,8 @@ export function createApp() {
       if (!u) return res.status(404).json({ error: 'Usuário não encontrado.' });
       if (!u.whatsapp) return res.status(400).json({ error: 'Este usuário não tem WhatsApp cadastrado — coloque um em Usuários para simular.' });
       const r = await responder(u.whatsapp, texto, 'texto');
-      res.json({ resposta: r.texto ?? '(sem resposta: este número já recebeu o aviso hoje)', uso: r.uso ?? null, erro: r.erro ?? null });
+      const semResposta = r.falante && !r.falante.iaAtiva ? '(sem resposta: o assistente está desligado para a empresa — ligue acima para testar)' : '(sem resposta: este número já recebeu o aviso hoje)';
+      res.json({ resposta: r.texto ?? semResposta, uso: r.uso ?? null, erro: r.erro ?? null });
     } catch (err: any) {
       console.error('[POST /api/whatsapp/simular] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível simular.' });
@@ -3213,9 +3215,29 @@ export function createApp() {
           instancia = `erro: ${String(e.message).slice(0, 80)}`;
         }
       }
-      res.json({ evolution: evolutionConfigurada(), instancia, ia: claudeConfigurado(), liberado: planoLibera(req.plano!, 'whatsapp'), mensagens_no_mes: count ?? 0, limite_mes: LIMITE_MENSAGENS_MES, numero: process.env.EVOLUTION_NUMERO ?? null });
+      // Sem a coluna (migração 033 ainda por rodar), o assistente conta como ligado.
+      const { data: org } = await req.db!.from('organizations').select('whatsapp_ia_ativa').eq('id', req.user!.organization_id).maybeSingle();
+      res.json({ evolution: evolutionConfigurada(), instancia, ia: claudeConfigurado(), ia_ativa: org?.whatsapp_ia_ativa !== false, liberado: planoLibera(req.plano!, 'whatsapp'), mensagens_no_mes: count ?? 0, limite_mes: LIMITE_MENSAGENS_MES, numero: process.env.EVOLUTION_NUMERO ?? null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * A empresa liga e desliga o assistente do WhatsApp. Desligado, quem da
+   * equipe escrever fica sem resposta (silêncio, sem contar no mês) — útil
+   * quando o mesmo número atende clientes pelo Atende Aí.
+   */
+  app.patch('/api/whatsapp/ia', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      if (typeof req.body?.ativa !== 'boolean') return res.status(400).json({ error: 'Informe `ativa` (true/false).' });
+      const { error } = await req.db!.from('organizations').update({ whatsapp_ia_ativa: req.body.ativa }).eq('id', req.user!.organization_id);
+      if (error) throw error;
+      console.info('[whatsapp ia]', req.body.ativa ? 'ligada' : 'desligada', { organization_id: req.user!.organization_id, user_id: req.user!.id });
+      res.json({ ok: true, ia_ativa: req.body.ativa });
+    } catch (err: any) {
+      console.error('[PATCH /api/whatsapp/ia] erro:', err.message);
+      res.status(500).json({ error: 'Não foi possível salvar.' });
     }
   });
 
