@@ -1,9 +1,10 @@
 import { supabaseServer } from '../../lib/supabaseServer';
-import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baixarMidia, fotoDoContato, evolutionConfigurada, type QrCode } from '../../server/evolution';
+import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baixarMidia, fotoDoContato, evolutionConfigurada, variantesDoTelefone, type QrCode } from '../../server/evolution';
 import { siteUrl } from '../../server/senha';
 import { lerEventoDoAtende, previaDe, type MensagemDoWhatsApp, type AtualizacaoDeStatus, type AtualizacaoDeConexao } from './eventos';
 import { caminhoDaMidia, guardarMidia } from './midias';
 import { triar, triagemAtiva } from './triagem';
+import { avisarSobreConversa } from './push';
 import type { Conexao, EstadoDaConexao, StatusDaMensagem } from '../shared/tipos';
 
 /**
@@ -174,14 +175,14 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   const agora = e.em.toISOString();
   const empresaId = conexao.empresa_id;
 
-  // ---- Cliente
-  let { data: cliente } = await supabaseServer.from('atende_clientes').select('id, nome_whatsapp, foto_url').eq('empresa_id', empresaId).eq('telefone', e.telefone).maybeSingle();
+  // ---- Cliente (o mesmo número com e sem o nono dígito é a mesma pessoa)
+  let { data: cliente } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).limit(1).maybeSingle();
   if (!cliente) {
     const foto = await fotoDoContato(e.telefone, conexao.instancia);
-    const { data: novo, error } = await supabaseServer.from('atende_clientes').insert({ empresa_id: empresaId, telefone: e.telefone, nome_whatsapp: e.nomeWhatsapp, foto_url: foto, primeiro_contato_em: agora, ultimo_contato_em: agora }).select('id, nome_whatsapp, foto_url').single();
+    const { data: novo, error } = await supabaseServer.from('atende_clientes').insert({ empresa_id: empresaId, telefone: e.telefone, nome_whatsapp: e.nomeWhatsapp, foto_url: foto, primeiro_contato_em: agora, ultimo_contato_em: agora }).select('id, nome, nome_whatsapp, foto_url').single();
     if (error || !novo) {
       // Duas mensagens ao mesmo tempo do mesmo número novo: a segunda acha a primeira.
-      const { data: existente } = await supabaseServer.from('atende_clientes').select('id, nome_whatsapp, foto_url').eq('empresa_id', empresaId).eq('telefone', e.telefone).maybeSingle();
+      const { data: existente } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).limit(1).maybeSingle();
       if (!existente) throw error ?? new Error('não criou o cliente');
       cliente = existente;
     } else cliente = novo;
@@ -192,7 +193,7 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   }
 
   // ---- Conversa aberta, ou nova
-  let { data: conversa } = await supabaseServer.from('atende_conversas').select('id, estado, nao_lidas, primeira_resposta_em').eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
+  let { data: conversa } = await supabaseServer.from('atende_conversas').select('id, estado, nao_lidas, primeira_resposta_em, atendente_id, time_id').eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
   let nova = false;
   if (!conversa) {
     // Cliente escreveu: nasce 'nova' para a IA triar (ou direto na fila, se a empresa desligou a triagem).
@@ -201,10 +202,10 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
     const { data: criada, error } = await supabaseServer
       .from('atende_conversas')
       .insert({ empresa_id: empresaId, cliente_id: cliente.id, conexao_id: conexao.id, estado: estadoInicial, aberta_em: agora, ultima_mensagem_em: agora })
-      .select('id, estado, nao_lidas, primeira_resposta_em')
+      .select('id, estado, nao_lidas, primeira_resposta_em, atendente_id, time_id')
       .single();
     if (error || !criada) {
-      const { data: existente } = await supabaseServer.from('atende_conversas').select('id, estado, nao_lidas, primeira_resposta_em').eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
+      const { data: existente } = await supabaseServer.from('atende_conversas').select('id, estado, nao_lidas, primeira_resposta_em, atendente_id, time_id').eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
       if (!existente) throw error ?? new Error('não criou a conversa');
       conversa = existente;
     } else {
@@ -267,6 +268,10 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
 
   // ---- A triagem da IA: só para o que o cliente mandou, e só enquanto ninguém da equipe está na conversa.
   if (!e.fromMe && (conversa.estado === 'nova' || conversa.estado === 'em_triagem')) await triar(conversa.id, mensagem.id);
+  // ---- Fora da triagem, o cliente escreveu numa conversa que já é de alguém (ou está na fila): avisa por push.
+  else if (!e.fromMe) {
+    await avisarSobreConversa(empresaId, { id: conversa.id, atendente_id: conversa.atendente_id === null ? null : Number(conversa.atendente_id), time_id: conversa.time_id ?? null }, { titulo: cliente.nome ?? cliente.nome_whatsapp ?? `+${e.telefone}`, corpo: previaDe(e.tipo, e.texto).slice(0, 140) || 'Nova mensagem' });
+  }
   return true;
 }
 

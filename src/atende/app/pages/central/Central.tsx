@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, ArrowRightLeft, CheckCircle2, Hand, MessageSquare, RotateCcw, Search, WifiOff } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, CheckCircle2, Hand, MessageSquare, RotateCcw, Search, WifiOff, X, UserRound } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { api, ErroDaApi } from '../../lib/api';
 import { useCentral, conversasVisiveis, type Filtro } from '../../store/central';
@@ -37,6 +37,9 @@ export function Central({ conversaId }: { conversaId: string | null }) {
   const lista = useMemo(() => conversasVisiveis({ conversas: conversasMap, filtro, busca }, sessao.id), [conversasMap, filtro, busca, sessao.id]);
   const aberta = selecionada ? conversasMap[selecionada] : null;
   const [mostrarFicha, setMostrarFicha] = useState(true);
+  // Abaixo de xl a ficha não cabe ao lado: abre como gaveta por cima da conversa.
+  const [fichaMovel, setFichaMovel] = useState(false);
+  const alternarFicha = () => (window.matchMedia('(min-width: 1280px)').matches ? setMostrarFicha((v) => !v) : setFichaMovel(true));
 
   // A URL manda: /atende/central/<id> abre a conversa.
   useEffect(() => {
@@ -97,7 +100,7 @@ export function Central({ conversaId }: { conversaId: string | null }) {
       <section className={`min-w-0 flex-1 flex-col bg-[var(--bg)] ${aberta ? 'flex' : 'hidden md:flex'}`}>
         {aberta ? (
           <>
-            <Cabecalho conversa={aberta} onVoltar={() => ir(TELAS.central)} onFicha={() => setMostrarFicha((v) => !v)} />
+            <Cabecalho conversa={aberta} onVoltar={() => ir(TELAS.central)} onFicha={alternarFicha} />
             <Mensagens conversaId={aberta.id} />
             <Composer conversa={aberta} />
           </>
@@ -116,6 +119,23 @@ export function Central({ conversaId }: { conversaId: string | null }) {
         <section className="hidden w-80 shrink-0 border-l border-[var(--border)] bg-[var(--surface)] xl:block">
           <PainelDoCliente conversa={aberta} />
         </section>
+      )}
+      {/* No celular e no tablet, a mesma ficha como gaveta pela direita. */}
+      {aberta && fichaMovel && (
+        <div className="fixed inset-0 z-50 xl:hidden">
+          <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={() => setFichaMovel(false)} />
+          <div className="absolute inset-y-0 right-0 flex w-[min(24rem,94vw)] flex-col bg-[var(--surface)] shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Ficha do cliente</p>
+              <button type="button" onClick={() => setFichaMovel(false)} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-2)]" aria-label="Fechar">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1">
+              <PainelDoCliente conversa={aberta} />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -186,24 +206,27 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
           {atendente ? ` · ${minha ? 'com você' : `com ${atendente}`}` : ''}
         </p>
       </button>
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1">
+        <button type="button" onClick={onFicha} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-2)] xl:hidden" aria-label="Ficha do cliente" title="Ficha do cliente">
+          <UserRound size={18} />
+        </button>
         {conversa.estado !== 'encerrada' && !minha && (
           <Button size="sm" variant="outline" icon={<Hand size={14} />} loading={agindo} onClick={() => acao('assumir')}>
-            Assumir
+            <span className="hidden sm:inline">Assumir</span>
           </Button>
         )}
         {podeTransferir && (
           <Button size="sm" variant="ghost" icon={<ArrowRightLeft size={14} />} onClick={() => setTransferindo(true)}>
-            Transferir
+            <span className="hidden sm:inline">Transferir</span>
           </Button>
         )}
         {conversa.estado !== 'encerrada' ? (
           <Button size="sm" variant="ghost" icon={<CheckCircle2 size={14} />} loading={agindo} onClick={() => acao('encerrar')}>
-            Encerrar
+            <span className="hidden sm:inline">Encerrar</span>
           </Button>
         ) : (
           <Button size="sm" variant="outline" icon={<RotateCcw size={14} />} loading={agindo} onClick={() => acao('reabrir')}>
-            Reabrir
+            <span className="hidden sm:inline">Reabrir</span>
           </Button>
         )}
       </div>

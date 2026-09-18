@@ -37,5 +37,5 @@ export const api = {
   post: <T>(caminho: string, dados?: unknown) => pedir<T>(caminho, { method: 'POST', body: dados ? JSON.stringify(dados) : undefined }),
   patch: <T>(caminho: string, dados?: unknown) => pedir<T>(caminho, { method: 'PATCH', body: dados ? JSON.stringify(dados) : undefined }),
   put: <T>(caminho: string, dados?: unknown) => pedir<T>(caminho, { method: 'PUT', body: dados ? JSON.stringify(dados) : undefined }),
-  delete: <T>(caminho: string) => pedir<T>(caminho, { method: 'DELETE' }),
+  delete: <T>(caminho: string, dados?: unknown) => pedir<T>(caminho, { method: 'DELETE', body: dados ? JSON.stringify(dados) : undefined }),
 };

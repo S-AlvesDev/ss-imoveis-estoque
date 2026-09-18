@@ -1,0 +1,17 @@
+{
+  "name": "Atende Aí",
+  "short_name": "Atende Aí",
+  "description": "A central de atendimento do WhatsApp da sua empresa.",
+  "id": "/atende/",
+  "start_url": "/atende/central",
+  "scope": "/atende/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1020",
+  "theme_color": "#7c3aed",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "/atende/favicon_atendeai.png", "sizes": "622x622", "type": "image/png", "purpose": "any" },
+    { "src": "/atende/favicon_atendeai.png", "sizes": "622x622", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -6,6 +6,7 @@ import { previaDe } from './eventos';
 import { caminhoDaMidia, tipoPeloMimetype, urlAssinada, urlDeUpload, tamanhoDaMidia, MIDIA_MAX_BYTES } from './midias';
 import type { RequisicaoAtende } from './auth';
 import { pode } from '../shared/papeis';
+import { avisarSobreConversa } from './push';
 import { ESTADOS_DO_LEAD, type Conversa, type Mensagem, type Cliente, type Delta, type Etiqueta, type TipoDaMensagem, type Filtro, type Triagem, type Lead } from '../shared/tipos';
 
 /**
@@ -74,6 +75,11 @@ function montarMensagem(linha: any): Mensagem {
 }
 
 export type { Filtro };
+
+/** Nome para mostrar: o que a equipe deu, o do WhatsApp, ou o telefone. */
+function nomeDoCliente(c: Cliente): string {
+  return c.nome?.trim() || c.nome_whatsapp?.trim() || `+${c.telefone}`;
+}
 
 /** Só letras, números e o que cabe num nome ou telefone: nada de vírgula ou parêntese, que são estrutura do filtro. */
 export function limparBusca(q: unknown): string {
@@ -314,7 +320,10 @@ export async function notaInterna(req: RequisicaoAtende, conversaId: string, tex
   if (error || !data) throw error ?? new Error('não gravou a nota');
   await req.dbAtende!.from('atende_conversas').update({ atualizado_em: new Date().toISOString() }).eq('id', c.id);
   // Supervisor anotando na conversa de outra pessoa: é orientação, e fica na auditoria.
-  if (pode(s.papel, 'conversas.supervisionar') && c.atendente_id && c.atendente_id !== s.id) await registrarEvento(req.dbAtende!, c.id, s.id, 'orientacao', { para: c.atendente_id, mensagem_id: data.id });
+  if (pode(s.papel, 'conversas.supervisionar') && c.atendente_id && c.atendente_id !== s.id) {
+    await registrarEvento(req.dbAtende!, c.id, s.id, 'orientacao', { para: c.atendente_id, mensagem_id: data.id });
+    await avisarSobreConversa(s.empresa_id, { id: c.id, atendente_id: c.atendente_id, time_id: c.time_id }, { titulo: `Orientação de ${s.nome}`, corpo: `${nomeDoCliente(c.cliente)}: ${t.slice(0, 140)}` }, s.id);
+  }
   return montarMensagem(data);
 }
 
@@ -557,6 +566,8 @@ export async function corrigirTriagem(req: RequisicaoAtende, conversaId: string,
   if (ultima) await db.from('atende_triagens').update({ corrigido_por: s.id, time_corrigido_id: time.id, corrigido_em: new Date().toISOString(), motivo_correcao: motivo }).eq('id', ultima.id);
   await registrarEvento(db, c.id, s.id, 'triagem_corrigida', { de: c.time_id, para: time.id, triagem_id: ultima?.id ?? null, motivo, voltou_para_fila: voltouParaFila });
   await db.from('atende_mensagens').insert({ conversa_id: c.id, direcao: 'sistema', autor_tipo: 'sistema', tipo: 'texto', texto: `${s.nome} corrigiu a triagem: setor ${time.nome}${voltouParaFila ? ' (voltou para a fila do setor)' : ''}${motivo ? ` — ${motivo}` : ''}.`, status: 'entregue' });
+  // Voltou para a fila de outro setor: o setor novo fica sabendo.
+  if (voltouParaFila || !c.atendente_id) await avisarSobreConversa(s.empresa_id, { id: c.id, atendente_id: null, time_id: time.id }, { titulo: `Conversa na fila de ${time.nome}`, corpo: `${nomeDoCliente(c.cliente)} · setor corrigido por ${s.nome}` }, s.id);
   return (await conversaPorId(req, c.id))!;
 }
 
@@ -647,6 +658,8 @@ export async function transferir(req: RequisicaoAtende, conversaId: string, dado
   if (error) throw error;
   await registrarEvento(db, c.id, s.id, 'transferida', { de: { atendente_id: c.atendente_id, time_id: c.time_id }, para, motivo });
   await db.from('atende_mensagens').insert({ conversa_id: c.id, direcao: 'sistema', autor_tipo: 'sistema', tipo: 'texto', texto, status: 'entregue' });
+  // Push para quem recebeu: a pessoa, ou o time (menos quem transferiu).
+  await avisarSobreConversa(s.empresa_id, { id: c.id, atendente_id: para.atendente_id, time_id: para.time_id }, { titulo: para.atendente_id ? 'Conversa transferida para você' : 'Conversa transferida para a fila do seu setor', corpo: `${nomeDoCliente(c.cliente)} · por ${s.nome}${motivo ? ` — ${motivo}` : ''}` }, s.id);
   return (await conversaPorId(req, c.id))!;
 }
 

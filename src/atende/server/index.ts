@@ -14,6 +14,7 @@ import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEm
 import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular } from './triagem';
 import { montarDashboard, PERIODOS } from './dashboard';
+import { situacao as situacaoDoPush, inscrever as inscreverPush, cancelar as cancelarPush, ErroDePush } from './push';
 import type { PeriodoDoDashboard } from '../shared/tipos';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
 
@@ -584,6 +585,32 @@ export function criarRouterAtende(): express.Router {
       res.json({ conversa: await definirEtiquetas(req, req.params.id, req.body?.etiquetas) });
     } catch (err: any) {
       tratar(res, err, 'PUT /api/atende/conversas/:id/etiquetas', 'Não foi possível salvar as etiquetas.');
+    }
+  });
+
+  // ---- Notificações por push (cada aparelho é uma inscrição)
+  r.get('/push', async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await situacaoDoPush(req));
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/push', 'Erro ao consultar as notificações.');
+    }
+  });
+  r.post('/push/inscrever', async (req: RequisicaoAtende, res) => {
+    try {
+      await inscreverPush(req, req.body?.inscricao, typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null);
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err instanceof ErroDePush) return res.status(err.status).json({ error: err.message });
+      tratar(res, err, 'POST /api/atende/push/inscrever', 'Não foi possível ativar as notificações.');
+    }
+  });
+  r.delete('/push/inscrever', async (req: RequisicaoAtende, res) => {
+    try {
+      await cancelarPush(req, req.body?.endpoint);
+      res.json({ ok: true });
+    } catch (err: any) {
+      tratar(res, err, 'DELETE /api/atende/push/inscrever', 'Não foi possível desativar as notificações.');
     }
   });
 

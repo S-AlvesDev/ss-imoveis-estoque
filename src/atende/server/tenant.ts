@@ -21,6 +21,7 @@ export const TABELAS_DO_ATENDE: ReadonlySet<string> = new Set([
   'atende_etiquetas',
   'atende_conversa_etiquetas',
   'atende_eventos',
+  'atende_push_inscricoes',
 ]);
 
 export const ESCOPO_DA_EMPRESA: Escopo = { coluna: 'empresa_id', claim: 'empresa_id', tabelas: TABELAS_DO_ATENDE };

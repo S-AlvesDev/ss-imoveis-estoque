@@ -7,8 +7,9 @@ import { api, ErroDaApi } from '../lib/api';
 import { useSessaoAtende } from '../store/sessao';
 import { NOME_DO_PAPEL } from '../../shared/papeis';
 import { MIN_SENHA } from '../../shared/validacao';
+import { CartaoDeNotificacoes } from './Notificacoes';
 
-/** A própria conta: quem sou e trocar a senha. */
+/** A própria conta: quem sou, notificações deste aparelho e trocar a senha. */
 export function Conta() {
   const sessao = useSessaoAtende((s) => s.sessao)!;
   const [atual, setAtual] = useState('');
@@ -42,6 +43,7 @@ export function Conta() {
           {sessao.email} · {NOME_DO_PAPEL[sessao.papel]}
         </p>
       </Card>
+      <CartaoDeNotificacoes />
       <Card className="space-y-4 p-5">
         <CardHeader title="Trocar senha" />
         <form onSubmit={trocar} className="space-y-4">

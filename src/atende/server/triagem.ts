@@ -2,6 +2,7 @@ import { supabaseServer } from '../../lib/supabaseServer';
 import { conversar, systemComCache, claudeConfigurado, type Ferramenta, type Uso, type MensagemDoChat } from '../../server/claude';
 import { enviarTextoComId } from '../../server/evolution';
 import { previaDe } from './eventos';
+import { avisarSobreConversa } from './push';
 import { presencaEfetiva, PRESENCA_VALIDA_MS } from '../shared/presenca';
 import type { HorarioDeAtendimento, DiaDaSemana, Prioridade, PerguntaFrequente, TipoDaMensagem } from '../shared/tipos';
 
@@ -468,6 +469,17 @@ export async function triar(conversaId: string, mensagemId: string | null): Prom
         texto: desfecho === 'sem_time' ? `Triagem da IA: ${classificacao.assunto} — nenhum setor se encaixou; na fila geral.` : `Triagem da IA: ${classificacao.assunto} → ${nomeDoTime ?? 'setor'}${atendenteId ? ', atribuída' : ', na fila'} · prioridade ${classificacao.prioridade}.`,
         status: 'entregue',
       });
+
+      // Push: quem vai atender fica sabendo — a pessoa escolhida, ou o time (ou todo mundo, sem setor).
+      const nomeDoCliente = conversa.cliente?.nome ?? conversa.cliente?.nome_whatsapp ?? 'Cliente novo';
+      const lead = classificacao.lead === 'quente' ? ' · lead quente' : '';
+      await avisarSobreConversa(
+        empresaId,
+        { id: conversaId, atendente_id: atendenteId, time_id: classificacao.time_id },
+        atendenteId
+          ? { titulo: 'Nova conversa para você', corpo: `${nomeDoCliente} · ${classificacao.assunto}${nomeDoTime ? ` · ${nomeDoTime}` : ''}${lead}` }
+          : { titulo: nomeDoTime ? `Nova conversa na fila de ${nomeDoTime}` : 'Nova conversa na fila geral', corpo: `${nomeDoCliente} · ${classificacao.assunto}${lead}` },
+      );
     }
 
     const respostaEnviada = resposta ? await responderComoIa(conversa, empresaId, resposta) : null;
@@ -477,6 +489,7 @@ export async function triar(conversaId: string, mensagemId: string | null): Prom
     // Nunca fica presa: sem triagem, vai para a fila geral e alguém pega.
     await supabaseServer.from('atende_conversas').update({ estado: 'na_fila' }).eq('id', conversaId).in('estado', ['nova', 'em_triagem']);
     await supabaseServer.from('atende_eventos').insert({ empresa_id: empresaId, conversa_id: conversaId, tipo: 'triagem', dados: { desfecho: 'falhou', erro: String(e.message).slice(0, 300) } });
+    await avisarSobreConversa(empresaId, { id: conversaId, atendente_id: null, time_id: null }, { titulo: 'Nova conversa na fila geral', corpo: `${conversa.cliente?.nome ?? conversa.cliente?.nome_whatsapp ?? 'Cliente novo'} · a IA não conseguiu triar` });
     return null;
   }
 }

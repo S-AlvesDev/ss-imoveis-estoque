@@ -10,6 +10,9 @@ import type { Conversa, Mensagem, Delta, Conexao, Presenca, Etiqueta, Filtro } f
  */
 export type { Filtro };
 
+/** O que o sync trouxe de novo, para a camada de notificações decidir se avisa. */
+export type Novidade = { tipo: 'mensagem' | 'conversa' | 'atribuida'; conversa: Conversa };
+
 interface Central {
   conversas: Record<string, Conversa>;
   mensagens: Record<string, Mensagem[]>;
@@ -24,6 +27,8 @@ interface Central {
   etiquetas: Etiqueta[];
   carregandoLista: boolean;
   carregandoConversa: boolean;
+  /** Quem quer saber das novidades de cada sync (o Shell: som, título, toast). */
+  ouvinte: ((novidades: Novidade[]) => void) | null;
 
   setFiltro: (f: Filtro) => void;
   setBusca: (b: string) => void;
@@ -60,6 +65,7 @@ export const useCentral = create<Central>((set, get) => ({
   etiquetas: [],
   carregandoLista: false,
   carregandoConversa: false,
+  ouvinte: null,
 
   setFiltro: (filtro) => {
     set({ filtro });
@@ -85,8 +91,20 @@ export const useCentral = create<Central>((set, get) => ({
   sincronizar: async () => {
     const { cursor } = get();
     const d = await api.get<Delta>(`/sync${cursor ? `?desde=${encodeURIComponent(cursor)}` : ''}`);
-    const conversas = { ...get().conversas };
+    const antes = get().conversas;
+    const conversas = { ...antes };
     for (const c of d.conversas) conversas[c.id] = c;
+    // O que é novidade de verdade (não na primeira carga): conversa que não se via, ou cliente que escreveu de novo.
+    const novidades: Novidade[] = [];
+    if (cursor) {
+      for (const c of d.conversas) {
+        const velha = antes[c.id];
+        if (c.estado === 'encerrada') continue;
+        if (!velha) novidades.push({ tipo: c.atendente_id ? 'atribuida' : 'conversa', conversa: c });
+        else if (c.atendente_id && c.atendente_id !== velha.atendente_id) novidades.push({ tipo: 'atribuida', conversa: c });
+        else if (c.ultima_mensagem_de === 'cliente' && c.ultima_mensagem_do_cliente_em && c.ultima_mensagem_do_cliente_em !== velha.ultima_mensagem_do_cliente_em) novidades.push({ tipo: 'mensagem', conversa: c });
+      }
+    }
     const mensagens = { ...get().mensagens };
     const porConversa = new Map<string, Mensagem[]>();
     for (const m of d.mensagens) porConversa.set(m.conversa_id, [...(porConversa.get(m.conversa_id) ?? []), m]);
@@ -97,6 +115,7 @@ export const useCentral = create<Central>((set, get) => ({
     const presenca = { ...get().presenca };
     for (const u of d.equipe) presenca[u.id] = { presenca: u.presenca, presenca_em: u.presenca_em };
     set({ conversas, mensagens, presenca, conexao: d.conexao, cursor: d.cursor });
+    if (novidades.length) get().ouvinte?.(novidades);
   },
 
   abrir: async (id) => {

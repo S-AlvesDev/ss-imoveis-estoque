@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { BarChart3, Building2, ChevronRight, Eye, LogOut, Menu, MessageSquare, Smartphone, UserCircle, Users, UsersRound, Wifi, WifiOff } from 'lucide-react';
+import { BarChart3, Bell, Building2, ChevronRight, Eye, LogOut, Menu, MessageSquare, Smartphone, UserCircle, Users, UsersRound, Wifi, WifiOff } from 'lucide-react';
 import { MarcaAtende, Simbolo } from './Marca';
 import { TELAS, useRotaAtende, type Tela } from './router';
 import { useSessaoAtende } from './store/sessao';
@@ -10,6 +10,8 @@ import { api } from './lib/api';
 import { toast } from 'sonner';
 import { presencaEfetiva } from '../shared/presenca';
 import { useSincronizacao } from './store/useSincronizacao';
+import { useNotificacoes } from './store/useNotificacoes';
+import { ativarNotificacoes, estadoDasNotificacoes, type EstadoDasNotificacoes } from './notificacoes';
 import { pode, NOME_DO_PAPEL, type Permissao } from '../shared/papeis';
 import { ATENDE } from '../shared/produto';
 
@@ -118,6 +120,27 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
     return { naoLidas, naFila };
   }, [conversas, sessao.id]);
 
+  // Som, título "(n) Atende Aí", toast e — quem ativou — push pelo service worker.
+  useNotificacoes(naoLidas);
+  const [notificacoes, setNotificacoes] = useState<EstadoDasNotificacoes | null>(null);
+  const [ativandoNotificacoes, setAtivandoNotificacoes] = useState(false);
+  useEffect(() => {
+    void estadoDasNotificacoes().then(setNotificacoes);
+  }, []);
+  async function ativarNotificacoesDaBarra() {
+    setAtivandoNotificacoes(true);
+    try {
+      await ativarNotificacoes();
+      setNotificacoes('ativas');
+      toast.success('Notificações ativadas neste aparelho.');
+    } catch (e: any) {
+      toast.error(e.message || 'Não foi possível ativar.');
+      setNotificacoes(await estadoDasNotificacoes());
+    } finally {
+      setAtivandoNotificacoes(false);
+    }
+  }
+
   function navegar(t: Tela) {
     ir(t);
     setGavetaAberta(false);
@@ -219,6 +242,13 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
           <span className="flex-1 font-semibold text-[var(--sidebar-text)]">{estadoDaPresenca === 'online' ? 'Online' : estadoDaPresenca === 'ausente' ? 'Ausente' : 'Conectando…'}</span>
           <span className="text-[10px] text-[var(--sidebar-muted)]">{estadoDaPresenca === 'ausente' ? 'voltar' : 'ficar ausente'}</span>
         </button>
+        {notificacoes === 'inativas' && (
+          <button type="button" onClick={ativarNotificacoesDaBarra} disabled={ativandoNotificacoes} className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs transition-colors hover:bg-white/[0.06] disabled:opacity-60" title="Receber aviso de cliente respondendo e conversa nova, mesmo com o Atende fechado">
+            <Bell size={16} className="ml-[-1px] shrink-0 text-[var(--brand)]" />
+            <span className="flex-1 font-semibold text-[var(--sidebar-text)]">{ativandoNotificacoes ? 'Ativando…' : 'Ativar notificações'}</span>
+            <span className="text-[10px] text-[var(--sidebar-muted)]">neste aparelho</span>
+          </button>
+        )}
         <button type="button" onClick={sairDaConta} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-[var(--sidebar-text)] transition-colors hover:bg-white/[0.06] hover:text-white">
           <LogOut size={18} className="text-[var(--sidebar-muted)]" />
           Sair
