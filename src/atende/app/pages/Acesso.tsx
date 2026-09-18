@@ -12,6 +12,9 @@ import { MarcaAtende } from '../Marca';
 import { ATENDE } from '../../shared/produto';
 import { MIN_SENHA } from '../../shared/validacao';
 import type { SessaoAtende } from '../../shared/tipos';
+import { ADMIN_ROLES } from '../../../shared/constants';
+import { SESSAO_DO_PRODUTO, type AcessoSevla, type RespostaDeEntrada } from '../../../shared/sevla';
+import { entrarNaSevla, sessaoDoProduto, ativarAtendePelaSevla, deveCairNoLoginAntigo } from '../../../shared/sevlaNavegador';
 
 /**
  * As telas de acesso do Atende Aí: entrar, criar a conta da empresa,
@@ -89,20 +92,51 @@ export function Acesso({ tela }: { tela: Tela }) {
   return <Entrar />;
 }
 
+/** A conta SEVLA entrou, mas nenhuma empresa dela usa o Atende Aí. */
+interface SemAtende {
+  token: string;
+  /** Empresas do Stok Aí que esta pessoa administra — pode ativar o Atende nelas. */
+  ativaveis: Array<{ organization_id: string; organizacao: string }>;
+}
+
 function Entrar() {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const [semAtende, setSemAtende] = useState<SemAtende | null>(null);
   const entrar = useSessaoAtende((s) => s.entrar);
   const ir = useRotaAtende((s) => s.ir);
+
+  /** O login de sempre, direto na tabela do Atende Aí. */
+  async function entrarPeloAtende() {
+    const r = await api.post<{ sessao: SessaoAtende; token: string }>('/login', { email, senha });
+    entrar(r.sessao, r.token);
+    ir(TELAS.central);
+  }
 
   async function enviar(e: FormEvent) {
     e.preventDefault();
     setEnviando(true);
+    setSemAtende(null);
     try {
-      const r = await api.post<{ sessao: SessaoAtende; token: string }>('/login', { email, senha });
-      entrar(r.sessao, r.token);
-      ir(TELAS.central);
+      // Primeiro a identidade SEVLA: entra uma vez e recebe o token do Atende.
+      // Se a SEVLA estiver indisponível (ou a conta não existir lá), o caminho antigo continua valendo.
+      let sevla: RespostaDeEntrada | null = null;
+      try {
+        sevla = await entrarNaSevla(email.trim(), senha);
+        const emitida = await sessaoDoProduto(sevla.token, 'atende');
+        if (emitida.produto !== 'atende') throw new Error('Resposta inesperada.');
+        entrar(emitida.sessao as SessaoAtende, emitida.token);
+        ir(TELAS.central);
+        return;
+      } catch (err) {
+        if (sevla && !deveCairNoLoginAntigo(err)) {
+          // A conta existe e a senha está certa — só não tem o Atende Aí em nenhuma empresa.
+          setSemAtende({ token: sevla.token, ativaveis: empresasAtivaveis(sevla.acessos) });
+          return;
+        }
+      }
+      await entrarPeloAtende();
     } catch (err) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível entrar.');
     } finally {
@@ -113,6 +147,7 @@ function Entrar() {
   return (
     <Moldura titulo="Entrar" subtitulo="Use o e-mail e a senha cadastrados pela sua empresa.">
       <PonteComOStokAi />
+      {semAtende && <AtivarPelaSevla dados={semAtende} />}
       <form onSubmit={enviar} className="space-y-4">
         <div className="relative">
           <Mail size={16} className="pointer-events-none absolute left-3 top-[38px] text-[var(--text-muted)]" />
@@ -133,6 +168,74 @@ function Entrar() {
         </div>
       </form>
     </Moldura>
+  );
+}
+
+/** As empresas do Stok Aí que a pessoa administra e ainda não estão no Atende Aí. O servidor confere de novo ao ativar. */
+function empresasAtivaveis(acessos: AcessoSevla[]): SemAtende['ativaveis'] {
+  const jaNoAtende = new Set(acessos.filter((a) => a.produto === 'atende').map((a) => a.organization_id));
+  const vistas = new Set<string>();
+  return acessos
+    .filter((a) => a.produto === 'stok' && ADMIN_ROLES.includes(a.papel) && !jaNoAtende.has(a.organization_id))
+    .filter((a) => (vistas.has(a.organization_id) ? false : (vistas.add(a.organization_id), true)))
+    .map((a) => ({ organization_id: a.organization_id, organizacao: a.organizacao }));
+}
+
+/**
+ * A conta SEVLA existe, mas nenhuma empresa dela tem o Atende Aí. Quem
+ * administra o Stok Aí de alguma empresa ativa aqui; quem não administra
+ * nada vê o caminho para os planos.
+ */
+function AtivarPelaSevla({ dados }: { dados: SemAtende }) {
+  const [ativando, setAtivando] = useState<string | null>(null);
+  const entrar = useSessaoAtende((s) => s.entrar);
+  const ir = useRotaAtende((s) => s.ir);
+
+  async function ativar(org: SemAtende['ativaveis'][number]) {
+    setAtivando(org.organization_id);
+    try {
+      const r = await ativarAtendePelaSevla(dados.token, org.organization_id);
+      entrar(r.sessao as SessaoAtende, r.token);
+      toast.success(r.ativou ? `Atende Aí ativado para ${org.organizacao}. Comece descrevendo a empresa.` : `Bem-vindo(a) de volta.`);
+      ir(r.ativou ? TELAS.empresa : TELAS.central);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Não foi possível ativar o Atende Aí.');
+    } finally {
+      setAtivando(null);
+    }
+  }
+
+  if (dados.ativaveis.length === 0) {
+    return (
+      <div className="mb-5 rounded-xl border border-amber-400/40 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+        <p className="font-bold">Você ainda não possui o Atende Aí.</p>
+        <p className="mt-1">Sua conta SEVLA existe, mas nenhuma empresa sua usa o Atende Aí. Conheça os planos ou peça acesso a quem administra a empresa.</p>
+        <div className="mt-3 flex flex-wrap gap-3 text-xs font-semibold">
+          <a href={SESSAO_DO_PRODUTO.atende.planos} className="text-[var(--brand)] hover:underline">
+            Conhecer os planos
+          </a>
+          <a href="/cloud/conta" className="text-[var(--brand)] hover:underline">
+            Ver minha SEVLA
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-5 rounded-xl border border-[var(--brand)]/30 bg-[var(--brand)]/[0.06] p-4">
+      <p className="text-sm text-[var(--text)]">
+        Sua conta SEVLA entrou, mas o <strong>Atende Aí</strong> ainda não está ativo nas empresas que você administra.
+      </p>
+      <div className="mt-3 space-y-2">
+        {dados.ativaveis.map((org) => (
+          <Button key={org.organization_id} type="button" fullWidth loading={ativando === org.organization_id} disabled={ativando !== null && ativando !== org.organization_id} icon={<Link2 size={15} />} onClick={() => ativar(org)}>
+            Ativar o Atende Aí para {org.organizacao}
+          </Button>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-[var(--text-muted)]">Cria a empresa no Atende Aí ligada à sua conta do Stok Aí; você entra como administrador.</p>
+    </div>
   );
 }
 

@@ -2,9 +2,10 @@
  * Os planos do Atende Aí — o catálogo público, no mesmo formato do Stok Aí
  * (src/shared/planos.ts), para a cobrança reaproveitar o mesmo mecanismo.
  *
- * PREÇOS AINDA NÃO DEFINIDOS: `preco: null` mostra "R$ XX/mês" na tela.
- * Preencha aqui quando o Samuel decidir. Os limites e recursos abaixo são
- * só do que o produto FAZ hoje — nada é vendido antes de existir.
+ * Preços da tabela comercial da SEVLA INFINITY (PDF de 2026-09-18): Essencial
+ * 299,90 · Profissional 599,90 · Empresarial 1.199,90 por mês. `preco: null`
+ * voltaria a mostrar "R$ XX/mês". Os limites e recursos abaixo são só do que o
+ * produto FAZ hoje — nada é vendido antes de existir.
  */
 
 export type PlanoAtende = 'essencial' | 'profissional' | 'empresarial';
@@ -60,7 +61,7 @@ export const DEFINICOES_ATENDE: Record<PlanoAtende, DefinicaoDoPlanoAtende> = {
   essencial: {
     id: 'essencial',
     nome: 'Essencial',
-    preco: null,
+    preco: 299.9,
     publico: 'Para começar a atender pelo sistema',
     limites: { atendentes: 3, numeros: 1, times: 2, triagens_por_mes: null },
     recursos: ['leads', 'ponte-stok'],
@@ -70,7 +71,7 @@ export const DEFINICOES_ATENDE: Record<PlanoAtende, DefinicaoDoPlanoAtende> = {
   profissional: {
     id: 'profissional',
     nome: 'Profissional',
-    preco: null,
+    preco: 599.9,
     publico: 'Para equipes que atendem o dia inteiro',
     limites: { atendentes: 10, numeros: 1, times: null, triagens_por_mes: null },
     recursos: ['triagem-ia', 'leads', 'push', 'supervisao', 'ponte-stok'],
@@ -81,7 +82,7 @@ export const DEFINICOES_ATENDE: Record<PlanoAtende, DefinicaoDoPlanoAtende> = {
   empresarial: {
     id: 'empresarial',
     nome: 'Empresarial',
-    preco: null,
+    preco: 1199.9,
     publico: 'Para operações maiores, com metas',
     limites: { atendentes: null, numeros: 1, times: null, triagens_por_mes: null },
     recursos: ['triagem-ia', 'leads', 'push', 'supervisao', 'dashboard', 'ponte-stok'],

@@ -87,7 +87,15 @@ function Header() {
               Entrar <ChevronDown size={14} className={`transition-transform ${entrarAberto ? 'rotate-180' : ''}`} />
             </button>
             {entrarAberto && (
-              <div role="menu" className="absolute right-0 top-full mt-1 w-56 rounded-2xl border border-[var(--linha)] bg-[var(--fundo-2)] p-1.5 shadow-2xl">
+              <div role="menu" className="absolute right-0 top-full mt-1 w-60 rounded-2xl border border-[var(--linha)] bg-[var(--fundo-2)] p-1.5 shadow-2xl">
+                <a role="menuitem" href={SEVLA.conta} onClick={() => cta('header-entrar-sevla')} className="flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-white hover:bg-white/[0.06]">
+                  <span className="flex items-center gap-2">
+                    <SimboloSevla tamanho={20} className="rounded" />
+                    Minha SEVLA
+                  </span>
+                  <ArrowRight size={14} className="text-[var(--primaria-clara)]" />
+                </a>
+                <p className="mt-1 border-t border-[var(--linha)] px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-[var(--suave)]">Direto no produto</p>
                 {PRODUTOS.map((p) => (
                   <a key={p.id} role="menuitem" href={p.entrar} onClick={() => cta(`header-entrar-${p.id}`)} className="flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-200 hover:bg-white/[0.06] hover:text-white">
                     <span className="flex items-center gap-2">
@@ -120,6 +128,11 @@ function Header() {
             </nav>
             <div className="mt-3 border-t border-[var(--linha)] pt-4">
               <p className="px-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--suave)]">Entrar</p>
+              <a href={SEVLA.conta} onClick={() => cta('menu-entrar-sevla')} className="mt-1 flex items-center gap-3 rounded-xl px-3 py-3 text-base font-semibold text-white hover:bg-white/[0.06]">
+                <SimboloSevla tamanho={24} className="rounded" />
+                Minha SEVLA
+                <ArrowRight size={16} className="ml-auto text-[var(--primaria-clara)]" />
+              </a>
               {PRODUTOS.map((p) => (
                 <a key={p.id} href={p.entrar} onClick={() => cta(`menu-entrar-${p.id}`)} className="mt-1 flex items-center gap-3 rounded-xl px-3 py-3 text-base text-slate-200 hover:bg-white/[0.06]">
                   <img src={p.simbolo} alt="" className="h-6 w-6 rounded object-contain" aria-hidden />
@@ -475,8 +488,11 @@ function UmaConta() {
             tres
           />
         </Revelar>
-        <Revelar delay={0.15} className="mt-10 text-center text-xs text-[var(--suave)]">
-          Visão do ecossistema. Hoje, cada produto tem a própria porta de entrada.
+        <Revelar delay={0.15} className="mt-12 flex flex-col items-center gap-4 text-center">
+          <Botao href={SEVLA.conta} alvo="uma-conta-entrar">
+            Entrar na minha SEVLA <ArrowRight size={16} />
+          </Botao>
+          <p className="max-w-md text-xs leading-relaxed text-[var(--suave)]">O mesmo e-mail e a mesma senha que você já usa no Stok Aí ou no Atende Aí. Cada produto continua com a própria porta; a SEVLA é a que abre todas.</p>
         </Revelar>
       </Container>
     </section>
@@ -593,6 +609,11 @@ function Footer() {
             <div className="col-span-2 sm:col-span-1">
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--suave)]">Acesso e legal</p>
               <ul className="mt-4 space-y-2.5">
+                <li>
+                  <a href={SEVLA.conta} onClick={() => cta('footer-entrar-sevla')} className={coluna}>
+                    Minha SEVLA
+                  </a>
+                </li>
                 {PRODUTOS.map((p) => (
                   <li key={p.id}>
                     <a href={p.entrar} onClick={() => cta(`footer-entrar-${p.id}`)} className={coluna}>

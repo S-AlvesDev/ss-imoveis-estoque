@@ -22,12 +22,16 @@ async function pedir<T>(caminho: string, opcoes: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opcoes.headers as Record<string, string>) };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(`${BASE}${caminho}`, { ...opcoes, headers });
-  if (res.status === 401) {
-    useSessaoAtende.getState().sair();
-    throw new ErroDaApi('Sessão expirada. Entre novamente.', 401);
-  }
   const ehJson = res.headers.get('content-type')?.includes('application/json');
   const body = ehJson ? await res.json().catch(() => null) : null;
+  if (res.status === 401) {
+    // Com sessão, 401 é ela que venceu. Sem sessão (login, cadastro), é o que o servidor disse — "e-mail ou senha incorretos".
+    if (token) {
+      useSessaoAtende.getState().sair();
+      throw new ErroDaApi('Sessão expirada. Entre novamente.', 401);
+    }
+    throw new ErroDaApi(body?.error || 'Não foi possível entrar.', 401, body);
+  }
   if (!res.ok) throw new ErroDaApi(body?.error || `Erro ${res.status} ao comunicar com o servidor.`, res.status, body);
   return body as T;
 }

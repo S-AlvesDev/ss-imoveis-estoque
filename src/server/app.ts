@@ -24,6 +24,7 @@ import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normal
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { criarRouterAtende } from '../atende/server';
+import { criarRouterSevla } from './sevla';
 import { responderNaHome, responderNoPainel, confirmarPropostas, falantePelaSessao, sanearHistorico, registrarJatoba, perguntasNaHomeHoje, mensagensNoPainelNoMes, LIMITE_HOME_DIA, LIMITE_PAINEL_MES, TAMANHO_MAXIMO_DA_MENSAGEM, NOME as JATOBA } from './jatoba';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
 import { vigiarWhatsapp, vigiarWhatsappDasEmpresas, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores, apagarContasVencidas } from './rotinas';
@@ -307,7 +308,7 @@ export function createApp() {
   // O Atende Aí cuida do próprio corpo e do próprio limite de requisições (a
   // central atualiza por polling) — ver src/atende.
   // Tudo que não é dele passa por aqui como sempre.
-  const doAtende = (req: express.Request) => req.originalUrl.startsWith('/api/atende');
+  const doAtende = (req: express.Request) => req.originalUrl.startsWith('/api/atende') || req.originalUrl.startsWith('/api/sevla');
   const jsonDoEstoque = express.json({ limit: '64kb' });
   app.use((req, res, next) => (doAtende(req) ? next() : jsonDoEstoque(req, res, next)));
 
@@ -3911,6 +3912,11 @@ export function createApp() {
   // sessão, dados e regras próprias em src/atende. Esta é a única linha de
   // contato entre os dois no servidor.
   app.use('/api/atende', criarRouterAtende());
+
+  // --------------------------- SEVLA IDENTITY ---------------------------
+  // A identidade central da empresa-mãe: entrar uma vez, abrir cada produto
+  // com o token que ele já usa. Ver src/server/sevla.
+  app.use('/api/sevla', criarRouterSevla());
 
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
 

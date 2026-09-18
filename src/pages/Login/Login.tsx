@@ -10,6 +10,7 @@ import { PRODUTO } from '@/shared/produto';
 import { useAuth } from '@/store/auth';
 import { Link, ROTAS } from '@/app/router';
 import type { AuthUser } from '@/shared/types';
+import { entrarNaSevla, sessaoDoProduto, deveCairNoLoginAntigo } from '@/shared/sevlaNavegador';
 import { CriarConta } from './CriarConta';
 import { EsqueciSenha } from './EsqueciSenha';
 import { RedefinirSenha } from './RedefinirSenha';
@@ -33,19 +34,45 @@ export function Login({ modo }: { modo: ModoDeAcesso }) {
   const [loading, setLoading] = useState(false);
   const setSession = useAuth((s) => s.setSession);
 
+  const [semStok, setSemStok] = useState(false);
+
+  /** O login de sempre: matrícula ou e-mail direto na tabela do Stok Aí. */
+  async function entrarPeloStok() {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ matricula, senha }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'Falha ao entrar.');
+    setSession(body.user as AuthUser, body.token as string);
+    toast.success(`Bem-vindo(a), ${body.user.nome.split(' ')[0]}!`);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
+    setSemStok(false);
     try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matricula, senha }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Falha ao entrar.');
-      setSession(body.user as AuthUser, body.token as string);
-      toast.success(`Bem-vindo(a), ${body.user.nome.split(' ')[0]}!`);
+      // Com e-mail, a identidade é a SEVLA: entra uma vez e abre o Stok Aí com o token dele.
+      // Matrícula (ou a SEVLA indisponível) segue pelo caminho de sempre.
+      if (matricula.includes('@')) {
+        try {
+          const sevla = await entrarNaSevla(matricula.trim(), senha);
+          const emitida = await sessaoDoProduto(sevla.token, 'stok');
+          if (emitida.produto !== 'stok') throw new Error('Resposta inesperada.');
+          setSession(emitida.user as AuthUser, emitida.token);
+          toast.success(`Bem-vindo(a), ${emitida.user.nome.split(' ')[0]}!`);
+          return;
+        } catch (err) {
+          if (!deveCairNoLoginAntigo(err)) {
+            // A conta existe e a senha está certa — só não tem o Stok Aí.
+            setSemStok(true);
+            return;
+          }
+        }
+      }
+      await entrarPeloStok();
     } catch (err: any) {
       toast.error(err.message || 'Erro ao entrar.');
     } finally {
@@ -167,6 +194,20 @@ export function Login({ modo }: { modo: ModoDeAcesso }) {
                   Entrar
                 </Button>
               </form>
+              {semStok && (
+                <div className="mt-4 rounded-xl border border-amber-400/40 bg-amber-50 p-4 text-sm text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+                  <p className="font-bold">Sua conta SEVLA ainda não tem o Stok Aí.</p>
+                  <p className="mt-1">A conta existe (talvez pelo Atende Aí), mas nenhuma empresa sua usa o Stok Aí. Conheça os planos ou peça acesso ao administrador da sua empresa.</p>
+                  <div className="mt-3 flex flex-wrap gap-3 text-xs font-semibold">
+                    <a href="/#planos" className="text-[var(--brand)] hover:underline">
+                      Conhecer os planos
+                    </a>
+                    <a href="/cloud/conta" className="text-[var(--brand)] hover:underline">
+                      Ver minha SEVLA
+                    </a>
+                  </div>
+                </div>
+              )}
 
               <p className="mt-6 text-center text-sm text-[var(--text-muted)]">
                 Sua empresa ainda não usa o sistema?{' '}
