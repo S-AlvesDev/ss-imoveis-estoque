@@ -46,5 +46,15 @@ export default defineConfig(({ mode }) => {
         '@': path.resolve(__dirname, './src'),
       },
     },
+    // Dois produtos, duas entradas: o Stok Aí em index.html e o Atende Aí em
+    // atende.html. Bundles separados — mexer num não muda o outro.
+    build: {
+      rollupOptions: {
+        input: {
+          index: path.resolve(__dirname, 'index.html'),
+          atende: path.resolve(__dirname, 'atende.html'),
+        },
+      },
+    },
   };
 });

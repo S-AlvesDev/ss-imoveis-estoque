@@ -1,0 +1,40 @@
+/*
+ * O tema do Atende Aí: o mesmo esqueleto do Stok Aí (variáveis, Tailwind,
+ * scrollbar, animações — tudo de src/index.css) com a marca trocada. Os
+ * componentes de src/shared/ui leem `--brand`, `--surface`, `--sidebar-*`…
+ * e se vestem sozinhos. Azul-marinho profundo, roxo, violeta, lilás.
+ */
+@import '../../index.css';
+
+.atende {
+  --brand: #7c3aed;
+  --brand-deep: #6d28d9;
+  --brand-soft: #c4b5fd;
+  --amber: #7c3aed;
+  --amber-deep: #6d28d9;
+
+  --sidebar-bg: #0b1020;
+  --sidebar-bg-2: #141a3a;
+  --sidebar-border: rgba(196, 181, 253, 0.12);
+  --sidebar-text: #d9dcf0;
+  --sidebar-muted: #8a91b8;
+
+  /* O que só o Atende Aí usa. */
+  --navy: #0b1020;
+  --navy-2: #141a3a;
+  --violeta: #8b5cf6;
+  --lilas: #c4b5fd;
+  --gradiente: linear-gradient(135deg, #2e1065 0%, #4c1d95 35%, #6d28d9 70%, #7c3aed 100%);
+}
+
+.atende .bg-gradiente {
+  background: var(--gradiente);
+}
+
+/* Fundo navy com um brilho roxo no canto: login e supervisão. */
+.atende .fundo-navy {
+  background-color: var(--navy);
+  background-image:
+    radial-gradient(60% 50% at 80% 0%, rgba(124, 58, 237, 0.35), transparent 60%),
+    radial-gradient(40% 40% at 10% 100%, rgba(139, 92, 246, 0.18), transparent 60%);
+}

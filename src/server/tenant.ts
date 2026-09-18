@@ -66,7 +66,26 @@ export const TOKEN_FOLGA_S = 5 * 60;
 /** `iat` dois minutos no passado — ver clientePara. */
 const TOKEN_ATRASO_IAT_S = 120;
 
-const clientesPorOrg = new Map<string, { client: SupabaseClient; renovarEm: number }>();
+/**
+ * Como uma tabela é presa ao dono dela. O Stok Aí prende por
+ * `organization_id`; o Atende Aí (segundo produto, mesmo banco) prende por
+ * `empresa_id`. Cada produto passa o próprio escopo; sem escopo, vale o do
+ * estoque — exatamente como sempre foi.
+ */
+export interface Escopo {
+  /** A coluna que aponta para o dono: 'organization_id', 'empresa_id'. */
+  coluna: string;
+  /** A claim no token do PostgREST que as políticas de RLS leem. */
+  claim: string;
+  /** As tabelas que ganham filtro e carimbo automáticos. */
+  tabelas: ReadonlySet<string>;
+}
+
+export const ESCOPO_DA_ORGANIZACAO: Escopo = { coluna: 'organization_id', claim: 'organization_id', tabelas: TABELAS_DA_ORGANIZACAO };
+
+/** Um cliente por dono e por escopo: 'organization_id:<id>', 'empresa_id:<id>'. */
+const clientesPorDono = new Map<string, { client: SupabaseClient; renovarEm: number }>();
+const chaveDe = (id: string, escopo: Escopo) => `${escopo.claim}:${id}`;
 
 /**
  * O cliente de uma organização, guardado entre requisições — mas não para
@@ -76,8 +95,8 @@ const clientesPorOrg = new Map<string, { client: SupabaseClient; renovarEm: numb
  * em toda consulta: "JWT expired" em tudo, até a instância ser reciclada.
  * Aconteceu. Agora cada entrada sabe quando deve ser refeita, com folga.
  */
-function clientePara(organizationId: string, agora = Date.now()): SupabaseClient {
-  const cache = clientesPorOrg.get(organizationId);
+function clientePara(id: string, agora = Date.now(), escopo: Escopo = ESCOPO_DA_ORGANIZACAO): SupabaseClient {
+  const cache = clientesPorDono.get(chaveDe(id, escopo));
   if (cache && agora < cache.renovarEm) return cache.client;
 
   let client: SupabaseClient;
@@ -93,7 +112,7 @@ function clientePara(organizationId: string, agora = Date.now()): SupabaseClient
     // é contado a partir do iat, então vence antes de uma hora daqui — e a
     // renovação desconta isso também.
     const iat = Math.floor(agora / 1000) - TOKEN_ATRASO_IAT_S;
-    const token = jwt.sign({ role: 'authenticated', organization_id: organizationId, iat }, SUPABASE_JWT_SECRET, { expiresIn: TOKEN_VALIDADE_S });
+    const token = jwt.sign({ role: 'authenticated', [escopo.claim]: id, iat }, SUPABASE_JWT_SECRET, { expiresIn: TOKEN_VALIDADE_S });
     client = createClient(SUPABASE_URL, ANON_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
       global: { headers: { Authorization: `Bearer ${token}` } },
@@ -106,17 +125,17 @@ function clientePara(organizationId: string, agora = Date.now()): SupabaseClient
     });
   }
 
-  clientesPorOrg.set(organizationId, { client, renovarEm });
+  clientesPorDono.set(chaveDe(id, escopo), { client, renovarEm });
   return client;
 }
 
-/** Quando o cliente desta organização vai ser refeito (Infinity fora do modo RLS). Para os testes. */
-export function renovacaoDoCliente(organizationId: string): number | null {
-  return clientesPorOrg.get(organizationId)?.renovarEm ?? null;
+/** Quando o cliente deste dono vai ser refeito (Infinity fora do modo RLS). Para os testes. */
+export function renovacaoDoCliente(id: string, escopo: Escopo = ESCOPO_DA_ORGANIZACAO): number | null {
+  return clientesPorDono.get(chaveDe(id, escopo))?.renovarEm ?? null;
 }
 
-function comOrganizacao<T>(payload: T, organizationId: string): T {
-  const marcar = (row: any) => ({ ...row, organization_id: organizationId });
+function comDono<T>(payload: T, id: string, coluna: string): T {
+  const marcar = (row: any) => ({ ...row, [coluna]: id });
   return (Array.isArray(payload) ? payload.map(marcar) : marcar(payload)) as T;
 }
 
@@ -125,14 +144,15 @@ function comOrganizacao<T>(payload: T, organizationId: string): T {
  * encadeadas como antes — `.select().eq().order().single()` —, mas já nascem
  * filtradas, e as escritas já nascem marcadas.
  */
-export function scopedDb(organizationId: string, agora = Date.now()) {
-  if (!organizationId) {
-    // Sem organização não existe consulta válida. Falhar aqui é melhor que
+export function scopedDb(id: string, agora = Date.now(), escopo: Escopo = ESCOPO_DA_ORGANIZACAO) {
+  if (!id) {
+    // Sem dono não existe consulta válida. Falhar aqui é melhor que
     // devolver dado de todo mundo.
     throw new Error('[tenant] organização ausente — consulta recusada.');
   }
 
-  const client = clientePara(organizationId, agora);
+  const client = clientePara(id, agora, escopo);
+  const { coluna } = escopo;
 
   return {
     /** Escapatória explícita, para o que é global de verdade (ex.: organizations). */
@@ -140,7 +160,7 @@ export function scopedDb(organizationId: string, agora = Date.now()) {
 
     from(table: string) {
       const base = client.from(table);
-      const daOrg = TABELAS_DA_ORGANIZACAO.has(table);
+      const daOrg = escopo.tabelas.has(table);
 
       // O retorno é `any` de propósito. O cliente do Supabase aqui não tem
       // schema tipado, então as consultas originais já devolviam `any`; tipar
@@ -149,21 +169,21 @@ export function scopedDb(organizationId: string, agora = Date.now()) {
       return {
         select: (colunas = '*', opcoes?: any): any => {
           const q = base.select(colunas, opcoes);
-          return daOrg ? q.eq('organization_id', organizationId) : q;
+          return daOrg ? q.eq(coluna, id) : q;
         },
-        insert: (linhas: any): any => base.insert(daOrg ? comOrganizacao(linhas, organizationId) : linhas),
+        insert: (linhas: any): any => base.insert(daOrg ? comDono(linhas, id, coluna) : linhas),
         // O saldo por depósito é gravado por upsert: a linha pode já existir
         // (material antigo) ou não (depósito recém-criado), e o caminho tem que
         // ser o mesmo nos dois casos.
         upsert: (linhas: any, opcoes?: any): any =>
-          base.upsert(daOrg ? comOrganizacao(linhas, organizationId) : linhas, opcoes),
+          base.upsert(daOrg ? comDono(linhas, id, coluna) : linhas, opcoes),
         update: (patch: any): any => {
           const q = base.update(patch);
-          return daOrg ? q.eq('organization_id', organizationId) : q;
+          return daOrg ? q.eq(coluna, id) : q;
         },
         delete: (): any => {
           const q = base.delete();
-          return daOrg ? q.eq('organization_id', organizationId) : q;
+          return daOrg ? q.eq(coluna, id) : q;
         },
       };
     },

@@ -7,7 +7,15 @@
       "destination": "/api"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/atende",
+      "destination": "/atende.html"
+    },
+    {
+      "source": "/atende/:path*",
+      "destination": "/atende.html"
+    },
+    {
+      "source": "/((?!api/|atende).*)",
       "destination": "/index.html"
     }
   ],

@@ -23,6 +23,7 @@ import { contasParaLembrar, emailDeLembrete, marcarLembrete } from './lembretes'
 import { evolutionConfigurada, lerEvento, enviarTexto, estadoDaInstancia, normalizarTelefone, baixarMidia, criarInstancia, qrDaInstancia, apagarInstancia, mostrarDigitando } from './evolution';
 import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
+import { criarRouterAtende } from '../atende/server';
 import { responderNaHome, responderNoPainel, confirmarPropostas, falantePelaSessao, sanearHistorico, registrarJatoba, perguntasNaHomeHoje, mensagensNoPainelNoMes, LIMITE_HOME_DIA, LIMITE_PAINEL_MES, TAMANHO_MAXIMO_DA_MENSAGEM, NOME as JATOBA } from './jatoba';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
 import { vigiarWhatsapp, vigiarWhatsappDasEmpresas, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores, apagarContasVencidas } from './rotinas';
@@ -3877,6 +3878,12 @@ export function createApp() {
       res.status(500).json({ error: 'Erro ao salvar acessos.' });
     }
   });
+
+  // --------------------------- ATENDE AÍ ---------------------------
+  // O segundo produto da casa, montado aqui como um bloco fechado: rotas,
+  // sessão, dados e regras próprias em src/atende. Esta é a única linha de
+  // contato entre os dois no servidor.
+  app.use('/api/atende', criarRouterAtende());
 
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
