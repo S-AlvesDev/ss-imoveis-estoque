@@ -166,7 +166,7 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
   }
 
   const barra = (
-    <aside className="relative flex h-full w-64 flex-col overflow-hidden border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)] text-[var(--sidebar-text)]">
+    <aside className="relative flex h-full w-64 flex-col overflow-hidden border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)] pt-[env(safe-area-inset-top)] text-[var(--sidebar-text)]">
       <div className="grain pointer-events-none absolute inset-0 opacity-[0.25]" />
       {/* O brilho que sobe do canto — violeta, a cor da casa aqui. */}
       <div className="pointer-events-none absolute -bottom-32 -left-24 h-80 w-80 rounded-full bg-[var(--brand)]/25 blur-3xl" />
@@ -271,7 +271,8 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
         )}
       </AnimatePresence>
       <div className="min-w-0 flex-1">
-        <header className="flex h-[57px] shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 lg:hidden">
+        {/* No app instalado no iPhone o conteúdo passa por baixo da barra de status: o cabeçalho desce o safe-area. */}
+        <header className="flex h-[calc(57px+env(safe-area-inset-top))] shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 pt-[env(safe-area-inset-top)] lg:hidden">
           <button type="button" onClick={() => setGavetaAberta(true)} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-2)]" aria-label="Abrir menu">
             <Menu size={20} />
           </button>

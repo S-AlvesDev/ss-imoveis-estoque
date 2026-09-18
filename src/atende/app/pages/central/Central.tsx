@@ -124,7 +124,7 @@ export function Central({ conversaId }: { conversaId: string | null }) {
       {aberta && fichaMovel && (
         <div className="fixed inset-0 z-50 xl:hidden">
           <div className="absolute inset-0 bg-slate-950/50 backdrop-blur-sm" onClick={() => setFichaMovel(false)} />
-          <div className="absolute inset-y-0 right-0 flex w-[min(24rem,94vw)] flex-col bg-[var(--surface)] shadow-2xl">
+          <div className="absolute inset-y-0 right-0 flex w-[min(24rem,94vw)] flex-col bg-[var(--surface)] pt-[env(safe-area-inset-top)] shadow-2xl">
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
               <p className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Ficha do cliente</p>
               <button type="button" onClick={() => setFichaMovel(false)} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-2)]" aria-label="Fechar">

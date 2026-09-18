@@ -47,7 +47,7 @@ export default function App() {
     return (
       <>
         <Acesso tela={tela} />
-        <Toaster position="top-center" richColors />
+        <Toaster position="top-center" richColors mobileOffset={{ top: "calc(16px + env(safe-area-inset-top, 0px))" }} />
       </>
     );
   }
@@ -60,7 +60,7 @@ export default function App() {
   return (
     <>
       <Dentro tela={tela} resto={resto} />
-      <Toaster position="top-right" richColors />
+      <Toaster position="top-right" richColors mobileOffset={{ top: "calc(16px + env(safe-area-inset-top, 0px))" }} />
     </>
   );
 }

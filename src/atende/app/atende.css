@@ -44,10 +44,12 @@
  * ------------------------------------------------------------------------- */
 
 /* A altura que a Central ocupa: a tela inteira menos o cabeçalho do celular
- * (57px: botão do menu + marca + borda). No desktop (lg) não há cabeçalho.
- * dvh acompanha a barra do navegador que aparece e some; vh é o fallback. */
+ * (57px: botão do menu + marca + borda — mais a barra de status, quando o
+ * app instalado no iPhone desenha por baixo dela). No desktop (lg) não há
+ * cabeçalho. dvh acompanha a barra do navegador que aparece e some; vh é o
+ * fallback. */
 .atende {
-  --atende-topo: 57px;
+  --atende-topo: calc(57px + env(safe-area-inset-top, 0px));
 }
 @media (min-width: 1024px) {
   .atende {
