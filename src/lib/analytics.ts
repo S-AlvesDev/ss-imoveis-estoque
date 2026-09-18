@@ -17,7 +17,9 @@ export type Evento =
   | 'assinatura_confirmada' // voltou do checkout com a assinatura ativa
   | 'jatoba_abrir' // abriu o assistente, em qual porta (home/painel)
   | 'jatoba_pergunta' // mandou uma pergunta
-  | 'cloud_cta'; // clique num botão do Cloud Aí (qual, em `alvo`)
+  | 'cloud_cta' // (antigo) clique num botão do Cloud Aí
+  | 'sevla_cta' // clique num botão da página da SEVLA INFINITY (qual, em `alvo`)
+  | 'atende_cta'; // clique num botão da vitrine do Atende Aí (landing e planos)
 
 type Props = Record<string, string | number | boolean>;
 

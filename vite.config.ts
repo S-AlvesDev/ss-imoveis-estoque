@@ -19,7 +19,7 @@ function siteUrl(url: string): Plugin {
     transformIndexHtml: (html) => html.replaceAll('%SITE_URL%', base),
     generateBundle() {
       const hoje = new Date().toISOString().slice(0, 10);
-      const paginas = ['/', '/entrar', '/criar-conta', '/cloud'];
+      const paginas = ['/', '/entrar', '/criar-conta', '/atende', '/atende/planos', '/cloud'];
       this.emitFile({
         type: 'asset',
         fileName: 'sitemap.xml',
@@ -47,13 +47,13 @@ export default defineConfig(({ mode }) => {
       },
     },
     // Três entradas: o Stok Aí em index.html, o Atende Aí em atende.html e a
-    // casa (Cloud Aí) em cloud.html. Bundles separados — mexer num não muda o outro.
+    // SEVLA INFINITY (a empresa-mãe, servida em /cloud) em sevla.html. Bundles separados — mexer num não muda o outro.
     build: {
       rollupOptions: {
         input: {
           index: path.resolve(__dirname, 'index.html'),
           atende: path.resolve(__dirname, 'atende.html'),
-          cloud: path.resolve(__dirname, 'cloud.html'),
+          sevla: path.resolve(__dirname, 'sevla.html'),
         },
       },
     },

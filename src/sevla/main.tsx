@@ -1,12 +1,12 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Analytics } from '@vercel/analytics/react';
-import { Cloud } from './Cloud';
-import './cloud.css';
+import { Sevla } from './Sevla';
+import './sevla.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Cloud />
+    <Sevla />
     <Analytics />
   </StrictMode>,
 );

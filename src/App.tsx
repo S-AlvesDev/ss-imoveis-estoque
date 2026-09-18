@@ -262,7 +262,7 @@ export default function App() {
   else if (path === ROTAS.privacidade) tela = <Legal documento="privacidade" />;
   else if (user && path === ROTAS.assinaturaRetorno) tela = <RetornoAssinatura />;
   else if (user) tela = <InventoryApp role={user.role} />;
-  else if (path === ROTAS.entrar) tela = <Login modo="entrar" />;
+  else if (path === ROTAS.entrar || path === ROTAS.login) tela = <Login modo="entrar" />;
   else if (path === ROTAS.criarConta) tela = <Login modo="criar" />;
   else if (path === ROTAS.esqueciSenha) tela = <Login modo="esqueci" />;
   else if (path === ROTAS.redefinirSenha) tela = <Login modo="redefinir" />;

@@ -4,6 +4,8 @@ import { motion } from 'motion/react';
 import { RefreshCw } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Acesso } from './pages/Acesso';
+import { Landing } from './pages/Landing';
+import { Planos } from './pages/Planos';
 import { Empresa } from './pages/Empresa';
 import { Times } from './pages/Times';
 import { Equipe } from './pages/Equipe';
@@ -30,15 +32,32 @@ export default function App() {
   const sessao = useSessaoAtende((s) => s.sessao);
   const { tela, resto } = lerCaminho(path);
 
-  // Raiz (/atende) e caminho desconhecido: para onde faz sentido.
+  // Raiz (/atende) e caminho desconhecido: quem já entrou vai para dentro; quem não, vê a landing.
   useEffect(() => {
-    if (tela) return;
-    ir(sessao ? primeiraTela(sessao.papel) : TELAS.entrar);
+    if (tela || !sessao) return;
+    ir(primeiraTela(sessao.papel));
   }, [tela, sessao, ir]);
 
-  if (!tela) return null;
+  if (!tela) {
+    if (sessao) return null;
+    return (
+      <>
+        <Landing />
+        <Toaster position="top-center" richColors />
+      </>
+    );
+  }
 
   if (TELAS_PUBLICAS.includes(tela)) {
+    // Planos é público para todo mundo, logado ou não.
+    if (tela === TELAS.planos) {
+      return (
+        <>
+          <Planos />
+          <Toaster position="top-center" richColors />
+        </>
+      );
+    }
     // Logado numa tela pública (menos redefinir senha, que pode vir de link): vai para dentro.
     if (sessao && tela !== TELAS.redefinirSenha) {
       ir(primeiraTela(sessao.papel));

@@ -15,8 +15,9 @@ async function startServer() {
   // atende.html; na Vercel isso é um rewrite em vercel.json. Aqui, o mesmo.
   // Caminho com extensão (/atende/logo.png) é arquivo de public/atende, não tela.
   const ehAtende = (p: string) => p === '/atende' || (p.startsWith('/atende/') && !/\.[a-z0-9]+$/i.test(p));
-  const ehCloud = (p: string) => p === '/cloud' || (p.startsWith('/cloud/') && !/\.[a-z0-9]+$/i.test(p));
-  const entradaDe = (p: string) => (ehAtende(p) ? '/atende.html' : ehCloud(p) ? '/cloud.html' : null);
+  // A SEVLA INFINITY (empresa-mãe) mora em /cloud — a rota da antiga vitrine, mantida para os links não quebrarem.
+  const ehSevla = (p: string) => p === '/cloud' || (p.startsWith('/cloud/') && !/\.[a-z0-9]+$/i.test(p));
+  const entradaDe = (p: string) => (ehAtende(p) ? '/atende.html' : ehSevla(p) ? '/sevla.html' : null);
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use((req, _res, next) => {

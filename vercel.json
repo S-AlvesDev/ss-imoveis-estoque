@@ -16,11 +16,11 @@
     },
     {
       "source": "/cloud",
-      "destination": "/cloud.html"
+      "destination": "/sevla.html"
     },
     {
       "source": "/cloud/:path*",
-      "destination": "/cloud.html"
+      "destination": "/sevla.html"
     },
     {
       "source": "/((?!api/|atende|cloud).*)",

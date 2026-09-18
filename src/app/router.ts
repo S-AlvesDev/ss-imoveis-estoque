@@ -8,6 +8,8 @@ import { create } from 'zustand';
 export const ROTAS = {
   home: '/',
   entrar: '/entrar',
+  /** Alias de /entrar: é o endereço que a SEVLA e as pessoas usam de cabeça. */
+  login: '/login',
   criarConta: '/criar-conta',
   esqueciSenha: '/esqueci-senha',
   /** Chega por link de e-mail, com ?token=... */

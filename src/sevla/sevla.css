@@ -1,0 +1,173 @@
+/*
+ * O tema da SEVLA INFINITY — a empresa-mãe. Herda o esqueleto de
+ * src/index.css (Tailwind, reset, scrollbar) e veste a identidade própria:
+ * fundo #0B0F17, grafite, primária índigo, gradiente azul → violeta (o do
+ * símbolo), Sora nos títulos e Inter no texto. Tudo aqui é escopado em
+ * `.sevla` para não vazar para os produtos.
+ */
+@import '../index.css';
+
+.sevla {
+  --fundo: #0b0f17;
+  --fundo-2: #0f1522;
+  --grafite: #1f2937;
+  --primaria: #6366f1;
+  --primaria-clara: #818cf8;
+  --violeta: #8b5cf6;
+  --azul: #3b82f6;
+  --suave: #64748b;
+  --clara: #f8fafc;
+  --texto: #e5e7eb;
+  --texto-suave: #94a3b8;
+  --linha: rgba(148, 163, 184, 0.14);
+  --brand: #6366f1;
+  --font-display: 'Sora', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  color-scheme: dark;
+  background-color: var(--fundo);
+  color: var(--texto);
+  overflow-x: clip;
+}
+
+.sevla h1,
+.sevla h2,
+.sevla h3,
+.sevla .font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+/* O gradiente da casa: azul → índigo → violeta, como o símbolo. */
+.sevla .texto-gradiente {
+  background: linear-gradient(92deg, #60a5fa 0%, #818cf8 45%, #a78bfa 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.sevla .fundo-gradiente {
+  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 50%, #8b5cf6 100%);
+}
+
+/* Luz ambiente controlada: um foco índigo no alto, um violeta embaixo. Sem neon. */
+.sevla .luz {
+  background-image:
+    radial-gradient(ellipse 55% 40% at 50% 0%, rgba(99, 102, 241, 0.22), transparent 65%),
+    radial-gradient(ellipse 40% 30% at 85% 110%, rgba(139, 92, 246, 0.12), transparent 60%);
+}
+.sevla .luz-suave {
+  background-image: radial-gradient(ellipse 60% 50% at 50% 100%, rgba(99, 102, 241, 0.14), transparent 65%);
+}
+
+/* A malha fina de fundo, quase imperceptível. */
+.sevla .malha {
+  background-image: linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, #000 30%, transparent 100%);
+}
+
+/* Pontinhos decorativos, como marcas de registro. */
+.sevla .pontos {
+  background-image: radial-gradient(rgba(148, 163, 184, 0.35) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+/* O cartão da casa: superfície grafite translúcida, borda fina, brilho no hover. */
+.sevla .cartao {
+  background: linear-gradient(180deg, rgba(31, 41, 55, 0.55), rgba(15, 21, 34, 0.75));
+  border: 1px solid var(--linha);
+  transition:
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.35s ease,
+    box-shadow 0.35s ease;
+}
+.sevla .cartao:hover {
+  transform: translateY(-4px);
+  border-color: rgba(129, 140, 248, 0.45);
+  box-shadow: 0 24px 60px -30px rgba(99, 102, 241, 0.55);
+}
+
+/* A borda gradiente (só a borda), para o cartão em destaque. */
+.sevla .borda-gradiente {
+  position: relative;
+}
+.sevla .borda-gradiente::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.9), rgba(99, 102, 241, 0.9), rgba(167, 139, 250, 0.9));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* O brilho que sobe do rodapé de um cartão, como no protótipo — discreto. */
+.sevla .brilho-inferior {
+  position: relative;
+  overflow: hidden;
+}
+.sevla .brilho-inferior::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 -40% 0;
+  height: 70%;
+  background: radial-gradient(ellipse 60% 60% at 50% 100%, rgba(99, 102, 241, 0.35), transparent 70%);
+  pointer-events: none;
+}
+
+.sevla :focus-visible {
+  outline: 2px solid var(--primaria-clara);
+  outline-offset: 2px;
+}
+
+.sevla [id] {
+  scroll-margin-top: 84px;
+}
+
+/* Um gradiente que respira, bem devagar. */
+@keyframes sevla-respirar {
+  0%,
+  100% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+.sevla .respira {
+  animation: sevla-respirar 9s ease-in-out infinite;
+}
+@keyframes sevla-flutuar {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+.sevla .flutua {
+  animation: sevla-flutuar 7s ease-in-out infinite;
+}
+/* As linhas da malha de nós "correm": um traço que percorre o caminho. */
+@keyframes sevla-percorrer {
+  to {
+    stroke-dashoffset: -400;
+  }
+}
+.sevla .percorre {
+  stroke-dasharray: 6 394;
+  animation: sevla-percorrer 8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sevla .respira,
+  .sevla .flutua,
+  .sevla .percorre {
+    animation: none;
+  }
+}
