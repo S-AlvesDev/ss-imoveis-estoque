@@ -11,7 +11,8 @@ import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, v
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
 import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa } from './whatsapp';
-import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, ErroDeConversa, type Filtro } from './conversas';
+import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, ErroDeConversa, type Filtro } from './conversas';
+import { simular } from './triagem';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
 
 /**
@@ -23,7 +24,7 @@ import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '
  * acontecem antes de existir empresa no contexto — como no Stok Aí.
  */
 
-const EMPRESA_COLUNAS = 'id, nome, slug, segmento, descricao, produtos_servicos, informacoes_ia, faq, horario_atendimento, regras_atendimento, mensagem_fora_do_horario, criado_em';
+const EMPRESA_COLUNAS = 'id, nome, slug, segmento, descricao, produtos_servicos, informacoes_ia, faq, horario_atendimento, regras_atendimento, mensagem_fora_do_horario, triagem_ativa, responde_fora_do_horario, criado_em';
 const USUARIO_COLUNAS = 'id, nome, email, papel, ativo, presenca, presenca_em, ultimo_acesso, criado_em';
 
 /** E-mail vira padrão de ilike sem curingas: % e _ escapados. */
@@ -581,6 +582,45 @@ export function criarRouterAtende(): express.Router {
       res.json({ conversa: await definirEtiquetas(req, req.params.id, req.body?.etiquetas) });
     } catch (err: any) {
       tratar(res, err, 'PUT /api/atende/conversas/:id/etiquetas', 'Não foi possível salvar as etiquetas.');
+    }
+  });
+
+  // ---- A triagem da IA e o lead (Etapa 3)
+  r.get('/conversas/:id/triagem', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await triagemDaConversa(req, req.params.id));
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/conversas/:id/triagem', 'Erro ao carregar a triagem.');
+    }
+  });
+
+  /** Supervisor/admin: o setor certo é outro. */
+  r.post('/conversas/:id/triagem/corrigir', exigir('conversas.supervisionar'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ conversa: await corrigirTriagem(req, req.params.id, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/triagem/corrigir', 'Não foi possível corrigir a triagem.');
+    }
+  });
+
+  r.patch('/conversas/:id/lead', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ lead: await atualizarLead(req, req.params.id, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'PATCH /api/atende/conversas/:id/lead', 'Não foi possível atualizar o lead.');
+    }
+  });
+
+  /** O administrador testa a triagem com uma mensagem inventada: nada é gravado nem enviado. */
+  const simularLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `e:${(req as RequisicaoAtende).sessao?.empresa_id ?? ipKeyGenerator(req.ip ?? '')}`, message: { error: 'Muitas simulações nesta hora. Aguarde um pouco.' } });
+  r.post('/triagem/simular', exigir('empresa.gerir'), simularLimiter, async (req: RequisicaoAtende, res) => {
+    try {
+      const texto = String(req.body?.texto ?? '').trim().slice(0, 2000);
+      if (!texto) return res.status(400).json({ error: 'Escreva a mensagem do cliente para simular.' });
+      res.json(await simular(req.sessao!.empresa_id, texto, typeof req.body?.nome === 'string' ? req.body.nome.slice(0, 80) : null));
+    } catch (err: any) {
+      console.error('[POST /api/atende/triagem/simular] erro:', err.message);
+      res.status(502).json({ error: `A IA não respondeu: ${String(err.message).slice(0, 200)}` });
     }
   });
 

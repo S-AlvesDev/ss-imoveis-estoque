@@ -3,6 +3,7 @@ import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baix
 import { siteUrl } from '../../server/senha';
 import { lerEventoDoAtende, previaDe, type MensagemDoWhatsApp, type AtualizacaoDeStatus, type AtualizacaoDeConexao } from './eventos';
 import { caminhoDaMidia, guardarMidia } from './midias';
+import { triar, triagemAtiva } from './triagem';
 import type { Conexao, EstadoDaConexao, StatusDaMensagem } from '../shared/tipos';
 
 /**
@@ -194,11 +195,12 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   let { data: conversa } = await supabaseServer.from('atende_conversas').select('id, estado, nao_lidas, primeira_resposta_em').eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
   let nova = false;
   if (!conversa) {
-    // Cliente escreveu: entra na fila (a triagem da IA, na Etapa 3, passa por 'em_triagem' antes).
+    // Cliente escreveu: nasce 'nova' para a IA triar (ou direto na fila, se a empresa desligou a triagem).
     // A empresa escreveu primeiro pelo celular: alguém já está atendendo por lá.
+    const estadoInicial = e.fromMe ? 'em_atendimento' : (await triagemAtiva(empresaId)) ? 'nova' : 'na_fila';
     const { data: criada, error } = await supabaseServer
       .from('atende_conversas')
-      .insert({ empresa_id: empresaId, cliente_id: cliente.id, conexao_id: conexao.id, estado: e.fromMe ? 'em_atendimento' : 'na_fila', aberta_em: agora, ultima_mensagem_em: agora })
+      .insert({ empresa_id: empresaId, cliente_id: cliente.id, conexao_id: conexao.id, estado: estadoInicial, aberta_em: agora, ultima_mensagem_em: agora })
       .select('id, estado, nao_lidas, primeira_resposta_em')
       .single();
     if (error || !criada) {
@@ -254,13 +256,17 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
     if (conversa.estado === 'aguardando_cliente') patch.estado = 'em_atendimento';
   } else if (!conversa.primeira_resposta_em) {
     patch.primeira_resposta_em = agora;
-    if (conversa.estado === 'na_fila') patch.estado = 'em_atendimento';
+    // Alguém respondeu pelo celular: a conversa é dessa pessoa, a triagem não precisa continuar.
+    if (conversa.estado === 'na_fila' || conversa.estado === 'nova' || conversa.estado === 'em_triagem') patch.estado = 'em_atendimento';
   }
   await supabaseServer.from('atende_conversas').update(patch).eq('id', conversa.id);
   if (nova) await supabaseServer.from('atende_eventos').insert({ empresa_id: empresaId, conversa_id: conversa.id, tipo: 'aberta', dados: { por: e.fromMe ? 'aparelho' : 'cliente' } });
 
-  // ---- O arquivo, por último: a mensagem já existe mesmo que o download falhe.
+  // ---- O arquivo: a mensagem já existe mesmo que o download falhe.
   if (e.temArquivo) await baixarArquivoDaMensagem(conexao, empresaId, conversa.id, mensagem.id, e);
+
+  // ---- A triagem da IA: só para o que o cliente mandou, e só enquanto ninguém da equipe está na conversa.
+  if (!e.fromMe && (conversa.estado === 'nova' || conversa.estado === 'em_triagem')) await triar(conversa.id, mensagem.id);
   return true;
 }
 

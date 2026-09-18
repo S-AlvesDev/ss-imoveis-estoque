@@ -69,6 +69,8 @@ export interface DadosDaEmpresa {
   horario_atendimento?: HorarioDeAtendimento;
   regras_atendimento?: string | null;
   mensagem_fora_do_horario?: string | null;
+  triagem_ativa?: boolean;
+  responde_fora_do_horario?: boolean;
 }
 
 /** O PATCH da empresa: só o que veio é validado e devolvido; o resto fica como está. */
@@ -86,6 +88,8 @@ export function validarEmpresa(body: unknown): Validado<DadosDaEmpresa> {
   if (b.informacoes_ia !== undefined) d.informacoes_ia = texto(b.informacoes_ia, 4000);
   if (b.regras_atendimento !== undefined) d.regras_atendimento = texto(b.regras_atendimento, 2000);
   if (b.mensagem_fora_do_horario !== undefined) d.mensagem_fora_do_horario = texto(b.mensagem_fora_do_horario, 500);
+  if (b.triagem_ativa !== undefined) d.triagem_ativa = b.triagem_ativa === true;
+  if (b.responde_fora_do_horario !== undefined) d.responde_fora_do_horario = b.responde_fora_do_horario === true;
   if (b.faq !== undefined) {
     if (!Array.isArray(b.faq) || b.faq.length > 50) return { ok: false, erro: 'A lista de perguntas frequentes é inválida (máximo 50).' };
     const faq: PerguntaFrequente[] = [];

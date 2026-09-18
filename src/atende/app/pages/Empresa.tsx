@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { Plus, Save, Sparkles, Trash2 } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Card, CardHeader } from '@/shared/ui/Card';
 import { Input, Textarea } from '@/shared/ui/Field';
 import { api, ErroDaApi } from '../lib/api';
 import { useDadosAtende } from '../store/dados';
 import { DIAS_DA_SEMANA, NOME_DO_DIA, type Empresa as TEmpresa, type HorarioDeAtendimento, type PerguntaFrequente } from '../../shared/tipos';
+import { SimuladorDaTriagem } from './SimuladorDaTriagem';
 
 /**
  * A empresa: o que ela é e o que a IA vai saber. Tudo que a triagem usa
@@ -35,6 +36,8 @@ export function Empresa() {
         informacoes_ia: form.informacoes_ia,
         regras_atendimento: form.regras_atendimento,
         mensagem_fora_do_horario: form.mensagem_fora_do_horario,
+        triagem_ativa: form.triagem_ativa,
+        responde_fora_do_horario: form.responde_fora_do_horario,
         faq: form.faq.filter((f) => f.pergunta.trim() || f.resposta.trim()),
         horario_atendimento: form.horario,
       });
@@ -116,12 +119,41 @@ export function Empresa() {
         <Textarea label="Mensagem fora do horário" rows={2} value={form.mensagem_fora_do_horario} onChange={(e) => campo('mensagem_fora_do_horario', e.target.value)} placeholder="Ex.: Olá! Nosso atendimento é de segunda a sexta, das 8h às 18h. Deixe sua mensagem e retornamos assim que abrirmos." maxLength={500} />
       </Card>
 
+      <Card className="space-y-4 p-5">
+        <CardHeader icon={<Sparkles size={14} />} title="Triagem da IA" />
+        <p className="text-sm text-[var(--text-muted)]">A IA lê cada conversa nova, escolhe o setor e a prioridade, resume para o atendente e dá uma primeira resposta. Ela nunca vende nem negocia — só encaminha.</p>
+        <div className="space-y-2">
+          <Interruptor ligado={form.triagem_ativa} onChange={(v) => campo('triagem_ativa', v)} titulo="Triagem ligada" descricao="Desligada, toda conversa nova cai direto na fila geral, sem setor, e a IA não fala com o cliente." />
+          <Interruptor ligado={form.responde_fora_do_horario} onChange={(v) => campo('responde_fora_do_horario', v)} titulo="Responder fora do horário" descricao="Fora do horário, a IA ainda tria e manda a mensagem de fora do horário (abaixo). Desligado, ela tria em silêncio e o cliente só ouve a equipe quando abrir." />
+        </div>
+        <div>
+          <p className="mb-1.5 flex items-center gap-1 text-xs font-bold text-[var(--text)]">
+            <Sparkles size={12} className="text-[var(--brand)]" /> Testar a triagem
+          </p>
+          <SimuladorDaTriagem />
+        </div>
+      </Card>
+
       <div className="flex justify-end">
         <Button type="submit" loading={salvando} icon={<Save size={15} />}>
           Salvar
         </Button>
       </div>
     </form>
+  );
+}
+
+function Interruptor({ ligado, onChange, titulo, descricao }: { ligado: boolean; onChange: (v: boolean) => void; titulo: string; descricao: string }) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-3">
+      <button type="button" role="switch" aria-checked={ligado} onClick={() => onChange(!ligado)} className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors ${ligado ? 'bg-[var(--brand)]' : 'bg-[var(--border)]'}`}>
+        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${ligado ? 'left-[22px]' : 'left-0.5'}`} />
+      </button>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-[var(--text)]">{titulo}</span>
+        <span className="block text-xs text-[var(--text-muted)]">{descricao}</span>
+      </span>
+    </label>
   );
 }
 
@@ -136,6 +168,8 @@ function paraForm(e: TEmpresa) {
     informacoes_ia: e.informacoes_ia ?? '',
     regras_atendimento: e.regras_atendimento ?? '',
     mensagem_fora_do_horario: e.mensagem_fora_do_horario ?? '',
+    triagem_ativa: e.triagem_ativa !== false,
+    responde_fora_do_horario: e.responde_fora_do_horario !== false,
     faq: (e.faq ?? []) as PerguntaFrequente[],
     horario,
   };

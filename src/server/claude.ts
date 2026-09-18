@@ -91,7 +91,7 @@ interface RespostaDaApi {
   model?: string;
 }
 
-async function chamar(args: { system: string | BlocoDeSistema[]; messages: MensagemDoChat[]; tools: Ferramenta[]; env: AmbienteClaude; maxTokens: number; esforco?: Esforco }): Promise<RespostaDaApi> {
+async function chamar(args: { system: string | BlocoDeSistema[]; messages: MensagemDoChat[]; tools: Ferramenta[]; env: AmbienteClaude; maxTokens: number; esforco?: Esforco; forcarFerramenta?: string }): Promise<RespostaDaApi> {
   const modelo = args.env.ASSISTENTE_MODELO || MODELO_PADRAO;
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -102,6 +102,8 @@ async function chamar(args: { system: string | BlocoDeSistema[]; messages: Mensa
       system: args.system,
       messages: args.messages,
       tools: args.tools.length ? args.tools : undefined,
+      // Obriga o modelo a responder chamando esta ferramenta: é como se obtém uma resposta estruturada.
+      tool_choice: args.forcarFerramenta ? { type: 'tool', name: args.forcarFerramenta } : undefined,
       output_config: args.esforco && aceitaEsforco(modelo) ? { effort: args.esforco } : undefined,
     }),
   });
@@ -133,6 +135,11 @@ export async function conversar(args: {
   maxTokens?: number;
   /** Sem informar, o modelo usa o padrão dele (alto). Os tokens de raciocínio são cobrados como saída. */
   esforco?: Esforco;
+  /**
+   * Obriga a primeira resposta a ser uma chamada desta ferramenta (classificação, extração).
+   * O laço para aí: o resultado é o `input` da chamada, em `chamadas[0]`.
+   */
+  forcarFerramenta?: string;
 }): Promise<ResultadoDoChat> {
   const env = args.env ?? (process.env as AmbienteClaude);
   if (!claudeConfigurado(env)) throw new Error('ANTHROPIC_API_KEY não configurada.');
@@ -142,7 +149,7 @@ export async function conversar(args: {
   let texto = '';
 
   for (let rodada = 0; rodada < (args.maxRodadas ?? 6); rodada++) {
-    const resposta = await chamar({ system: args.system, messages, tools: args.tools, env, maxTokens: args.maxTokens ?? 400, esforco: args.esforco });
+    const resposta = await chamar({ system: args.system, messages, tools: args.tools, env, maxTokens: args.maxTokens ?? 400, esforco: args.esforco, forcarFerramenta: rodada === 0 ? args.forcarFerramenta : undefined });
     const u = resposta.usage ?? {};
     uso.tokens_entrada += (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
     uso.tokens_cache += u.cache_read_input_tokens ?? 0;
@@ -154,6 +161,11 @@ export async function conversar(args: {
     if (textos.length) texto = textos.join('\n');
 
     if (resposta.stop_reason !== 'tool_use' || usos.length === 0) break;
+    // Ferramenta forçada: o que interessa é o input da chamada; não há segunda rodada.
+    if (args.forcarFerramenta && rodada === 0) {
+      for (const u of usos) chamadas.push({ name: u.name, input: u.input ?? {}, resultado: '' });
+      break;
+    }
 
     messages.push({ role: 'assistant', content: resposta.content });
     const resultados: BlocoDeConteudo[] = [];

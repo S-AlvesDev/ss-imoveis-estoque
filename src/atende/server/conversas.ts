@@ -5,7 +5,7 @@ import type { ScopedDb } from '../../server/tenant';
 import { previaDe } from './eventos';
 import { caminhoDaMidia, tipoPeloMimetype, urlAssinada, urlDeUpload, tamanhoDaMidia, MIDIA_MAX_BYTES } from './midias';
 import type { RequisicaoAtende } from './auth';
-import type { Conversa, Mensagem, Cliente, Delta, Etiqueta, TipoDaMensagem, Filtro } from '../shared/tipos';
+import { ESTADOS_DO_LEAD, type Conversa, type Mensagem, type Cliente, type Delta, type Etiqueta, type TipoDaMensagem, type Filtro, type Triagem, type Lead } from '../shared/tipos';
 
 /**
  * As conversas: quem pode ver qual, listar, abrir, responder, assumir,
@@ -469,4 +469,104 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
     equipe: ((equipeRes.data || []) as any[]).map((u) => ({ id: Number(u.id), presenca: u.presenca, presenca_em: u.presenca_em })),
     conexao: (conexaoRes.data as any) ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+//  Etapa 3: a triagem da IA e o lead, vistos pela equipe
+// ---------------------------------------------------------------------------
+
+const TRIAGEM_COLUNAS = 'id, conversa_id, rodada, assunto, intencao, time_sugerido_id, atendente_sugerido_id, prioridade, confianca, resumo, pediu_esclarecimento, resposta_enviada, desfecho, modelo, corrigido_por, time_corrigido_id, corrigido_em, motivo_correcao, criado_em';
+const LEAD_COLUNAS = 'id, conversa_id, cliente_id, estado, sugestao_ia, valor, atualizado_por, criado_em, atualizado_em';
+
+function montarTriagem(linha: any): Triagem {
+  return { ...linha, atendente_sugerido_id: linha.atendente_sugerido_id === null ? null : Number(linha.atendente_sugerido_id), corrigido_por: linha.corrigido_por === null ? null : Number(linha.corrigido_por), confianca: linha.confianca === null ? null : Number(linha.confianca) };
+}
+
+function montarLead(linha: any): Lead {
+  return { ...linha, atualizado_por: linha.atualizado_por === null ? null : Number(linha.atualizado_por), valor: linha.valor === null ? null : Number(linha.valor) };
+}
+
+/** As rodadas da IA nesta conversa (a mais recente primeiro) e o lead. */
+export async function triagemDaConversa(req: RequisicaoAtende, conversaId: string): Promise<{ triagens: Triagem[]; lead: Lead | null }> {
+  const c = await exigirConversa(req, conversaId);
+  const [{ data: triagens, error }, { data: lead, error: erroLead }] = await Promise.all([
+    req.dbAtende!.from('atende_triagens').select(TRIAGEM_COLUNAS).eq('conversa_id', c.id).order('criado_em', { ascending: false }).limit(10),
+    req.dbAtende!.from('atende_leads').select(LEAD_COLUNAS).eq('conversa_id', c.id).maybeSingle(),
+  ]);
+  if (error) throw error;
+  if (erroLead) throw erroLead;
+  return { triagens: ((triagens || []) as any[]).map(montarTriagem), lead: lead ? montarLead(lead) : null };
+}
+
+/**
+ * O supervisor corrige o setor que a IA escolheu. A conversa muda de time;
+ * se quem estava atendendo não é do novo time, volta para a fila desse time.
+ * A correção fica na última triagem (quem, para onde, por quê) — é o dado
+ * que depois mostra onde a IA erra.
+ */
+export async function corrigirTriagem(req: RequisicaoAtende, conversaId: string, dados: { time_id?: unknown; motivo?: unknown }): Promise<Conversa> {
+  const c = await exigirConversa(req, conversaId);
+  const s = req.sessao!;
+  const db = req.dbAtende!;
+  const timeId = String(dados.time_id ?? '').trim();
+  if (!timeId) throw new ErroDeConversa('Escolha o setor certo.');
+  const { data: time } = await db.from('atende_times').select('id, nome').eq('id', timeId).eq('ativo', true).maybeSingle();
+  if (!time) throw new ErroDeConversa('Setor não encontrado.', 404);
+  if (c.time_id === time.id) throw new ErroDeConversa('A conversa já está neste setor.');
+  const motivo = String(dados.motivo ?? '').trim().slice(0, 300) || null;
+
+  const patch: Record<string, unknown> = { time_id: time.id };
+  let voltouParaFila = false;
+  if (c.atendente_id && c.estado !== 'encerrada') {
+    const { data: membro } = await db.from('atende_time_membros').select('usuario_id').eq('time_id', time.id).eq('usuario_id', c.atendente_id).maybeSingle();
+    if (!membro) {
+      patch.atendente_id = null;
+      patch.estado = 'na_fila';
+      voltouParaFila = true;
+    }
+  } else if (c.estado === 'nova' || c.estado === 'em_triagem') patch.estado = 'na_fila';
+  const { error } = await db.from('atende_conversas').update(patch).eq('id', c.id);
+  if (error) throw error;
+
+  const { data: ultima } = await db.from('atende_triagens').select('id, time_sugerido_id').eq('conversa_id', c.id).order('criado_em', { ascending: false }).limit(1).maybeSingle();
+  if (ultima) await db.from('atende_triagens').update({ corrigido_por: s.id, time_corrigido_id: time.id, corrigido_em: new Date().toISOString(), motivo_correcao: motivo }).eq('id', ultima.id);
+  await registrarEvento(db, c.id, s.id, 'triagem_corrigida', { de: c.time_id, para: time.id, triagem_id: ultima?.id ?? null, motivo, voltou_para_fila: voltouParaFila });
+  await db.from('atende_mensagens').insert({ conversa_id: c.id, direcao: 'sistema', autor_tipo: 'sistema', tipo: 'texto', texto: `${s.nome} corrigiu a triagem: setor ${time.nome}${voltouParaFila ? ' (voltou para a fila do setor)' : ''}${motivo ? ` — ${motivo}` : ''}.`, status: 'entregue' });
+  return (await conversaPorId(req, c.id))!;
+}
+
+/** A equipe move o lead no funil. A IA só sugere; aqui é gente decidindo. */
+export async function atualizarLead(req: RequisicaoAtende, conversaId: string, dados: { estado?: unknown; valor?: unknown }): Promise<Lead> {
+  const c = await exigirConversa(req, conversaId);
+  const s = req.sessao!;
+  const db = req.dbAtende!;
+  const patch: Record<string, unknown> = { atualizado_por: s.id };
+  if (dados.estado !== undefined) {
+    if (!(ESTADOS_DO_LEAD as readonly string[]).includes(String(dados.estado))) throw new ErroDeConversa('Estado do lead inválido.');
+    patch.estado = dados.estado;
+  }
+  if (dados.valor !== undefined) {
+    if (dados.valor === null || dados.valor === '') patch.valor = null;
+    else {
+      const v = Number(dados.valor);
+      if (!Number.isFinite(v) || v < 0 || v > 999_999_999) throw new ErroDeConversa('Valor inválido.');
+      patch.valor = Math.round(v * 100) / 100;
+    }
+  }
+  if (Object.keys(patch).length === 1) throw new ErroDeConversa('Nada para alterar.');
+  const { data: atual } = await db.from('atende_leads').select(LEAD_COLUNAS).eq('conversa_id', c.id).maybeSingle();
+  let linha: any;
+  if (atual) {
+    const { data, error } = await db.from('atende_leads').update(patch).eq('id', atual.id).select(LEAD_COLUNAS).single();
+    if (error || !data) throw error ?? new Error('não atualizou o lead');
+    linha = data;
+  } else {
+    // Conversa que nasceu sem triagem (IA desligada, ou a empresa começou pelo celular): o lead nasce agora.
+    const { data, error } = await db.from('atende_leads').insert({ conversa_id: c.id, cliente_id: c.cliente_id, estado: 'novo', ...patch }).select(LEAD_COLUNAS).single();
+    if (error || !data) throw error ?? new Error('não criou o lead');
+    linha = data;
+  }
+  await registrarEvento(db, c.id, s.id, 'lead_alterado', { de: atual?.estado ?? null, para: linha.estado, valor: linha.valor });
+  await db.from('atende_conversas').update({ atualizado_em: new Date().toISOString() }).eq('id', c.id);
+  return montarLead(linha);
 }

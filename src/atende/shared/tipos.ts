@@ -38,6 +38,10 @@ export interface Empresa {
   horario_atendimento: HorarioDeAtendimento;
   regras_atendimento: string | null;
   mensagem_fora_do_horario: string | null;
+  /** A IA tria as conversas novas (Etapa 3). Desligada: tudo cai direto na fila geral. */
+  triagem_ativa: boolean;
+  /** Fora do horário, a IA manda a mensagem de fora do horário (ou a saudação dela). Desligado: silêncio até abrir. */
+  responde_fora_do_horario: boolean;
   criado_em: string;
 }
 
@@ -197,4 +201,79 @@ export interface Delta {
   mensagens: Mensagem[];
   equipe: Array<{ id: number; presenca: Presenca; presenca_em: string | null }>;
   conexao: Conexao | null;
+}
+
+// ---------------------------------------------------------------------------
+//  Etapa 3: a triagem da IA e o lead
+// ---------------------------------------------------------------------------
+
+export type DesfechoDaTriagem = 'atribuida' | 'na_fila' | 'esclarecendo' | 'sem_time' | 'simulacao';
+
+/** Uma decisão da IA sobre uma conversa (uma linha por rodada). */
+export interface Triagem {
+  id: string;
+  conversa_id: string;
+  rodada: number;
+  assunto: string | null;
+  intencao: string | null;
+  time_sugerido_id: string | null;
+  atendente_sugerido_id: number | null;
+  prioridade: Prioridade;
+  confianca: number | null;
+  resumo: string | null;
+  pediu_esclarecimento: boolean;
+  resposta_enviada: string | null;
+  desfecho: DesfechoDaTriagem;
+  modelo: string | null;
+  corrigido_por: number | null;
+  time_corrigido_id: string | null;
+  corrigido_em: string | null;
+  motivo_correcao: string | null;
+  criado_em: string;
+}
+
+export type EstadoDoLead = 'novo' | 'em_atendimento' | 'em_negociacao' | 'aguardando_cliente' | 'convertido' | 'perdido';
+export const ESTADOS_DO_LEAD: readonly EstadoDoLead[] = ['novo', 'em_atendimento', 'em_negociacao', 'aguardando_cliente', 'convertido', 'perdido'];
+export const NOME_DO_ESTADO_DO_LEAD: Record<EstadoDoLead, string> = {
+  novo: 'Novo',
+  em_atendimento: 'Em atendimento',
+  em_negociacao: 'Em negociação',
+  aguardando_cliente: 'Aguardando cliente',
+  convertido: 'Convertido',
+  perdido: 'Perdido',
+};
+
+export type SugestaoDeLead = 'quente' | 'morno' | 'frio' | 'nao_e_lead';
+export const NOME_DA_SUGESTAO: Record<SugestaoDeLead, string> = { quente: 'Quente', morno: 'Morno', frio: 'Frio', nao_e_lead: 'Não é lead' };
+
+export interface Lead {
+  id: string;
+  conversa_id: string;
+  cliente_id: string;
+  estado: EstadoDoLead;
+  sugestao_ia: SugestaoDeLead | null;
+  valor: number | null;
+  atualizado_por: number | null;
+  criado_em: string;
+  atualizado_em: string;
+}
+
+/** O que a simulação da triagem devolve (nada é gravado nem enviado). */
+export interface SimulacaoDaTriagem {
+  classificacao: {
+    assunto: string;
+    intencao: string;
+    time_id: string | null;
+    prioridade: Prioridade;
+    confianca: number;
+    resumo: string;
+    lead: SugestaoDeLead;
+    precisa_esclarecer: boolean;
+    pergunta: string | null;
+    resposta_ao_cliente: string | null;
+  };
+  nomeDoTime: string | null;
+  uso: { tokens_entrada: number; tokens_cache: number; tokens_saida: number; modelo: string } | null;
+  /** false = sem chave da IA neste servidor; a triagem usou palavras-chave. */
+  ia: boolean;
 }

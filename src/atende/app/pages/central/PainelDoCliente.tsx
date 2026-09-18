@@ -8,10 +8,11 @@ import { useDadosAtende } from '../../store/dados';
 import type { Cliente, Conversa } from '../../../shared/tipos';
 import { NOME_DO_ESTADO } from '../../../shared/tipos';
 import { iniciais, nomeDoCliente, quando, telefoneBonito, COR_DO_ESTADO } from './util';
+import { TriagemDaIa } from './TriagemDaIa';
 
 /**
- * A coluna da direita: quem é o cliente (editável), o contexto que a IA
- * preparou (Etapa 3), etiquetas, e as conversas anteriores dele.
+ * A coluna da direita: quem é o cliente (editável), o que a IA decidiu na
+ * triagem e o lead, etiquetas, e as conversas anteriores dele.
  */
 export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
   const c = conversa.cliente;
@@ -97,13 +98,14 @@ export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
           <Linha rotulo="Estado">
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${COR_DO_ESTADO[conversa.estado]}`}>{NOME_DO_ESTADO[conversa.estado]}</span>
           </Linha>
-          <Linha rotulo="Setor">{time ?? <span className="text-[var(--text-muted)]">— (a IA define na Etapa 3)</span>}</Linha>
+          <Linha rotulo="Setor">{time ?? <span className="text-[var(--text-muted)]">sem setor</span>}</Linha>
           <Linha rotulo="Atendente">{atendente ?? <span className="text-[var(--text-muted)]">ninguém ainda</span>}</Linha>
           <Linha rotulo="Aberta">{quando(conversa.aberta_em)}</Linha>
           {conversa.assunto && <Linha rotulo="Assunto">{conversa.assunto}</Linha>}
         </dl>
-        {conversa.resumo && <p className="mt-2 rounded-lg bg-[var(--surface)] p-2 text-xs text-[var(--text)]">{conversa.resumo}</p>}
       </section>
+
+      <TriagemDaIa conversa={conversa} />
 
       <section>
         <p className="mb-1.5 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
