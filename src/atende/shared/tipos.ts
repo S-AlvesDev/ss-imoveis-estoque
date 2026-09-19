@@ -115,6 +115,8 @@ export interface AssinaturaAtende {
   valor: number;
   status: StatusDaAssinaturaAtende;
   payer_email: string | null;
+  /** A próxima cobrança agendada no gateway; nulo sem gateway. */
+  proxima_cobranca: string | null;
   created_at: string;
   autorizada_em: string | null;
   cancelada_em: string | null;
@@ -127,6 +129,8 @@ export interface SituacaoDaAssinatura {
   assinatura: AssinaturaAtende | null;
   /** Quantas pessoas ativas e setores existem — para a tela mostrar "3 de 10". */
   uso: { atendentes: number; times: number };
+  /** O Mercado Pago está ligado: "Assinar" leva ao checkout. Senão, o pedido vai por e-mail para a equipe. */
+  pagamento_online: boolean;
 }
 
 // ---------------------------------------------------------------------------

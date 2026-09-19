@@ -25,6 +25,7 @@ import { claudeConfigurado } from './claude';
 import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistente';
 import { criarRouterAtende } from '../atende/server';
 import { criarRouterSevla } from './sevla';
+import { tratarEventoDoAtende } from '../atende/server/mercadopago';
 import { responderNaHome, responderNoPainel, confirmarPropostas, falantePelaSessao, sanearHistorico, registrarJatoba, perguntasNaHomeHoje, mensagensNoPainelNoMes, LIMITE_HOME_DIA, LIMITE_PAINEL_MES, TAMANHO_MAXIMO_DA_MENSAGEM, NOME as JATOBA } from './jatoba';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
 import { vigiarWhatsapp, vigiarWhatsappDasEmpresas, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores, apagarContasVencidas } from './rotinas';
@@ -2702,7 +2703,8 @@ export function createApp() {
     // congelada assim que a resposta sai, e o que ficou pendente some.
     // Duas chamadas à API e umas gravações cabem folgado no prazo do MP.
     try {
-      const r = await tratarEvento(tipo, id);
+      // O evento é do Atende Aí? Ele responde primeiro; se não é dele (nulo), segue para o Stok Aí.
+      const r = (await tratarEventoDoAtende(tipo, id)) ?? (await tratarEvento(tipo, id));
       const casou = 'casou' in r ? r.casou : true;
       await registrarEvento({ tipo, mpId: id, organizationId: 'organizationId' in r ? r.organizationId : null, tratado: casou, erro: 'motivo' in r ? (r.motivo ?? null) : null, payload: req.body });
       if ('pagamento' in r) await cuidarDaNota(r.pagamento);

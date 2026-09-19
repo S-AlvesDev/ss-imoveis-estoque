@@ -5,6 +5,7 @@ import { cabeMaisUmNoAtende, ehCicloAtende, ehPlanoAtende, mensagemDeLimiteAtend
 import type { AssinaturaAtende, ContaAtende, SessaoAtende, SituacaoDaAssinatura } from '../shared/tipos';
 import type { RequisicaoAtende } from './auth';
 import type { ScopedDb } from '../../server/tenant';
+import { mpConfigurado } from '../../server/mercadopago';
 
 /**
  * O plano da empresa do Atende Aí, do lado do servidor — o espelho de
@@ -110,10 +111,10 @@ export class ErroDePlano extends Error {
   }
 }
 
-const ASSINATURA_COLUNAS = 'id, plano, ciclo, valor, status, payer_email, created_at, autorizada_em, cancelada_em';
+const ASSINATURA_COLUNAS = 'id, plano, ciclo, valor, status, payer_email, proxima_cobranca, created_at, autorizada_em, cancelada_em';
 
 function linhaParaAssinatura(a: any): AssinaturaAtende {
-  return { id: a.id, plano: a.plano, ciclo: a.ciclo, valor: Number(a.valor), status: a.status, payer_email: a.payer_email ?? null, created_at: a.created_at, autorizada_em: a.autorizada_em ?? null, cancelada_em: a.cancelada_em ?? null };
+  return { id: a.id, plano: a.plano, ciclo: a.ciclo, valor: Number(a.valor), status: a.status, payer_email: a.payer_email ?? null, proxima_cobranca: a.proxima_cobranca ?? null, created_at: a.created_at, autorizada_em: a.autorizada_em ?? null, cancelada_em: a.cancelada_em ?? null };
 }
 
 /** O pedido pendente ou a assinatura em vigor da empresa (a mais recente que não foi cancelada). */
@@ -139,7 +140,7 @@ export async function usoDaEmpresa(db: ScopedDb): Promise<{ atendentes: number; 
 
 export async function situacaoDaAssinatura(db: ScopedDb, empresaId: string): Promise<SituacaoDaAssinatura> {
   const [conta, assinatura, uso] = await Promise.all([contaDaEmpresa(empresaId), assinaturaDaEmpresa(db), usoDaEmpresa(db)]);
-  return { conta, assinatura, uso };
+  return { conta, assinatura, uso, pagamento_online: mpConfigurado() };
 }
 
 /**

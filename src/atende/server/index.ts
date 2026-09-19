@@ -17,6 +17,8 @@ import { montarDashboard, PERIODOS } from './dashboard';
 import { situacao as situacaoDoPush, inscrever as inscreverPush, cancelar as cancelarPush, ErroDePush } from './push';
 import { carregarConta, negarLimiteAtende, negarRecursoAtende, situacaoDaAssinatura, pedirAssinatura, esquecerContaAtende, ErroDePlano, type RequisicaoComPlano } from './plano';
 import { emailDePedidoDePlano, emailDePedidoDePlanoParaEquipe } from './email';
+import { pagamentoOnlineAtende, iniciarAssinaturaAtende, cancelarAssinaturaAtende, sincronizarAtende } from './mercadopago';
+import { ErroDoMercadoPago, mensagemParaOPagador } from '../../server/mercadopago';
 import { destinatarioDemo, remetente } from '../../server/mail';
 import type { PeriodoDoDashboard } from '../shared/tipos';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
@@ -754,6 +756,12 @@ export function criarRouterAtende(): express.Router {
   const pedidoLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `e:${(req as RequisicaoAtende).sessao?.empresa_id ?? ipKeyGenerator(req.ip ?? '')}`, message: { error: 'Muitos pedidos nesta hora. Aguarde um pouco.' } });
   r.post('/assinatura', exigir('empresa.gerir'), pedidoLimiter, async (req: RequisicaoAtende, res) => {
     try {
+      // Com o Mercado Pago ligado: a assinatura nasce no MP e a pessoa vai para o checkout dele.
+      if (pagamentoOnlineAtende()) {
+        const r2 = await iniciarAssinaturaAtende(req.dbAtende!, req.sessao!, req.body);
+        console.info('[atende assinatura] checkout', { empresa: req.sessao!.empresa_id, plano: r2.assinatura.plano, ciclo: r2.assinatura.ciclo });
+        return res.json({ url: r2.url, assinatura: r2.assinatura });
+      }
       const assinatura = await pedirAssinatura(req.dbAtende!, req.sessao!, req.body);
       esquecerContaAtende(req.sessao!.empresa_id);
       const empresa = await carregarEmpresa(req);
@@ -773,7 +781,38 @@ export function criarRouterAtende(): express.Router {
       res.status(201).json(await situacaoDaAssinatura(req.dbAtende!, req.sessao!.empresa_id));
     } catch (err: any) {
       if (err instanceof ErroDePlano) return res.status(err.status).json({ error: err.message });
+      if (err instanceof ErroDoMercadoPago) {
+        console.warn('[POST /api/atende/assinatura] MP recusou:', err.message);
+        return res.status(402).json({ error: mensagemParaOPagador(err) });
+      }
       tratar(res, err, 'POST /api/atende/assinatura', 'Não foi possível registrar o pedido.');
+    }
+  });
+
+  /** O retorno do checkout (com `preapproval_id`) ou "já paguei": confere no Mercado Pago e aplica. */
+  r.post('/assinatura/sincronizar', exigir('empresa.gerir'), pedidoLimiter, async (req: RequisicaoAtende, res) => {
+    try {
+      const id = String(req.body?.preapproval_id ?? '').trim();
+      if (id && !/^[A-Za-z0-9_-]{6,80}$/.test(id)) return res.status(400).json({ error: 'Assinatura inválida.' });
+      const r2 = await sincronizarAtende(req.sessao!.empresa_id, id || null);
+      if (!r2.casou) console.info('[atende assinatura] sincronizar não casou:', r2.motivo);
+      res.json({ casou: r2.casou, motivo: r2.motivo ?? null, ...(await situacaoDaAssinatura(req.dbAtende!, req.sessao!.empresa_id)) });
+    } catch (err: any) {
+      if (err instanceof ErroDePlano) return res.status(err.status).json({ error: err.message });
+      if (err instanceof ErroDoMercadoPago) return res.status(502).json({ error: 'O Mercado Pago não respondeu como esperado. Tente de novo em instantes.' });
+      tratar(res, err, 'POST /api/atende/assinatura/sincronizar', 'Não foi possível conferir a assinatura.');
+    }
+  });
+
+  r.post('/assinatura/cancelar', exigir('empresa.gerir'), pedidoLimiter, async (req: RequisicaoAtende, res) => {
+    try {
+      const a = await cancelarAssinaturaAtende(req.dbAtende!, req.sessao!.empresa_id);
+      console.info('[atende assinatura] cancelada', { empresa: req.sessao!.empresa_id, plano: a.plano });
+      res.json(await situacaoDaAssinatura(req.dbAtende!, req.sessao!.empresa_id));
+    } catch (err: any) {
+      if (err instanceof ErroDePlano) return res.status(err.status).json({ error: err.message });
+      if (err instanceof ErroDoMercadoPago) return res.status(502).json({ error: 'O Mercado Pago não respondeu como esperado. Tente de novo em instantes.' });
+      tratar(res, err, 'POST /api/atende/assinatura/cancelar', 'Não foi possível cancelar a assinatura.');
     }
   });
 

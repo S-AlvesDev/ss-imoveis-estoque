@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, Clock, CreditCard, Mail, ShieldAlert, Sparkles } from 'lucide-react';
+import { Check, Clock, CreditCard, Mail, RefreshCw, ShieldAlert, Sparkles, XCircle } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Card, CardHeader } from '@/shared/ui/Card';
 import { api, ErroDaApi } from '../lib/api';
@@ -57,28 +57,80 @@ export function Plano() {
   const [ciclo, setCiclo] = useState<CicloAtende>(escolhido?.ciclo ?? 'mensal');
   const [pedindo, setPedindo] = useState<PlanoAtende | null>(null);
 
+  const [sincronizando, setSincronizando] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
+
+  function receber(d: SituacaoDaAssinatura) {
+    setDados(d);
+    aplicar({ conta: d.conta });
+  }
+
   useEffect(() => {
-    api
-      .get<SituacaoDaAssinatura>('/assinatura')
+    // Voltou do checkout do Mercado Pago (`?retorno=1&preapproval_id=…`): confere lá e aplica, antes de mostrar.
+    const q = new URLSearchParams(window.location.search);
+    const retorno = q.get('retorno') === '1';
+    const preapprovalId = q.get('preapproval_id');
+    if (retorno) window.history.replaceState(null, '', window.location.pathname);
+    const pedido = retorno ? api.post<SituacaoDaAssinatura & { casou: boolean; motivo: string | null }>('/assinatura/sincronizar', { preapproval_id: preapprovalId }) : api.get<SituacaoDaAssinatura>('/assinatura');
+    pedido
       .then((d) => {
-        setDados(d);
-        aplicar({ conta: d.conta });
+        receber(d);
+        if (retorno) {
+          if ('casou' in d && d.casou && d.conta.situacao === 'assinada') {
+            esquecerPlanoEscolhido();
+            toast.success(`Assinatura confirmada: plano ${NOME_DO_PLANO_ATENDE[d.conta.plano]}.`);
+          } else toast.info('O Mercado Pago ainda está processando. Se você concluiu o pagamento, clique em "Já paguei" em instantes.');
+        }
       })
       .catch((e) => setErro(e instanceof ErroDaApi ? e.message : 'Não foi possível carregar o plano.'));
-  }, [aplicar]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  async function pedir(plano: PlanoAtende) {
+  /** Com o Mercado Pago ligado, vai para o checkout dele; sem, registra o pedido para a equipe. */
+  async function pedir(plano: PlanoAtende, trocar = false) {
+    if (trocar && !window.confirm(`Trocar para o plano ${NOME_DO_PLANO_ATENDE[plano]} (${NOME_DO_CICLO_ATENDE[ciclo].toLowerCase()})? A assinatura atual é cancelada e você paga a nova no Mercado Pago.`)) return;
     setPedindo(plano);
     try {
-      const d = await api.post<SituacaoDaAssinatura>('/assinatura', { plano, ciclo });
-      setDados(d);
-      aplicar({ conta: d.conta });
+      const d = await api.post<SituacaoDaAssinatura | { url: string }>('/assinatura', { plano, ciclo, trocar });
+      if ('url' in d) {
+        esquecerPlanoEscolhido();
+        window.location.href = d.url;
+        return;
+      }
+      receber(d);
       esquecerPlanoEscolhido();
       toast.success(`Pedido do plano ${NOME_DO_PLANO_ATENDE[plano]} registrado. A equipe entra em contato por e-mail.`);
     } catch (e) {
       toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível registrar o pedido.');
     } finally {
       setPedindo(null);
+    }
+  }
+
+  async function sincronizar() {
+    setSincronizando(true);
+    try {
+      const d = await api.post<SituacaoDaAssinatura & { casou: boolean; motivo: string | null }>('/assinatura/sincronizar', {});
+      receber(d);
+      if (d.casou) toast.success('Assinatura encontrada e aplicada.');
+      else toast.info(d.motivo ? `Ainda nada: ${d.motivo}.` : 'Ainda nada por lá.');
+    } catch (e) {
+      toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível conferir.');
+    } finally {
+      setSincronizando(false);
+    }
+  }
+
+  async function cancelar() {
+    if (!window.confirm('Cancelar a assinatura? O plano continua valendo até o fim do período já pago; depois o atendimento pausa.')) return;
+    setCancelando(true);
+    try {
+      receber(await api.post<SituacaoDaAssinatura>('/assinatura/cancelar'));
+      toast.success('Assinatura cancelada. O plano vale até o fim do período pago.');
+    } catch (e) {
+      toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível cancelar.');
+    } finally {
+      setCancelando(false);
     }
   }
 
@@ -92,9 +144,9 @@ export function Plano() {
   }
   if (!dados) return <p className="text-sm text-[var(--text-muted)]">Carregando o plano…</p>;
 
-  const { conta, assinatura, uso } = dados;
+  const { conta, assinatura, uso, pagamento_online: online } = dados;
   const pendente = assinatura?.status === 'pendente' ? assinatura : null;
-  const emVigor = assinatura && assinatura.status !== 'pendente' ? assinatura : null;
+  const emVigor = assinatura && (assinatura.status === 'autorizada' || assinatura.status === 'pausada') ? assinatura : null;
   const def = definicaoAtende(conta.plano);
 
   return (
@@ -120,7 +172,7 @@ export function Plano() {
             <Uso rotulo="Setores" atual={uso.times} max={def.limites.times} />
           </div>
         </div>
-        {pendente && (
+        {pendente && !online && (
           <div className="mt-4 flex items-start gap-3 rounded-xl border border-[var(--brand)]/30 bg-[var(--brand)]/[0.06] p-4 text-sm">
             <Mail size={16} className="mt-0.5 shrink-0 text-[var(--brand)]" />
             <div>
@@ -131,6 +183,32 @@ export function Plano() {
                 Feito em {dataCurta(pendente.created_at)}. A equipe da SEVLA INFINITY combina o pagamento por e-mail ({pendente.payer_email}) e ativa o plano. Quer mudar? Escolha outro abaixo — o pedido anterior é substituído.
               </p>
             </div>
+          </div>
+        )}
+        {pendente && online && (
+          <div className="mt-4 flex flex-col gap-3 rounded-xl border border-amber-400/40 bg-amber-500/10 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold text-[var(--text)]">Checkout do plano {NOME_DO_PLANO_ATENDE[pendente.plano]} ({NOME_DO_CICLO_ATENDE[pendente.ciclo].toLowerCase()}) iniciado em {dataCurta(pendente.created_at)}, ainda sem confirmação do Mercado Pago.</p>
+              <p className="mt-0.5 text-[var(--text-muted)]">Se você concluiu o pagamento, confira aqui; se não, escolha o plano de novo abaixo.</p>
+            </div>
+            <Button variant="outline" size="sm" loading={sincronizando} icon={<RefreshCw size={14} />} onClick={sincronizar}>
+              Já paguei
+            </Button>
+          </div>
+        )}
+        {emVigor && (
+          <div className="mt-4 flex flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold text-[var(--text)]">
+                Assinatura {emVigor.status === 'pausada' ? 'pausada' : 'ativa'} no Mercado Pago · {emVigor.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}/mês, {NOME_DO_CICLO_ATENDE[emVigor.ciclo].toLowerCase()}
+              </p>
+              <p className="mt-0.5 text-[var(--text-muted)]">
+                {emVigor.proxima_cobranca ? `Próxima cobrança em ${dataCurta(emVigor.proxima_cobranca)}.` : 'Sem próxima cobrança agendada.'} Cobrança no cartão, em {emVigor.payer_email}.
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" loading={cancelando} icon={<XCircle size={14} />} onClick={cancelar}>
+              Cancelar assinatura
+            </Button>
           </div>
         )}
       </Card>
@@ -176,8 +254,8 @@ export function Plano() {
                   </li>
                 ))}
               </ul>
-              <Button className="mt-5" fullWidth variant={p.destaque || sugerido ? 'primary' : 'outline'} loading={pedindo === id} disabled={pedindo !== null || pedido || Boolean(emVigor)} icon={<CreditCard size={15} />} onClick={() => pedir(id)}>
-                {pedido ? 'Pedido feito' : atual && emVigor ? 'Plano atual' : `Pedir o ${p.nome}`}
+              <Button className="mt-5" fullWidth variant={p.destaque || sugerido ? 'primary' : 'outline'} loading={pedindo === id} disabled={pedindo !== null || (pedido && !online) || (Boolean(emVigor) && (atual || !online))} icon={<CreditCard size={15} />} onClick={() => pedir(id, Boolean(emVigor))}>
+                {emVigor && atual ? 'Plano atual' : emVigor && online ? `Trocar para o ${p.nome}` : pedido && !online ? 'Pedido feito' : online ? `Assinar o ${p.nome}` : `Pedir o ${p.nome}`}
               </Button>
             </Card>
           );
@@ -195,7 +273,10 @@ export function Plano() {
           ))}
         </ul>
         <p className="mt-4 text-xs text-[var(--text-muted)]">
-          Como funciona a contratação hoje: você pede o plano aqui, a equipe da SEVLA INFINITY responde por e-mail para combinar o pagamento e ativa o plano na empresa. Dúvidas?{' '}
+          {online
+            ? 'Pagamento no cartão pelo Mercado Pago, renovado automaticamente a cada período. Cancele quando quiser: o plano vale até o fim do período pago.'
+            : 'Como funciona a contratação hoje: você pede o plano aqui, a equipe da SEVLA INFINITY responde por e-mail para combinar o pagamento e ativa o plano na empresa.'}{' '}
+          Dúvidas?{' '}
           <a href={linkWhatsApp(`Olá! Tenho uma dúvida sobre os planos do ${ATENDE.nome}.`)} target="_blank" rel="noreferrer" className="font-semibold text-[var(--brand)] hover:underline">
             Fale com a gente no WhatsApp
           </a>

@@ -181,6 +181,16 @@ export function criarAssinaturaSemPlano(args: Parameters<typeof corpoDaAssinatur
   return mp<PreapprovalMp>('/preapproval', { method: 'POST', body: JSON.stringify(corpoDaAssinatura(args)) });
 }
 
+/** POST /preapproval com um corpo pronto — para outro produto (o Atende Aí) montar o dele sem reescrever o cliente. */
+export function criarPreapproval(corpo: Record<string, unknown>): Promise<PreapprovalMp> {
+  return mp<PreapprovalMp>('/preapproval', { method: 'POST', body: JSON.stringify(corpo) });
+}
+
+/** O endereço público do site, para outro produto montar a própria `back_url`. */
+export function siteUrlDoMp(env: AmbienteMp = process.env as AmbienteMp): string {
+  return siteUrl(env);
+}
+
 /**
  * Checkout Transparente: o cartão foi tokenizado no navegador e a assinatura
  * nasce autorizada aqui, sem ir ao site do MP. Com plano do painel, o valor é

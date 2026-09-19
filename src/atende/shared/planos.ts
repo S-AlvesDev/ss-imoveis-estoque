@@ -100,6 +100,13 @@ export function precoAtende(plano: PlanoAtende, ciclo: CicloAtende): number | nu
   return ciclo === 'anual' ? Math.round(((p * (12 - MESES_GRATIS_NO_ANUAL_ATENDE)) / 12) * 100) / 100 : p;
 }
 
+/** O que se paga por ciclo (a cobrança): mensal é o preço; anual é 12 meses menos os grátis, de uma vez. Nulo enquanto não definido. */
+export function precoDoPeriodoAtende(plano: PlanoAtende, ciclo: CicloAtende): number | null {
+  const p = DEFINICOES_ATENDE[plano].preco;
+  if (p === null) return null;
+  return ciclo === 'anual' ? Math.round(p * (12 - MESES_GRATIS_NO_ANUAL_ATENDE) * 100) / 100 : p;
+}
+
 /** O texto do preço: "R$ 199,90" ou o placeholder "R$ XX". */
 export function precoFormatado(plano: PlanoAtende, ciclo: CicloAtende): string {
   const p = precoAtende(plano, ciclo);
