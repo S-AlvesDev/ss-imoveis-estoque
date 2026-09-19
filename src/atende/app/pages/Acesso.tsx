@@ -12,6 +12,8 @@ import { MarcaAtende } from '../Marca';
 import { ATENDE } from '../../shared/produto';
 import { MIN_SENHA } from '../../shared/validacao';
 import type { SessaoAtende } from '../../shared/tipos';
+import { lerPlanoEscolhido } from './Plano';
+import { AVALIACAO_DIAS_ATENDE } from '../../shared/planos';
 import { ADMIN_ROLES } from '../../../shared/constants';
 import { SESSAO_DO_PRODUTO, type AcessoSevla, type RespostaDeEntrada } from '../../../shared/sevla';
 import { entrarNaSevla, sessaoDoProduto, ativarAtendePelaSevla, deveCairNoLoginAntigo } from '../../../shared/sevlaNavegador';
@@ -326,8 +328,14 @@ function CriarConta() {
     try {
       const r = await api.post<{ sessao: SessaoAtende; token: string }>('/cadastro', { empresa, segmento, nome, email, senha });
       entrar(r.sessao, r.token);
-      toast.success(`${empresa} está no ${ATENDE.nome}. Comece descrevendo a empresa.`);
-      ir(TELAS.empresa);
+      // Quem veio da vitrine com um plano escolhido cai no plano; quem não, na descrição da empresa.
+      if (lerPlanoEscolhido()) {
+        toast.success(`${empresa} está no ${ATENDE.nome}. Sua avaliação de ${AVALIACAO_DIAS_ATENDE} dias começou.`);
+        ir(TELAS.plano);
+      } else {
+        toast.success(`${empresa} está no ${ATENDE.nome}. Comece descrevendo a empresa.`);
+        ir(TELAS.empresa);
+      }
     } catch (err) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível criar a conta.');
     } finally {

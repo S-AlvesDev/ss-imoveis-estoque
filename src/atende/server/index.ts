@@ -15,6 +15,9 @@ import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviar
 import { simular } from './triagem';
 import { montarDashboard, PERIODOS } from './dashboard';
 import { situacao as situacaoDoPush, inscrever as inscreverPush, cancelar as cancelarPush, ErroDePush } from './push';
+import { carregarConta, negarLimiteAtende, negarRecursoAtende, situacaoDaAssinatura, pedirAssinatura, esquecerContaAtende, ErroDePlano, type RequisicaoComPlano } from './plano';
+import { emailDePedidoDePlano, emailDePedidoDePlanoParaEquipe } from './email';
+import { destinatarioDemo, remetente } from '../../server/mail';
 import type { PeriodoDoDashboard } from '../shared/tipos';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
 
@@ -242,6 +245,8 @@ export function criarRouterAtende(): express.Router {
   //  Logado
   // -------------------------------------------------------------------------
   r.use(autenticar);
+  // A conta da empresa (plano, avaliação, bloqueio) em req.contaAtende — Fase 3 da SEVLA.
+  r.use(carregarConta);
 
   async function carregarEmpresa(req: RequisicaoAtende): Promise<Empresa> {
     const { data, error } = await req.dbAtende!.from('atende_empresas').select(EMPRESA_COLUNAS).eq('id', req.sessao!.empresa_id).single();
@@ -294,7 +299,7 @@ export function criarRouterAtende(): express.Router {
   r.get('/bootstrap', async (req: RequisicaoAtende, res) => {
     try {
       const [empresa, times, equipe, conexao] = await Promise.all([carregarEmpresa(req), carregarTimes(req), carregarEquipe(req), conexaoDaEmpresa(req.sessao!.empresa_id)]);
-      const resposta: BootstrapAtende = { sessao: req.sessao!, empresa, times, equipe, conexao: conexao ? { id: conexao.id, instancia: conexao.instancia, numero: conexao.numero, estado: conexao.estado, conectado_em: conexao.conectado_em, ultimo_evento_em: conexao.ultimo_evento_em } : null };
+      const resposta: BootstrapAtende = { sessao: req.sessao!, empresa, times, equipe, conexao: conexao ? { id: conexao.id, instancia: conexao.instancia, numero: conexao.numero, estado: conexao.estado, conectado_em: conexao.conectado_em, ultimo_evento_em: conexao.ultimo_evento_em } : null, conta: (req as RequisicaoComPlano).contaAtende! };
       res.json(resposta);
     } catch (err: any) {
       console.error('[GET /api/atende/bootstrap] erro:', err.message);
@@ -321,6 +326,9 @@ export function criarRouterAtende(): express.Router {
     try {
       const v = validarTime(req.body);
       if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { count } = await req.dbAtende!.from('atende_times').select('id', { count: 'exact', head: true }).eq('ativo', true);
+      const negativa = negarLimiteAtende((req as RequisicaoComPlano).contaAtende!, 'times', count ?? 0);
+      if (negativa) return res.status(negativa.status).json(negativa.body);
       const { error } = await req.dbAtende!.from('atende_times').insert(v.valor);
       if (error) {
         if (error.code === '23505') return res.status(409).json({ error: 'Já existe um time com esse nome.' });
@@ -369,6 +377,9 @@ export function criarRouterAtende(): express.Router {
     try {
       const v = validarNovoFuncionario(req.body);
       if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { count } = await req.dbAtende!.from('atende_usuarios').select('id', { count: 'exact', head: true }).eq('ativo', true);
+      const negativa = negarLimiteAtende((req as RequisicaoComPlano).contaAtende!, 'atendentes', count ?? 0);
+      if (negativa) return res.status(negativa.status).json(negativa.body);
       const hash = await bcrypt.hash(v.valor.senha, 10);
       const { data: novo, error } = await req.dbAtende!.from('atende_usuarios').insert({ nome: v.valor.nome, email: v.valor.email, senha: hash, papel: v.valor.papel }).select('id').single();
       if (error) {
@@ -598,6 +609,8 @@ export function criarRouterAtende(): express.Router {
   });
   r.post('/push/inscrever', async (req: RequisicaoAtende, res) => {
     try {
+      const negativa = negarRecursoAtende((req as RequisicaoComPlano).contaAtende!, 'push');
+      if (negativa) return res.status(negativa.status).json(negativa.body);
       await inscreverPush(req, req.body?.inscricao, typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null);
       res.json({ ok: true });
     } catch (err: any) {
@@ -617,6 +630,8 @@ export function criarRouterAtende(): express.Router {
   // ---- Dashboard (Etapa 5): contagens do banco, no período pedido
   r.get('/dashboard', exigir('dashboard.ver'), async (req: RequisicaoAtende, res) => {
     try {
+      const negativa = negarRecursoAtende((req as RequisicaoComPlano).contaAtende!, 'dashboard');
+      if (negativa) return res.status(negativa.status).json(negativa.body);
       const periodo = (PERIODOS as readonly string[]).includes(String(req.query.periodo)) ? (String(req.query.periodo) as PeriodoDoDashboard) : '7d';
       res.json(await montarDashboard(req, periodo));
     } catch (err: any) {
@@ -662,6 +677,8 @@ export function criarRouterAtende(): express.Router {
   /** Supervisor/admin: o setor certo é outro. */
   r.post('/conversas/:id/triagem/corrigir', exigir('conversas.supervisionar'), async (req: RequisicaoAtende, res) => {
     try {
+      const negativa = negarRecursoAtende((req as RequisicaoComPlano).contaAtende!, 'supervisao');
+      if (negativa) return res.status(negativa.status).json(negativa.body);
       res.json({ conversa: await corrigirTriagem(req, req.params.id, req.body ?? {}) });
     } catch (err: any) {
       tratar(res, err, 'POST /api/atende/conversas/:id/triagem/corrigir', 'Não foi possível corrigir a triagem.');
@@ -680,6 +697,8 @@ export function criarRouterAtende(): express.Router {
   const simularLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `e:${(req as RequisicaoAtende).sessao?.empresa_id ?? ipKeyGenerator(req.ip ?? '')}`, message: { error: 'Muitas simulações nesta hora. Aguarde um pouco.' } });
   r.post('/triagem/simular', exigir('empresa.gerir'), simularLimiter, async (req: RequisicaoAtende, res) => {
     try {
+      const negativa = negarRecursoAtende((req as RequisicaoComPlano).contaAtende!, 'triagem-ia');
+      if (negativa) return res.status(negativa.status).json(negativa.body);
       const texto = String(req.body?.texto ?? '').trim().slice(0, 2000);
       if (!texto) return res.status(400).json({ error: 'Escreva a mensagem do cliente para simular.' });
       res.json(await simular(req.sessao!.empresa_id, texto, typeof req.body?.nome === 'string' ? req.body.nome.slice(0, 80) : null));
@@ -724,6 +743,40 @@ export function criarRouterAtende(): express.Router {
   });
 
   /** A própria pessoa troca a própria senha (qualquer papel). */
+  // ---- Plano e contratação (Fase 3 da SEVLA): ver a situação e pedir um plano. Sem cobrança ainda.
+  r.get('/assinatura', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await situacaoDaAssinatura(req.dbAtende!, req.sessao!.empresa_id));
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/assinatura', 'Não foi possível carregar o plano.');
+    }
+  });
+  const pedidoLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `e:${(req as RequisicaoAtende).sessao?.empresa_id ?? ipKeyGenerator(req.ip ?? '')}`, message: { error: 'Muitos pedidos nesta hora. Aguarde um pouco.' } });
+  r.post('/assinatura', exigir('empresa.gerir'), pedidoLimiter, async (req: RequisicaoAtende, res) => {
+    try {
+      const assinatura = await pedirAssinatura(req.dbAtende!, req.sessao!, req.body);
+      esquecerContaAtende(req.sessao!.empresa_id);
+      const empresa = await carregarEmpresa(req);
+      // A equipe da SEVLA recebe o pedido (responde ao e-mail de quem pediu); quem pediu recebe a confirmação.
+      try {
+        const t = await getTransporter();
+        if (t) {
+          await Promise.all([
+            t.sendMail({ from: remetente(), to: destinatarioDemo(), replyTo: req.sessao!.email, ...emailDePedidoDePlanoParaEquipe(empresa, req.sessao!, assinatura) }),
+            t.sendMail({ from: remetenteAtende(), to: req.sessao!.email, ...emailDePedidoDePlano(req.sessao!.nome, empresa.nome, assinatura) }),
+          ]);
+        }
+      } catch (e: any) {
+        console.error('[atende assinatura] e-mail:', e.message);
+      }
+      console.info('[atende assinatura] pedido', { empresa: empresa.nome, plano: assinatura.plano, ciclo: assinatura.ciclo });
+      res.status(201).json(await situacaoDaAssinatura(req.dbAtende!, req.sessao!.empresa_id));
+    } catch (err: any) {
+      if (err instanceof ErroDePlano) return res.status(err.status).json({ error: err.message });
+      tratar(res, err, 'POST /api/atende/assinatura', 'Não foi possível registrar o pedido.');
+    }
+  });
+
   r.post('/minha-senha', async (req: RequisicaoAtende, res) => {
     try {
       const atual = String(req.body?.atual ?? '');

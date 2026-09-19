@@ -1,4 +1,5 @@
 import { supabaseServer } from '../../lib/supabaseServer';
+import { empresaTem } from './plano';
 import { conversar, systemComCache, claudeConfigurado, type Ferramenta, type Uso, type MensagemDoChat } from '../../server/claude';
 import { enviarTextoComId } from '../../server/evolution';
 import { previaDe } from './eventos';
@@ -352,10 +353,15 @@ async function carregarTimes(empresaId: string): Promise<TimeParaTriagem[]> {
   return ((data || []) as any[]).map((t) => ({ ...t, palavras_chave: t.palavras_chave ?? [] }));
 }
 
-/** A empresa quer triagem? (Lido pelo webhook para decidir se a conversa nasce 'nova' ou 'na_fila'.) */
+/**
+ * A empresa quer triagem — e o plano dela inclui a IA? (Lido pelo webhook
+ * para decidir se a conversa nasce 'nova' ou 'na_fila'.) Sem o recurso no
+ * plano, o atendimento segue manual: fila, assumir, transferir.
+ */
 export async function triagemAtiva(empresaId: string): Promise<boolean> {
   const { data } = await supabaseServer.from('atende_empresas').select('triagem_ativa').eq('id', empresaId).maybeSingle();
-  return data?.triagem_ativa !== false;
+  if (data?.triagem_ativa === false) return false;
+  return empresaTem(empresaId, 'triagem-ia');
 }
 
 /**

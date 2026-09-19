@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowRight, ArrowUpRight, Building2, Link2, Lock, LogOut, Mail, Plus, Sparkles } from 'lucide-react';
 import { SEVLA, PRODUTOS } from './produto';
 import { Botao, Container, MarcaDoProduto, MarcaSevla, Revelar, Eyebrow, cta } from './ui';
-import { NOME_DO_PRODUTO, SESSAO_DO_PRODUTO, type EmpresaNaMinhaSevla, type MinhaSevla as DadosDaMinhaSevla, type ProdutoNaMinhaSevla, type ProdutoSevla } from '@/shared/sevla';
+import { NOME_DO_PRODUTO, SESSAO_DO_PRODUTO, type EmpresaNaMinhaSevla, type MinhaSevla as DadosDaMinhaSevla, type ProdutoNaMinhaSevla } from '@/shared/sevla';
 import { ErroDaSevlaNoNavegador, ativarAtendePelaSevla, entrarNaSevla, guardarSessaoDoProduto, lerSessaoSevla, minhaSevla, sairDaSevla, sessaoDoProduto } from '@/shared/sevlaNavegador';
 
 /**
@@ -292,7 +292,7 @@ function CartaoDoProduto({ prod, token, aoMudar }: { prod: ProdutoNaMinhaSevla; 
                   <p className="truncate font-semibold text-white">{e.organizacao}</p>
                   <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-[var(--texto-suave)]">
                     <span>{papelLegivel(e.papel)}</span>
-                    <Situacao e={e} produto={prod.produto} />
+                    <Situacao e={e} />
                   </p>
                 </div>
               </div>
@@ -347,10 +347,10 @@ const SITUACAO: Record<string, { rotulo: string; cor: string }> = {
 };
 
 /** A situação da empresa no produto — só o que o servidor sabe; sem plano, não se mostra plano. */
-function Situacao({ e, produto }: { e: EmpresaNaMinhaSevla; produto: ProdutoSevla }) {
+function Situacao({ e }: { e: EmpresaNaMinhaSevla }) {
   if (!e.situacao) return null;
   const s = SITUACAO[e.situacao] ?? { rotulo: e.situacao, cor: 'text-[var(--texto-suave)]' };
-  const plano = e.plano && produto === 'stok' && e.situacao === 'assinada' ? ` · ${papelLegivel(e.plano)}` : '';
+  const plano = e.plano && e.situacao === 'assinada' ? ` · ${papelLegivel(e.plano)}` : '';
   return (
     <span className={`inline-flex items-center gap-1 ${s.cor}`}>
       <Sparkles size={11} aria-hidden />

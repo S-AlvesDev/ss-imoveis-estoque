@@ -14,6 +14,9 @@ import { Whatsapp } from './pages/Whatsapp';
 import { Central } from './pages/central/Central';
 import { Supervisao } from './pages/Supervisao';
 import { Dashboard } from './pages/Dashboard';
+import { Plano } from './pages/Plano';
+import { Bloqueada, SemRecurso } from './pages/SemPlano';
+import { planoAtendeLibera } from '../shared/planos';
 import { Shell, itensDoMenu } from './Shell';
 import { Simbolo } from './Marca';
 import { lerCaminho, TELAS, TELAS_PUBLICAS, useRotaAtende, type Tela } from './router';
@@ -90,7 +93,7 @@ function primeiraTela(papel: string): Tela {
 
 function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
   const sessao = useSessaoAtende((s) => s.sessao)!;
-  const { carregado, erro, carregar } = useDadosAtende();
+  const { carregado, erro, carregar, conta } = useDadosAtende();
   const ir = useRotaAtende((s) => s.ir);
 
   useEffect(() => {
@@ -114,6 +117,9 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
 
   // Tela que o papel não alcança: volta para a primeira dele.
   const permitida = itensDoMenu(sessao.papel).some((i) => i.tela === tela) || tela === TELAS.conta;
+  // Empresa bloqueada (avaliação terminou): só o plano e a própria conta abrem.
+  const bloqueada = conta?.situacao === 'bloqueada' && tela !== TELAS.plano && tela !== TELAS.conta;
+  const libera = (recurso: 'supervisao' | 'dashboard') => !conta || planoAtendeLibera(conta.plano, recurso);
   if (!permitida) {
     ir(primeiraTela(sessao.papel));
     return null;
@@ -121,14 +127,21 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
 
   return (
     <Shell tela={tela}>
+      {bloqueada ? (
+        <Bloqueada />
+      ) : (
+        <>
       {tela === TELAS.central && <Central conversaId={resto || null} />}
-      {tela === TELAS.supervisao && pode(sessao.papel, 'conversas.supervisionar') && <Supervisao />}
-      {tela === TELAS.dashboard && pode(sessao.papel, 'dashboard.ver') && <Dashboard />}
+      {tela === TELAS.supervisao && pode(sessao.papel, 'conversas.supervisionar') && (libera('supervisao') ? <Supervisao /> : <SemRecurso recurso="supervisao" />)}
+      {tela === TELAS.dashboard && pode(sessao.papel, 'dashboard.ver') && (libera('dashboard') ? <Dashboard /> : <SemRecurso recurso="dashboard" />)}
       {tela === TELAS.empresa && pode(sessao.papel, 'empresa.gerir') && <Empresa />}
       {tela === TELAS.times && pode(sessao.papel, 'times.gerir') && <Times />}
       {tela === TELAS.equipe && <Equipe />}
       {tela === TELAS.whatsapp && pode(sessao.papel, 'whatsapp.gerir') && <Whatsapp />}
+      {tela === TELAS.plano && pode(sessao.papel, 'empresa.gerir') && <Plano />}
       {tela === TELAS.conta && <Conta />}
+        </>
+      )}
     </Shell>
   );
 }

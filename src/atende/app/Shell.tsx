@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { BarChart3, Bell, Building2, ChevronRight, Eye, LogOut, Menu, MessageSquare, Smartphone, UserCircle, Users, UsersRound, Wifi, WifiOff } from 'lucide-react';
+import { BarChart3, Bell, Building2, ChevronRight, CreditCard, Eye, LogOut, Menu, MessageSquare, Smartphone, UserCircle, Users, UsersRound, Wifi, WifiOff } from 'lucide-react';
 import { MarcaAtende, Simbolo } from './Marca';
 import { TELAS, useRotaAtende, type Tela } from './router';
 import { useSessaoAtende } from './store/sessao';
@@ -14,6 +14,7 @@ import { useNotificacoes } from './store/useNotificacoes';
 import { ativarNotificacoes, estadoDasNotificacoes, type EstadoDasNotificacoes } from './notificacoes';
 import { pode, NOME_DO_PAPEL, type Permissao } from '../shared/papeis';
 import { ATENDE } from '../shared/produto';
+import { NOME_DO_PLANO_ATENDE } from '../shared/planos';
 
 /**
  * A moldura do Atende Aí depois de entrar — a mesma lógica da barra do Stok
@@ -52,6 +53,7 @@ function gruposDoMenu(papel: string): Grupo[] {
         { tela: TELAS.times, nome: 'Times', icone: <UsersRound size={18} />, permissao: 'times.gerir' },
         { tela: TELAS.equipe, nome: 'Equipe', icone: <Users size={18} />, permissao: 'equipe.ver' },
         { tela: TELAS.whatsapp, nome: 'WhatsApp', icone: <Smartphone size={18} />, permissao: 'whatsapp.gerir' },
+        { tela: TELAS.plano, nome: 'Plano', icone: <CreditCard size={18} />, permissao: 'empresa.gerir' },
       ]),
     },
   ];
@@ -278,8 +280,47 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
           </button>
           <MarcaAtende tema="claro" tamanho={26} />
         </header>
+        <FaixaDoPlano tela={tela} />
         <main className="min-w-0 p-4 sm:p-6">{children}</main>
       </div>
+    </div>
+  );
+}
+
+/**
+ * A faixa do plano, acima do conteúdo: avaliação acabando, carência ou
+ * bloqueio. Só quando há algo a dizer; na própria tela de plano não repete.
+ */
+function FaixaDoPlano({ tela }: { tela: Tela | null }) {
+  const conta = useDadosAtende((s) => s.conta);
+  const sessao = useSessaoAtende((s) => s.sessao);
+  const navegar = useRotaAtende((s) => s.ir);
+  if (!conta || tela === TELAS.plano) return null;
+  const admin = sessao ? pode(sessao.papel, 'empresa.gerir') : false;
+
+  let texto: string | null = null;
+  let tom = 'border-sky-500/30 bg-sky-500/10 text-sky-900 dark:text-sky-100';
+  if (conta.situacao === 'bloqueada') {
+    texto = 'A avaliação do Atende Aí terminou. O atendimento fica pausado até um plano ser ativado.';
+    tom = 'border-rose-500/30 bg-rose-500/10 text-rose-900 dark:text-rose-100';
+  } else if (conta.situacao === 'carencia') {
+    texto = `O plano ${NOME_DO_PLANO_ATENDE[conta.plano]} venceu. ${conta.dias_restantes ?? 0} ${conta.dias_restantes === 1 ? 'dia' : 'dias'} de carência antes de o atendimento pausar.`;
+    tom = 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-100';
+  } else if (conta.situacao === 'avaliacao' && conta.dias_restantes !== null && conta.dias_restantes <= 3) {
+    texto = conta.dias_restantes <= 0 ? 'A avaliação termina hoje.' : `A avaliação termina em ${conta.dias_restantes} ${conta.dias_restantes === 1 ? 'dia' : 'dias'}.`;
+  }
+  if (!texto) return null;
+
+  return (
+    <div className={`flex flex-col gap-2 border-b px-4 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-6 ${tom}`}>
+      <span className="font-medium">{texto}</span>
+      {admin ? (
+        <button type="button" onClick={() => navegar(TELAS.plano)} className="shrink-0 self-start rounded-lg bg-white/70 px-3 py-1 text-xs font-bold text-[var(--text)] hover:bg-white dark:bg-white/10 dark:text-white dark:hover:bg-white/20 sm:self-auto">
+          Ver planos
+        </button>
+      ) : (
+        <span className="text-xs opacity-80">Fale com o administrador da empresa.</span>
+      )}
     </div>
   );
 }

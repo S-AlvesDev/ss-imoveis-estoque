@@ -32,7 +32,7 @@ export function Eyebrow({ children }: { children: ReactNode }) {
 }
 
 type Variante = 'primario' | 'contorno' | 'fantasma';
-export function Botao({ href, variante = 'primario', className = '', alvo, children, externo }: { href: string; variante?: Variante; className?: string; alvo: string; children: ReactNode; externo?: boolean }) {
+export function Botao({ href, variante = 'primario', className = '', alvo, children, externo, aoClicar }: { href: string; variante?: Variante; className?: string; alvo: string; children: ReactNode; externo?: boolean; aoClicar?: () => void }) {
   const ir = useRotaAtende((s) => s.ir);
   const base = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all active:scale-[0.98]';
   const estilos: Record<Variante, string> = {
@@ -47,6 +47,7 @@ export function Botao({ href, variante = 'primario', className = '', alvo, child
       href={href}
       onClick={(e) => {
         cta(alvo);
+        aoClicar?.();
         if (interno && e.button === 0 && !e.metaKey && !e.ctrlKey) {
           e.preventDefault();
           const partes = href.slice(ATENDE.base.length + 1).split('/');

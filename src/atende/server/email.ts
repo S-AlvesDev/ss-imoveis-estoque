@@ -2,6 +2,7 @@ import { escapeHtml, p } from '../../server/email-layout';
 import { siteUrl } from '../../server/senha';
 import { remetente } from '../../server/mail';
 import { ATENDE, atendeUrl } from '../shared/produto';
+import { NOME_DO_PLANO_ATENDE } from '../shared/planos';
 
 /**
  * Os e-mails do Atende Aí, com a marca dele. O layout do Stok Aí é laranja e
@@ -95,4 +96,43 @@ export function remetenteAtende(): string {
   const base = remetente();
   const m = /<([^>]+)>/.exec(base);
   return `"${ATENDE.nome}" <${m ? m[1] : base}>`;
+}
+
+// ---------------------------------------------------------------------------
+//  Fase 3 (SEVLA): o pedido de plano
+// ---------------------------------------------------------------------------
+
+const BRL = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/** A confirmação para quem pediu: o que foi pedido e o que acontece agora (a equipe combina o pagamento). */
+export function emailDePedidoDePlano(nome: string, empresa: string, pedido: { plano: string; ciclo: string; valor: number }): { subject: string; html: string } {
+  const plano = NOME_DO_PLANO_ATENDE[pedido.plano as keyof typeof NOME_DO_PLANO_ATENDE] ?? pedido.plano;
+  const ciclo = pedido.ciclo === 'anual' ? 'anual' : 'mensal';
+  return {
+    subject: `Recebemos o seu pedido do plano ${plano} — ${ATENDE.nome}`,
+    html: layoutAtende({
+      titulo: `Olá, ${escapeHtml(primeiroNome(nome))}.`,
+      corpo:
+        p(`Registramos o pedido do plano <strong>${escapeHtml(plano)}</strong> (${ciclo}, ${escapeHtml(BRL(pedido.valor))}/mês) para a <strong>${escapeHtml(empresa)}</strong> no ${escapeHtml(ATENDE.nome)}.`) +
+        p('A equipe da SEVLA INFINITY entra em contato por este e-mail para combinar o pagamento e ativar o plano. Enquanto isso, a empresa continua usando o sistema normalmente.'),
+      botao: { texto: 'Abrir o Atende Aí', href: `${atendeUrl(siteUrl())}/central` },
+      observacao: `Se não foi você quem pediu, responda a este e-mail.`,
+    }),
+  };
+}
+
+/** O aviso para a equipe da SEVLA: quem pediu, qual empresa, qual plano. Responder ao e-mail responde à pessoa. */
+export function emailDePedidoDePlanoParaEquipe(empresa: { id: string; nome: string; segmento: string | null }, pessoa: { nome: string; email: string }, pedido: { plano: string; ciclo: string; valor: number }): { subject: string; html: string } {
+  const plano = NOME_DO_PLANO_ATENDE[pedido.plano as keyof typeof NOME_DO_PLANO_ATENDE] ?? pedido.plano;
+  return {
+    subject: `[Atende Aí] Pedido de plano: ${empresa.nome} — ${plano} ${pedido.ciclo}`,
+    html: layoutAtende({
+      titulo: 'Pedido de plano no Atende Aí',
+      corpo:
+        p(`<strong>Empresa:</strong> ${escapeHtml(empresa.nome)}${empresa.segmento ? ` (${escapeHtml(empresa.segmento)})` : ''}<br><strong>Id:</strong> ${escapeHtml(empresa.id)}`) +
+        p(`<strong>Quem pediu:</strong> ${escapeHtml(pessoa.nome)} &lt;${escapeHtml(pessoa.email)}&gt;`) +
+        p(`<strong>Plano:</strong> ${escapeHtml(plano)} · <strong>Ciclo:</strong> ${escapeHtml(pedido.ciclo)} · <strong>Valor:</strong> ${escapeHtml(BRL(pedido.valor))}/mês`) +
+        p('O Atende Aí ainda não cobra pelo gateway: combine o pagamento com a pessoa e ative o plano na empresa (atende_empresas.plano / plano_ate).'),
+    }),
+  };
 }

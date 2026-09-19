@@ -12,6 +12,8 @@ export type PlanoAtende = 'essencial' | 'profissional' | 'empresarial';
 export const PLANOS_ATENDE: readonly PlanoAtende[] = ['essencial', 'profissional', 'empresarial'];
 
 export type CicloAtende = 'mensal' | 'anual';
+/** Dias de avaliação com tudo liberado — igual ao Stok Aí (a regra é a mesma função). */
+export const AVALIACAO_DIAS_ATENDE = 7;
 /** Meses de desconto no anual — igual ao Stok Aí. */
 export const MESES_GRATIS_NO_ANUAL_ATENDE = 2;
 
@@ -104,6 +106,87 @@ export function precoFormatado(plano: PlanoAtende, ciclo: CicloAtende): string {
   return p === null ? 'R$ XX' : p.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-export function planoAtendeLibera(plano: PlanoAtende, recurso: RecursoAtende): boolean {
-  return DEFINICOES_ATENDE[plano].recursos.includes(recurso);
+// ---------------------------------------------------------------------------
+//  O plano em vigor e o que ele libera (o servidor e as telas perguntam aqui)
+// ---------------------------------------------------------------------------
+
+/** O plano que vale hoje: um dos três, ou a avaliação (7 dias com tudo liberado). */
+export type PlanoAtendeEfetivo = PlanoAtende | 'avaliacao';
+
+export const NOME_DO_PLANO_ATENDE: Record<PlanoAtendeEfetivo, string> = { essencial: 'Essencial', profissional: 'Profissional', empresarial: 'Empresarial', avaliacao: 'Avaliação' };
+
+export function ehPlanoAtende(s: unknown): s is PlanoAtende {
+  return typeof s === 'string' && (PLANOS_ATENDE as readonly string[]).includes(s);
 }
+
+export function ehCicloAtende(s: unknown): s is CicloAtende {
+  return s === 'mensal' || s === 'anual';
+}
+
+/** A definição que vale: a avaliação usa a do Empresarial, como no Stok Aí. */
+export function definicaoAtende(plano: PlanoAtendeEfetivo): DefinicaoDoPlanoAtende {
+  return DEFINICOES_ATENDE[plano === 'avaliacao' ? 'empresarial' : plano];
+}
+
+export function planoAtendeLibera(plano: PlanoAtendeEfetivo, recurso: RecursoAtende): boolean {
+  return definicaoAtende(plano).recursos.includes(recurso);
+}
+
+/** O limite do plano para uma contagem. `null` = sem limite. */
+export function limiteAtende(plano: PlanoAtendeEfetivo, limite: LimiteAtende): number | null {
+  return definicaoAtende(plano).limites[limite];
+}
+
+/** Com `atual` já existentes, cabe mais um? */
+export function cabeMaisUmNoAtende(plano: PlanoAtendeEfetivo, limite: LimiteAtende, atual: number): boolean {
+  const max = limiteAtende(plano, limite);
+  return max === null || atual < max;
+}
+
+/** O plano mais barato que tem o recurso. */
+export function planoAtendeMinimoPara(recurso: RecursoAtende): PlanoAtende {
+  return PLANOS_ATENDE.find((p) => DEFINICOES_ATENDE[p].recursos.includes(recurso)) ?? 'empresarial';
+}
+
+/** O plano mais barato cujo limite comporta `necessario`. `null` se nenhum. */
+export function planoAtendeMinimoParaLimite(limite: LimiteAtende, necessario: number): PlanoAtende | null {
+  return PLANOS_ATENDE.find((p) => cabeMaisUmNoAtende(p, limite, necessario - 1)) ?? null;
+}
+
+const NOME_DO_RECURSO: Record<RecursoAtende, string> = {
+  'triagem-ia': 'Triagem por IA',
+  supervisao: 'Supervisão em tempo real',
+  dashboard: 'Dashboard',
+  push: 'Notificações no celular (push)',
+  leads: 'Leads no funil',
+  'ponte-stok': 'Entrar com a conta do Stok Aí',
+};
+
+const ROTULO_DO_LIMITE: Record<LimiteAtende, [singular: string, plural: string]> = {
+  atendentes: ['pessoa na equipe', 'pessoas na equipe'],
+  numeros: ['número de WhatsApp', 'números de WhatsApp'],
+  times: ['setor', 'setores'],
+  triagens_por_mes: ['triagem por mês', 'triagens por mês'],
+};
+
+function descreverLimite(limite: LimiteAtende, max: number | null): string {
+  const [um, varios] = ROTULO_DO_LIMITE[limite];
+  if (max === null) return `${varios} sem limite`;
+  return max === 1 ? `1 ${um}` : `até ${max} ${varios}`;
+}
+
+/** A frase do 402 quando o plano não tem o recurso. */
+export function mensagemDeRecursoAtende(recurso: RecursoAtende): string {
+  return `${NOME_DO_RECURSO[recurso]} está disponível a partir do plano ${NOME_DO_PLANO_ATENDE[planoAtendeMinimoPara(recurso)]}.`;
+}
+
+/** A frase do 402 quando a contagem bateu no teto. */
+export function mensagemDeLimiteAtende(plano: PlanoAtendeEfetivo, limite: LimiteAtende): string {
+  const max = limiteAtende(plano, limite);
+  const proximo = max === null ? null : planoAtendeMinimoParaLimite(limite, max + 1);
+  const sufixo = proximo ? ` Para mais, o plano ${NOME_DO_PLANO_ATENDE[proximo]}.` : ' Para mais, fale com a gente.';
+  return `O plano ${NOME_DO_PLANO_ATENDE[plano]} inclui ${descreverLimite(limite, max)}.${sufixo}`;
+}
+
+/** Nome do ciclo, para as telas. */
+export const NOME_DO_CICLO_ATENDE: Record<CicloAtende, string> = { mensal: 'Mensal', anual: 'Anual' };

@@ -39,7 +39,7 @@ export interface EmpresaNaMinhaSevla {
   organization_id: string;
   organizacao: string;
   papel: string;
-  /** 'assinada' | 'avaliacao' | 'carencia' | 'bloqueada' | 'encerrada' (Stok); 'ativa' (Atende, até ter plano). Nulo quando não se sabe. */
+  /** 'assinada' | 'avaliacao' | 'carencia' | 'bloqueada' | 'encerrada' (Stok) ou sem 'encerrada' (Atende). Nulo quando não se sabe. */
   situacao: string | null;
   plano: string | null;
   empresa_id: string | null;

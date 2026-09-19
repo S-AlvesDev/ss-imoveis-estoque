@@ -24,6 +24,8 @@ export const TELAS = {
   times: 'times',
   equipe: 'equipe',
   whatsapp: 'whatsapp',
+  /** O plano da empresa e a contratação (administrador). */
+  plano: 'plano',
   conta: 'conta',
 } as const;
 

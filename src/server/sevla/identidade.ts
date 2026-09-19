@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { supabaseServer } from '../../lib/supabaseServer';
 import { ALL_INVENTORY_ROLES } from '../../shared/constants';
 import { contaDaOrg } from '../planos';
+import { contaDaEmpresa } from '../../atende/server/plano';
 import { assinarSessao as assinarSessaoDoAtende } from '../../atende/server/auth';
 import { entrarPelaPonte, podeAtivar, ErroDaPonte } from '../../atende/server/ponte';
 import type { Papel } from '../../atende/shared/papeis';
@@ -231,10 +232,15 @@ export async function minhaSevla(conta: ContaSevla): Promise<MinhaSevla> {
         } catch {
           /* sem leitura, sem inventar */
         }
-      } else {
-        // O Atende Aí ainda não tem plano (Fase 3): ativo, sem plano.
-        situacao = 'ativa';
-        plano = null;
+      } else if (a.empresa_id) {
+        // A situação da empresa no Atende Aí: a mesma regra (avaliação, plano, carência), lida da tabela dele.
+        try {
+          const c = await contaDaEmpresa(a.empresa_id);
+          situacao = c.situacao;
+          plano = c.plano;
+        } catch {
+          /* sem leitura, sem inventar */
+        }
       }
       empresas.push({ organization_id: a.organization_id, organizacao: a.organizacao, papel: a.papel, situacao, plano, empresa_id: a.empresa_id });
     }

@@ -1,4 +1,5 @@
 import type { Papel } from './papeis';
+import type { CicloAtende, PlanoAtende, PlanoAtendeEfetivo } from './planos';
 
 /** O que o navegador sabe de quem entrou. Vem do JWT e do /me. */
 export interface SessaoAtende {
@@ -81,6 +82,51 @@ export interface BootstrapAtende {
   equipe: Funcionario[];
   /** O WhatsApp da empresa, como está gravado (sem consultar a Evolution). */
   conexao: Conexao | null;
+  /** A situação da assinatura da empresa e o plano que vale hoje. */
+  conta: ContaAtende;
+}
+
+// ---------------------------------------------------------------------------
+//  Fase 3 (SEVLA): o plano da empresa
+// ---------------------------------------------------------------------------
+
+export type SituacaoDaContaAtende = 'assinada' | 'avaliacao' | 'carencia' | 'bloqueada';
+
+/** O mesmo shape da conta do Stok Aí (src/shared/planos.ts), sem "encerrada": o Atende ainda não encerra empresa. */
+export interface ContaAtende {
+  situacao: SituacaoDaContaAtende;
+  /** O plano que vale hoje: na avaliação e na carência ainda vale; bloqueada não vale nenhum. */
+  plano: PlanoAtendeEfetivo;
+  /** Quando a situação atual termina. Nulo = sem prazo (cortesia, ou empresa de antes da cobrança). */
+  ate: string | null;
+  dias_restantes: number | null;
+  /** Automática (cartão) ou manual; nulo sem cobrança. */
+  renovacao: 'automatica' | 'manual' | null;
+}
+
+export type StatusDaAssinaturaAtende = 'pendente' | 'autorizada' | 'pausada' | 'cancelada';
+
+/** Um pedido de contratação (ou a assinatura, quando houver gateway). */
+export interface AssinaturaAtende {
+  id: string;
+  plano: PlanoAtende;
+  ciclo: CicloAtende;
+  /** Por mês, no ciclo escolhido. */
+  valor: number;
+  status: StatusDaAssinaturaAtende;
+  payer_email: string | null;
+  created_at: string;
+  autorizada_em: string | null;
+  cancelada_em: string | null;
+}
+
+/** GET /api/atende/assinatura — o que a tela de plano mostra. */
+export interface SituacaoDaAssinatura {
+  conta: ContaAtende;
+  /** O pedido pendente ou a assinatura em vigor; nulo quando não há nenhum. */
+  assinatura: AssinaturaAtende | null;
+  /** Quantas pessoas ativas e setores existem — para a tela mostrar "3 de 10". */
+  uso: { atendentes: number; times: number };
 }
 
 // ---------------------------------------------------------------------------

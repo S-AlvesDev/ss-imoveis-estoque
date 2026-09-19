@@ -4,6 +4,8 @@ import { linkWhatsApp } from '@/shared/produto';
 import { caminhoDe, TELAS } from '../../router';
 import { BASE_DE_TODO_PLANO, DEFINICOES_ATENDE, MESES_GRATIS_NO_ANUAL_ATENDE, PLANOS_ATENDE, precoFormatado, type CicloAtende } from '../../../shared/planos';
 import { Botao, Container, Eyebrow, Revelar, cta } from './Vitrine';
+import { useSessaoAtende } from '../../store/sessao';
+import { guardarPlanoEscolhido } from '../Plano';
 
 /**
  * Os planos do Atende Aí, públicos. Os preços vêm do catálogo
@@ -12,6 +14,8 @@ import { Botao, Container, Eyebrow, Revelar, cta } from './Vitrine';
  */
 export function SecaoPlanos({ compacta = false }: { compacta?: boolean }) {
   const [ciclo, setCiclo] = useState<CicloAtende>('mensal');
+  // Quem já entrou pede o plano direto na tela de plano; quem não, cria a conta primeiro.
+  const logado = useSessaoAtende((s) => Boolean(s.sessao));
   const semPreco = PLANOS_ATENDE.every((p) => DEFINICOES_ATENDE[p].preco === null);
 
   return (
@@ -59,8 +63,8 @@ export function SecaoPlanos({ compacta = false }: { compacta?: boolean }) {
                       <span>Suporte: {p.suporte}</span>
                     </li>
                   </ul>
-                  <Botao href={caminhoDe(TELAS.criarConta)} variante={p.destaque ? 'primario' : 'contorno'} alvo={`plano-${id}`} className="mt-7 w-full">
-                    Começar com o {p.nome}
+                  <Botao href={caminhoDe(logado ? TELAS.plano : TELAS.criarConta)} variante={p.destaque ? 'primario' : 'contorno'} alvo={`plano-${id}`} className="mt-7 w-full" aoClicar={() => guardarPlanoEscolhido(id, ciclo)}>
+                    {logado ? `Pedir o ${p.nome}` : `Começar com o ${p.nome}`}
                   </Botao>
                 </article>
               </Revelar>

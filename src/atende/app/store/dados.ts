@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
 import { useCentral } from './central';
-import type { BootstrapAtende, Empresa, Funcionario, Time } from '../../shared/tipos';
+import type { BootstrapAtende, ContaAtende, Empresa, Funcionario, Time } from '../../shared/tipos';
 
 /**
  * O que o shell carrega ao entrar (empresa, times, equipe) e mantém em
@@ -14,8 +14,12 @@ interface Dados {
   empresa: Empresa | null;
   times: Time[];
   equipe: Funcionario[];
+  /** A situação do plano da empresa (avaliação, assinada, carência, bloqueada). */
+  conta: ContaAtende | null;
   carregar: () => Promise<BootstrapAtende | null>;
-  aplicar: (parte: Partial<Pick<Dados, 'empresa' | 'times' | 'equipe'>>) => void;
+  aplicar: (parte: Partial<Pick<Dados, 'empresa' | 'times' | 'equipe' | 'conta'>>) => void;
+  /** O servidor respondeu 402 com `bloqueada`: a avaliação terminou no meio do uso. */
+  marcarBloqueada: () => void;
   limpar: () => void;
 }
 
@@ -25,10 +29,11 @@ export const useDadosAtende = create<Dados>((set) => ({
   empresa: null,
   times: [],
   equipe: [],
+  conta: null,
   carregar: async () => {
     try {
       const b = await api.get<BootstrapAtende>('/bootstrap');
-      set({ carregado: true, erro: null, empresa: b.empresa, times: b.times, equipe: b.equipe });
+      set({ carregado: true, erro: null, empresa: b.empresa, times: b.times, equipe: b.equipe, conta: b.conta ?? null });
       // O cartão do WhatsApp na barra lateral lê daqui; o sync da Central mantém atualizado depois.
       useCentral.setState({ conexao: b.conexao });
       return b;
@@ -38,5 +43,6 @@ export const useDadosAtende = create<Dados>((set) => ({
     }
   },
   aplicar: (parte) => set(parte),
-  limpar: () => set({ carregado: false, erro: null, empresa: null, times: [], equipe: [] }),
+  marcarBloqueada: () => set((s) => (s.conta && s.conta.situacao !== 'bloqueada' ? { conta: { ...s.conta, situacao: 'bloqueada', plano: 'avaliacao', dias_restantes: 0 } } : {})),
+  limpar: () => set({ carregado: false, erro: null, empresa: null, times: [], equipe: [], conta: null }),
 }));

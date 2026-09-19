@@ -1,4 +1,5 @@
 import { useSessaoAtende } from '../store/sessao';
+import { useDadosAtende } from '../store/dados';
 
 /**
  * O cliente HTTP do Atende Aí. Igual ao do Stok Aí no formato, separado no
@@ -32,6 +33,8 @@ async function pedir<T>(caminho: string, opcoes: RequestInit = {}): Promise<T> {
     }
     throw new ErroDaApi(body?.error || 'Não foi possível entrar.', 401, body);
   }
+  // 402 com `bloqueada`: a avaliação terminou enquanto a pessoa usava. O shell troca para a tela de plano.
+  if (res.status === 402 && body?.bloqueada) useDadosAtende.getState().marcarBloqueada();
   if (!res.ok) throw new ErroDaApi(body?.error || `Erro ${res.status} ao comunicar com o servidor.`, res.status, body);
   return body as T;
 }
