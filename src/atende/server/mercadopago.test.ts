@@ -20,7 +20,7 @@ vi.mock('../../lib/supabaseServer', () => {
   let seq = 0;
   function construtor(tabela: string) {
     const filtros: Array<(l: any) => boolean> = [];
-    let acao: 'select' | 'update' | 'insert' | 'delete' = 'select';
+    let acao: 'select' | 'update' | 'insert' | 'upsert' | 'delete' = 'select';
     let valores: any = null;
     let unico = false;
     const linhas = () => (banco.tabelas[tabela] ??= []);
@@ -30,6 +30,14 @@ vi.mock('../../lib/supabaseServer', () => {
         const nova = { id: `l${++seq}`, created_at: 'agora', ...valores };
         linhas().push(nova);
         return { data: unico ? nova : [nova], error: null };
+      }
+      if (acao === 'upsert') {
+        const chave = 'mp_authorized_payment_id';
+        const existente = linhas().find((l) => l[chave] && l[chave] === valores[chave]);
+        if (existente) Object.assign(existente, valores);
+        const linha = existente ?? { id: `l${++seq}`, created_at: 'agora', ...valores };
+        if (!existente) linhas().push(linha);
+        return { data: unico ? linha : [linha], error: null };
       }
       if (acao === 'update') {
         const alvo = linhas().filter(casa);
@@ -54,6 +62,10 @@ vi.mock('../../lib/supabaseServer', () => {
       single: () => ((unico = true), b),
       update: (v: any) => ((acao = 'update'), (valores = v), b),
       insert: (v: any) => ((acao = 'insert'), (valores = v), b),
+      upsert: (v: any) => ((acao = 'upsert'), (valores = v), b),
+      or: () => b,
+      gt: () => b,
+      not: () => b,
       delete: () => ((acao = 'delete'), b),
       then: (ok: (r: any) => any, falha?: (e: any) => any) => Promise.resolve(executar()).then(ok, falha),
     };
@@ -109,6 +121,8 @@ beforeEach(() => {
   banco.tabelas = {
     atende_empresas: [{ id: EMPRESA, organization_id: ORG, plano: null, plano_desde: null, plano_ate: null, avaliacao_ate: '2026-09-26T00:00:00.000Z', cobranca: null }],
     atende_assinaturas: [],
+    atende_pagamentos: [],
+    atende_usuarios: [],
   };
   mp.preapprovals = {};
   mp.autorizados = {};
@@ -213,7 +227,7 @@ describe('Atende Aí no Mercado Pago — o que o MP conta', () => {
   });
 
   it('cobrança aprovada estende o plano até a próxima; agendada não muda nada', async () => {
-    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 599.9, status: 'autorizada', mp_preapproval_id: 'pre-1', created_at: 'agora' }];
+    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 599.9, status: 'autorizada', mp_preapproval_id: 'pre-1', payer_email: 'ana@empresa.com', created_at: 'agora' }];
     mp.preapprovals['pre-1'] = pre({ next_payment_date: '2026-11-19T12:00:00.000Z' });
     mp.autorizados['ap-1'] = { id: 'ap-1', preapproval_id: 'pre-1', status: 'scheduled', payment: null };
     const agendado = await tratarEventoDoAtende('subscription_authorized_payment', 'ap-1');
@@ -224,6 +238,13 @@ describe('Atende Aí no Mercado Pago — o que o MP conta', () => {
     expect(pago!.casou).toBe(true);
     expect(banco.tabelas.atende_empresas[0]).toMatchObject({ plano: 'profissional', plano_ate: '2026-11-19T12:00:00.000Z' });
     expect(banco.tabelas.atende_assinaturas[0].proxima_cobranca).toBe('2026-11-19T12:00:00.000Z');
+    // As duas cobranças viraram histórico (a agendada e a aprovada), no shape do Stok, com o pagador de quem assinou.
+    const pgs = banco.tabelas.atende_pagamentos;
+    expect(pgs.map((p) => [p.mp_authorized_payment_id, p.status])).toEqual([
+      ['ap-1', 'agendado'],
+      ['ap-2', 'aprovado'],
+    ]);
+    expect(pgs[1]).toMatchObject({ plano: 'profissional', ciclo: 'mensal', metodo: 'cartao', nf_status: 'pendente', periodo_ate: '2026-11-19T12:00:00.000Z', pagador: { email: 'ana@empresa.com' } });
   });
 
   it('sincronizar sem id acha a assinatura recente com a referência da empresa', async () => {

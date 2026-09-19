@@ -64,6 +64,16 @@ export function Historico({ conversa }: { conversa: Conversa }) {
         return `${quem ?? 'Alguém'} moveu o lead: ${d.de ?? 'novo'} → ${d.para}`;
       case 'encerrada':
         return `${quem ?? 'Alguém'} encerrou${d.motivo ? ` — ${d.motivo}` : ''}`;
+      case 'sla_aviso':
+        return `SLA: ${d.minutos} min sem resposta — quem atende e quem supervisiona foram avisados (limite ${d.limite} min)`;
+      case 'sla_escalonada':
+        return `SLA: ${d.minutos} min sem resposta — foi para a fila geral com prioridade alta${time(d.de_time) ? ` (saiu de ${time(d.de_time)})` : ''}`;
+      case 'followup_sugerido':
+        return `IA sugeriu uma mensagem de retomada (cliente em silêncio há ${d.horas} h)`;
+      case 'followup_enviado':
+        return `${quem ?? 'Alguém'} enviou a retomada${d.editado ? ' (editada)' : ' sugerida pela IA'}`;
+      case 'followup_descartado':
+        return `${quem ?? 'Alguém'} descartou a sugestão de retomada`;
       case 'reaberta':
         if (d.por === 'cliente') return 'Reaberta pelo cliente (escreveu de novo)';
         if (d.por === 'aparelho') return 'Reaberta pela empresa, pelo celular';

@@ -43,6 +43,10 @@ export interface Empresa {
   triagem_ativa: boolean;
   /** Fora do horário, a IA manda a mensagem de fora do horário (ou a saudação dela). Desligado: silêncio até abrir. */
   responde_fora_do_horario: boolean;
+  /** SLA: minutos sem resposta ao cliente até avisar quem atende/supervisiona; nulo = desligado. */
+  sla_aviso_min: number | null;
+  /** SLA: minutos até a conversa ir para a fila geral com prioridade alta; nulo = desligado. */
+  sla_escalonar_min: number | null;
   criado_em: string;
 }
 
@@ -122,6 +126,35 @@ export interface AssinaturaAtende {
   cancelada_em: string | null;
 }
 
+/** Uma cobrança da assinatura (o mesmo shape do Stok Aí: recibo e nota fiscal reaproveitam o código). */
+export interface PagamentoAtende {
+  id: string;
+  status: 'agendado' | 'aprovado' | 'recusado' | 'cancelado' | 'reembolsado' | 'pendente';
+  valor: number;
+  moeda: string;
+  detalhe: string | null;
+  data: string;
+  metodo: 'cartao' | 'pix' | 'boleto';
+  plano: PlanoAtende | null;
+  ciclo: CicloAtende | null;
+  periodo_de: string | null;
+  periodo_ate: string | null;
+  mp_payment_id: string | null;
+  nf_status: 'pendente' | 'emitida' | 'erro' | 'cancelada' | null;
+  nf_numero: string | null;
+  nf_url: string | null;
+  recibo_enviado_em: string | null;
+}
+
+/** Quem aparece no recibo e na nota fiscal. */
+export interface FaturamentoAtende {
+  nome: string;
+  tipoDoc: 'CPF' | 'CNPJ';
+  doc: string;
+  email?: string | null;
+  endereco?: { cep: string; rua: string; numero: string; bairro: string; cidade: string; uf: string } | null;
+}
+
 /** GET /api/atende/assinatura — o que a tela de plano mostra. */
 export interface SituacaoDaAssinatura {
   conta: ContaAtende;
@@ -131,6 +164,10 @@ export interface SituacaoDaAssinatura {
   uso: { atendentes: number; times: number };
   /** O Mercado Pago está ligado: "Assinar" leva ao checkout. Senão, o pedido vai por e-mail para a equipe. */
   pagamento_online: boolean;
+  /** As cobranças, mais recentes primeiro (vazio até a primeira). */
+  pagamentos: PagamentoAtende[];
+  /** Dados de faturamento cadastrados (nulo = recibo em nome de quem assinou; sem nota fiscal). */
+  faturamento: FaturamentoAtende | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +343,11 @@ export interface Lead {
   atualizado_por: number | null;
   criado_em: string;
   atualizado_em: string;
+  /** A retomada sugerida pela IA (cliente em silêncio há 24 h), à espera de alguém enviar ou descartar. */
+  followup_sugestao: string | null;
+  followup_sugerido_em: string | null;
+  followup_enviado_em: string | null;
+  followup_descartado_em: string | null;
 }
 
 /** O que a simulação da triagem devolve (nada é gravado nem enviado). */

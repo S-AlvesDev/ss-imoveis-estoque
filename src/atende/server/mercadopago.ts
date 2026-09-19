@@ -4,6 +4,8 @@ import { DEFINICOES_ATENDE, NOME_DO_CICLO_ATENDE, PLANOS_ATENDE, ehCicloAtende, 
 import type { AssinaturaAtende, SessaoAtende } from '../shared/tipos';
 import { ATENDE } from '../shared/produto';
 import { assinaturaDaEmpresa, esquecerContaAtende, ErroDePlano } from './plano';
+import { registrarPagamentoAtende, cuidarDaCobranca } from './cobrancas';
+import type { PagamentoAtende } from '../shared/tipos';
 import type { ScopedDb } from '../../server/tenant';
 
 /**
@@ -88,6 +90,27 @@ interface Linha {
 }
 
 const paraAssinatura = (a: Linha): AssinaturaAtende => ({ id: a.id, plano: a.plano, ciclo: a.ciclo, valor: Number(a.valor), status: a.status, payer_email: a.payer_email, proxima_cobranca: a.proxima_cobranca, created_at: a.created_at, autorizada_em: a.autorizada_em, cancelada_em: a.cancelada_em });
+
+/** De uma cobrança do MP (status da cobrança + status do pagamento) para o nosso — a mesma tabela do Stok Aí. */
+export function traduzirPagamento(ap: Pick<PagamentoAutorizadoMp, 'status' | 'payment'>): { status: PagamentoAtende['status']; detalhe: string | null } {
+  const p = ap.payment?.status;
+  const detalhe = ap.payment?.status_detail ?? null;
+  if (ap.status === 'recycling') return { status: 'pendente', detalhe: detalhe ?? 'nova tentativa agendada' };
+  if (p === 'rejected') return { status: 'recusado', detalhe };
+  if (ap.status === 'scheduled') return { status: 'agendado', detalhe };
+  if (ap.status === 'cancelled') return { status: 'cancelado', detalhe };
+  switch (p) {
+    case 'approved':
+      return { status: 'aprovado', detalhe };
+    case 'refunded':
+    case 'charged_back':
+      return { status: 'reembolsado', detalhe };
+    case 'cancelled':
+      return { status: 'cancelado', detalhe };
+    default:
+      return { status: 'pendente', detalhe };
+  }
+}
 
 export function traduzirStatus(s: string | undefined): StatusAssinatura {
   switch (s) {
@@ -264,14 +287,21 @@ export async function aplicarPagamentoAutorizadoAtende(ap: PagamentoAutorizadoMp
     if (!r || !r.casou) return r;
   }
   const a = (linha as Linha | null) ?? ((await supabaseServer.from('atende_assinaturas').select('*').eq('mp_preapproval_id', ap.preapproval_id).maybeSingle()).data as Linha);
-  const aprovado = ap.status === 'processed' && ap.payment?.status === 'approved';
+  const { status, detalhe } = traduzirPagamento(ap);
+  const aprovado = status === 'aprovado';
+  let periodoAte: string | null = null;
   if (aprovado) {
     const pre = await buscarAssinatura(ap.preapproval_id);
     const agora = new Date().toISOString();
+    periodoAte = planoAteDe(pre, a.ciclo);
     await supabaseServer.from('atende_assinaturas').update({ proxima_cobranca: pre.next_payment_date ?? null, status: traduzirStatus(pre.status), updated_at: agora }).eq('id', a.id);
-    await supabaseServer.from('atende_empresas').update({ plano: a.plano, plano_ate: planoAteDe(pre, a.ciclo), cobranca: 'cartao' }).eq('id', a.empresa_id);
+    await supabaseServer.from('atende_empresas').update({ plano: a.plano, plano_ate: periodoAte, cobranca: 'cartao' }).eq('id', a.empresa_id);
     esquecerContaAtende(a.empresa_id);
   }
+  // A cobrança vira histórico (e recibo/nota quando aprovada) — como no Stok Aí.
+  const data = ap.debit_date ?? ap.date_created ?? new Date().toISOString();
+  const pg = await registrarPagamentoAtende({ empresaId: a.empresa_id, assinaturaId: a.id, plano: a.plano, ciclo: a.ciclo, payerEmail: a.payer_email, mpAuthorizedPaymentId: String(ap.id), mpPaymentId: ap.payment?.id != null ? String(ap.payment.id) : null, status, valor: ap.transaction_amount ?? Number(a.valor), moeda: ap.currency_id ?? 'BRL', detalhe, data, periodoDe: aprovado ? data : null, periodoAte });
+  if (pg && aprovado) await cuidarDaCobranca(pg, a.empresa_id);
   return { casou: true, empresaId: a.empresa_id, organizationId: await organizacaoDaEmpresa(a.empresa_id), assinatura: paraAssinatura(a), motivo: aprovado ? undefined : `cobrança ${ap.status}/${ap.payment?.status ?? '-'}` };
 }
 

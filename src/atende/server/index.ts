@@ -19,6 +19,11 @@ import { carregarConta, negarLimiteAtende, negarRecursoAtende, situacaoDaAssinat
 import { emailDePedidoDePlano, emailDePedidoDePlanoParaEquipe } from './email';
 import { pagamentoOnlineAtende, iniciarAssinaturaAtende, cancelarAssinaturaAtende, sincronizarAtende } from './mercadopago';
 import { ErroDoMercadoPago, mensagemParaOPagador } from '../../server/mercadopago';
+import { vigiarSlaSePassouUmMinuto, vigiarSlaDeTodas } from './sla';
+import { gerarFollowupsSePassouUmaHora, gerarFollowupsDeTodas } from './followup';
+import { lembretesDoAtende, cobrancasPendentes, validarFaturamento } from './cobrancas';
+import { resumosSemanaisDoAtende, vigiarConexoesDoAtende } from './rotinas';
+import { enviarFollowup, descartarFollowup } from './conversas';
 import { destinatarioDemo, remetente } from '../../server/mail';
 import type { PeriodoDoDashboard } from '../shared/tipos';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
@@ -32,7 +37,7 @@ import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '
  * acontecem antes de existir empresa no contexto — como no Stok Aí.
  */
 
-const EMPRESA_COLUNAS = 'id, nome, slug, segmento, descricao, produtos_servicos, informacoes_ia, faq, horario_atendimento, regras_atendimento, mensagem_fora_do_horario, triagem_ativa, responde_fora_do_horario, criado_em';
+const EMPRESA_COLUNAS = 'id, nome, slug, segmento, descricao, produtos_servicos, informacoes_ia, faq, horario_atendimento, regras_atendimento, mensagem_fora_do_horario, triagem_ativa, responde_fora_do_horario, sla_aviso_min, sla_escalonar_min, criado_em';
 const USUARIO_COLUNAS = 'id, nome, email, papel, ativo, presenca, presenca_em, ultimo_acesso, criado_em';
 
 /** E-mail vira padrão de ilike sem curingas: % e _ escapados. */
@@ -240,6 +245,31 @@ export function criarRouterAtende(): express.Router {
     } catch (err: any) {
       console.error('[atende webhook] erro:', err.message);
       res.status(500).json({ error: 'Falha ao processar.' });
+    }
+  });
+
+  /**
+   * As rotinas diárias — chamadas pelo cron da Vercel (`Authorization: Bearer CRON_SECRET`),
+   * o mesmo segredo do cron do Stok Aí. Lembretes de vencimento, recibos/notas que ficaram
+   * para trás, WhatsApp caído, o resumo da semana às segundas, o SLA e os follow-ups.
+   */
+  r.get('/cron', async (req, res) => {
+    const segredo = process.env.CRON_SECRET;
+    if (!segredo || req.header('authorization') !== `Bearer ${segredo}`) return res.status(401).json({ error: 'Não autorizado.' });
+    try {
+      const agora = new Date();
+      const lembretes = await lembretesDoAtende(agora);
+      const cobrancas = await cobrancasPendentes();
+      const conexoes = await vigiarConexoesDoAtende();
+      const segunda = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Sao_Paulo' }).format(agora) === 'Mon';
+      const resumos = segunda ? await resumosSemanaisDoAtende(agora) : { empresas: 0, enviados: 0 };
+      const sla = await vigiarSlaDeTodas(agora);
+      const followups = await gerarFollowupsDeTodas(agora);
+      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}.`);
+      res.json({ lembretes, cobrancas, conexoes, resumos, sla, followups });
+    } catch (err: any) {
+      console.error('[GET /api/atende/cron] erro:', err.message);
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -518,6 +548,9 @@ export function criarRouterAtende(): express.Router {
   r.get('/sync', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
     try {
       const desde = typeof req.query.desde === 'string' && !Number.isNaN(Date.parse(req.query.desde)) ? req.query.desde : null;
+      // Enquanto alguém está online, o SLA e o follow-up rodam por aqui (sem segurar a resposta).
+      vigiarSlaSePassouUmMinuto(req.sessao!.empresa_id);
+      gerarFollowupsSePassouUmaHora(req.sessao!.empresa_id);
       res.json(await delta(req, desde));
     } catch (err: any) {
       tratar(res, err, 'GET /api/atende/sync', 'Erro ao sincronizar.');
@@ -687,6 +720,22 @@ export function criarRouterAtende(): express.Router {
     }
   });
 
+  /** A retomada sugerida pela IA só sai pela mão de alguém: envia (com o texto editado ou não) ou descarta. */
+  r.post('/conversas/:id/followup/enviar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await enviarFollowup(req, req.params.id, req.body?.texto));
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/followup/enviar', 'Não foi possível enviar a retomada.');
+    }
+  });
+  r.post('/conversas/:id/followup/descartar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ lead: await descartarFollowup(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/followup/descartar', 'Não foi possível descartar a sugestão.');
+    }
+  });
+
   r.patch('/conversas/:id/lead', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
     try {
       res.json({ lead: await atualizarLead(req, req.params.id, req.body ?? {}) });
@@ -801,6 +850,19 @@ export function criarRouterAtende(): express.Router {
       if (err instanceof ErroDePlano) return res.status(err.status).json({ error: err.message });
       if (err instanceof ErroDoMercadoPago) return res.status(502).json({ error: 'O Mercado Pago não respondeu como esperado. Tente de novo em instantes.' });
       tratar(res, err, 'POST /api/atende/assinatura/sincronizar', 'Não foi possível conferir a assinatura.');
+    }
+  });
+
+  /** Os dados de faturamento: quem aparece no recibo e na nota fiscal. `null` apaga. */
+  r.put('/assinatura/faturamento', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      const v = validarFaturamento(req.body?.faturamento ?? null);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const { error } = await req.dbAtende!.from('atende_empresas').update({ faturamento: v.valor }).eq('id', req.sessao!.empresa_id);
+      if (error) throw error;
+      res.json(await situacaoDaAssinatura(req.dbAtende!, req.sessao!.empresa_id));
+    } catch (err: any) {
+      tratar(res, err, 'PUT /api/atende/assinatura/faturamento', 'Não foi possível salvar os dados de faturamento.');
     }
   });
 

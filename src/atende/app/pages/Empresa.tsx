@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
-import { Plus, Save, Sparkles, Trash2 } from 'lucide-react';
+import { Plus, Save, Sparkles, Trash2, Timer } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { Card, CardHeader } from '@/shared/ui/Card';
 import { Input, Textarea } from '@/shared/ui/Field';
@@ -38,6 +38,8 @@ export function Empresa() {
         mensagem_fora_do_horario: form.mensagem_fora_do_horario,
         triagem_ativa: form.triagem_ativa,
         responde_fora_do_horario: form.responde_fora_do_horario,
+        sla_aviso_min: form.sla_aviso_min === '' ? null : Number(form.sla_aviso_min),
+        sla_escalonar_min: form.sla_escalonar_min === '' ? null : Number(form.sla_escalonar_min),
         faq: form.faq.filter((f) => f.pergunta.trim() || f.resposta.trim()),
         horario_atendimento: form.horario,
       });
@@ -134,6 +136,16 @@ export function Empresa() {
         </div>
       </Card>
 
+      <Card className="space-y-4 p-5">
+        <CardHeader icon={<Timer size={14} />} title="SLA: tempo sem resposta" />
+        <p className="text-sm text-[var(--text-muted)]">O dashboard mede o tempo de resposta; aqui o sistema age sobre ele. Quando um cliente fica esperando, quem atende e quem supervisiona recebem um aviso (push); passado mais tempo, a conversa vai para a fila geral com prioridade alta, para qualquer pessoa livre pegar. Deixe em branco para desligar.</p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Input label="Avisar após (minutos)" type="number" min={1} max={1440} inputMode="numeric" value={form.sla_aviso_min} onChange={(e) => campo('sla_aviso_min', e.target.value)} placeholder="Ex.: 10" />
+          <Input label="Escalonar para a fila geral após (minutos)" type="number" min={1} max={2880} inputMode="numeric" value={form.sla_escalonar_min} onChange={(e) => campo('sla_escalonar_min', e.target.value)} placeholder="Ex.: 30" />
+        </div>
+        <p className="text-xs text-[var(--text-muted)]">A verificação roda enquanto alguém da equipe está com o Atende Aí aberto (a cada minuto) e uma vez por dia pelo servidor.</p>
+      </Card>
+
       <div className="flex justify-end">
         <Button type="submit" loading={salvando} icon={<Save size={15} />}>
           Salvar
@@ -170,6 +182,8 @@ function paraForm(e: TEmpresa) {
     mensagem_fora_do_horario: e.mensagem_fora_do_horario ?? '',
     triagem_ativa: e.triagem_ativa !== false,
     responde_fora_do_horario: e.responde_fora_do_horario !== false,
+    sla_aviso_min: e.sla_aviso_min === null || e.sla_aviso_min === undefined ? '' : String(e.sla_aviso_min),
+    sla_escalonar_min: e.sla_escalonar_min === null || e.sla_escalonar_min === undefined ? '' : String(e.sla_escalonar_min),
     faq: (e.faq ?? []) as PerguntaFrequente[],
     horario,
   };

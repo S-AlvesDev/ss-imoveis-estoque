@@ -71,6 +71,8 @@ export interface DadosDaEmpresa {
   mensagem_fora_do_horario?: string | null;
   triagem_ativa?: boolean;
   responde_fora_do_horario?: boolean;
+  sla_aviso_min?: number | null;
+  sla_escalonar_min?: number | null;
 }
 
 /** O PATCH da empresa: só o que veio é validado e devolvido; o resto fica como está. */
@@ -90,6 +92,23 @@ export function validarEmpresa(body: unknown): Validado<DadosDaEmpresa> {
   if (b.mensagem_fora_do_horario !== undefined) d.mensagem_fora_do_horario = texto(b.mensagem_fora_do_horario, 500);
   if (b.triagem_ativa !== undefined) d.triagem_ativa = b.triagem_ativa === true;
   if (b.responde_fora_do_horario !== undefined) d.responde_fora_do_horario = b.responde_fora_do_horario === true;
+  // SLA: inteiros em minutos, ou nulo (desligado). Escalonar depois de avisar.
+  const minutos = (v: unknown, max: number): number | null | false => {
+    if (v === null || v === '' || v === undefined) return null;
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 1 && n <= max ? n : false;
+  };
+  if (b.sla_aviso_min !== undefined) {
+    const n = minutos(b.sla_aviso_min, 1440);
+    if (n === false) return { ok: false, erro: 'O aviso do SLA precisa ser um número de minutos entre 1 e 1440.' };
+    d.sla_aviso_min = n;
+  }
+  if (b.sla_escalonar_min !== undefined) {
+    const n = minutos(b.sla_escalonar_min, 2880);
+    if (n === false) return { ok: false, erro: 'O escalonamento do SLA precisa ser um número de minutos entre 1 e 2880.' };
+    d.sla_escalonar_min = n;
+  }
+  if (d.sla_aviso_min && d.sla_escalonar_min && d.sla_escalonar_min <= d.sla_aviso_min) return { ok: false, erro: 'O escalonamento precisa vir depois do aviso (mais minutos).' };
   if (b.faq !== undefined) {
     if (!Array.isArray(b.faq) || b.faq.length > 50) return { ok: false, erro: 'A lista de perguntas frequentes é inválida (máximo 50).' };
     const faq: PerguntaFrequente[] = [];

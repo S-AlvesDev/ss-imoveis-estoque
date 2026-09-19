@@ -5,6 +5,11 @@
 import { NOME_DO_PLANO, NOME_DO_CICLO, NOME_DO_METODO, type Plano, type Ciclo, type Metodo } from './planos';
 import { PRODUTO } from './produto';
 
+/** De que produto é o recibo. Padrão: Stok Aí; o Atende Aí passa o dele. */
+export interface ProdutoDoRecibo {
+  nome: string;
+}
+
 /** O que um pagamento precisa ter para virar recibo (o servidor e a tela têm mais que isso). */
 export interface PagamentoParaRecibo {
   id: string;
@@ -44,11 +49,11 @@ export function numeroDoRecibo(pg: Pick<PagamentoParaRecibo, 'id' | 'data'>): st
 }
 
 /** O que descreve o pagamento em uma linha. */
-export function descricaoDoRecibo(pg: PagamentoParaRecibo): string {
+export function descricaoDoRecibo(pg: PagamentoParaRecibo, produto: ProdutoDoRecibo = PRODUTO): string {
   const plano = pg.plano ? `Plano ${NOME_DO_PLANO[pg.plano]}` : 'Assinatura';
   const ciclo = pg.ciclo ? ` (${NOME_DO_CICLO[pg.ciclo].toLowerCase()})` : '';
   const periodo = pg.periodo_de && pg.periodo_ate ? ` — período de ${fmtData.format(new Date(pg.periodo_de))} a ${fmtData.format(new Date(pg.periodo_ate))}` : '';
-  return `${plano}${ciclo} do ${PRODUTO.nome}${periodo}`;
+  return `${plano}${ciclo} do ${produto.nome}${periodo}`;
 }
 
 export function formatarDoc(doc: string | null | undefined): string | null {
@@ -77,13 +82,13 @@ export function linhaDoEmitente(nome: string, doc: string | null | undefined): s
 }
 
 /** Tudo que o recibo mostra, tirado do pagamento. */
-export function dadosDoRecibo(pg: PagamentoParaRecibo, empresa: string, emitente: string): DadosDoRecibo {
+export function dadosDoRecibo(pg: PagamentoParaRecibo, empresa: string, emitente: string, produto: ProdutoDoRecibo = PRODUTO): DadosDoRecibo {
   const pagador = (pg.pagador ?? {}) as { nome?: string; doc?: string; email?: string };
   return {
     numero: numeroDoRecibo(pg),
     emitente,
     pagador: { nome: (pagador.nome && pagador.nome.trim()) || empresa, doc: formatarDoc(pagador.doc), email: pagador.email?.trim() || null },
-    descricao: descricaoDoRecibo(pg),
+    descricao: descricaoDoRecibo(pg, produto),
     valor: Number(pg.valor),
     metodo: NOME_DO_METODO[pg.metodo] ?? pg.metodo,
     data: fmtDataHora.format(new Date(pg.data)),

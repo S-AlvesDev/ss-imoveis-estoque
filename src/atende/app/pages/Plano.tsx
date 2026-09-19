@@ -8,7 +8,8 @@ import { useDadosAtende } from '../store/dados';
 import { BASE_DE_TODO_PLANO, DEFINICOES_ATENDE, NOME_DO_CICLO_ATENDE, NOME_DO_PLANO_ATENDE, PLANOS_ATENDE, definicaoAtende, ehCicloAtende, ehPlanoAtende, precoFormatado, type CicloAtende, type PlanoAtende } from '../../shared/planos';
 import { ATENDE } from '../../shared/produto';
 import { linkWhatsApp } from '@/shared/produto';
-import type { SituacaoDaAssinatura } from '../../shared/tipos';
+import type { FaturamentoAtende, PagamentoAtende, SituacaoDaAssinatura } from '../../shared/tipos';
+import { Input } from '@/shared/ui/Field';
 
 /**
  * O plano da empresa (administrador): a situação de hoje, o uso frente aos
@@ -262,6 +263,9 @@ export function Plano() {
         })}
       </div>
 
+      {(dados.pagamentos.length > 0 || emVigor) && <Cobrancas pagamentos={dados.pagamentos} />}
+      {(online || emVigor || dados.faturamento) && <Faturamento atual={dados.faturamento} aoSalvar={receber} />}
+
       <Card className="p-5">
         <CardHeader title="Em todos os planos" />
         <ul className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -330,4 +334,120 @@ function explicacaoDaSituacao(conta: SituacaoDaAssinatura['conta']): string {
     default:
       return 'A avaliação terminou (ou o plano venceu). O atendimento fica pausado até um plano ser ativado.';
   }
+}
+
+const NOME_DO_STATUS: Record<PagamentoAtende['status'], string> = { aprovado: 'Aprovado', agendado: 'Agendado', pendente: 'Pendente', recusado: 'Recusado', cancelado: 'Cancelado', reembolsado: 'Reembolsado' };
+
+/** As cobranças da assinatura, com recibo e nota fiscal quando existem — como o Stok Aí mostra. */
+function Cobrancas({ pagamentos }: { pagamentos: PagamentoAtende[] }) {
+  return (
+    <Card className="p-5">
+      <CardHeader title="Cobranças" />
+      {pagamentos.length === 0 ? (
+        <p className="mt-2 text-sm text-[var(--text-muted)]">Nenhuma cobrança ainda. A primeira aparece aqui quando o Mercado Pago processar.</p>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <tr>
+                <th className="py-1.5 pr-3">Data</th>
+                <th className="py-1.5 pr-3">Referente a</th>
+                <th className="py-1.5 pr-3">Valor</th>
+                <th className="py-1.5 pr-3">Situação</th>
+                <th className="py-1.5">Documentos</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagamentos.map((pg) => (
+                <tr key={pg.id} className="border-t border-[var(--border)]">
+                  <td className="py-2 pr-3 whitespace-nowrap text-[var(--text)]">{dataCurta(pg.data)}</td>
+                  <td className="py-2 pr-3 text-[var(--text)]">{pg.plano ? `${NOME_DO_PLANO_ATENDE[pg.plano]}${pg.ciclo ? ` (${NOME_DO_CICLO_ATENDE[pg.ciclo].toLowerCase()})` : ''}` : 'Assinatura'}{pg.periodo_de && pg.periodo_ate ? <span className="block text-xs text-[var(--text-muted)]">{dataCurta(pg.periodo_de)} a {dataCurta(pg.periodo_ate)}</span> : null}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap text-[var(--text)]">{pg.valor.toLocaleString('pt-BR', { style: 'currency', currency: pg.moeda || 'BRL' })}</td>
+                  <td className="py-2 pr-3"><span className={pg.status === 'aprovado' ? 'font-semibold text-emerald-600 dark:text-emerald-400' : pg.status === 'recusado' || pg.status === 'cancelado' ? 'text-rose-600' : 'text-[var(--text-muted)]'}>{NOME_DO_STATUS[pg.status]}</span>{pg.detalhe && pg.status !== 'aprovado' ? <span className="block text-xs text-[var(--text-muted)]">{pg.detalhe}</span> : null}</td>
+                  <td className="py-2 text-xs">
+                    {pg.status === 'aprovado' ? (pg.recibo_enviado_em ? <span className="text-[var(--text-muted)]">Recibo por e-mail</span> : <span className="text-[var(--text-muted)]">Recibo a caminho</span>) : null}
+                    {pg.nf_url ? (
+                      <a href={pg.nf_url} target="_blank" rel="noreferrer" className="ml-2 font-semibold text-[var(--brand)] hover:underline">
+                        Nota fiscal{pg.nf_numero ? ` nº ${pg.nf_numero}` : ''}
+                      </a>
+                    ) : pg.status === 'aprovado' && pg.nf_status === 'erro' ? (
+                      <span className="ml-2 text-amber-600">Nota pendente: cadastre os dados de faturamento</span>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const FATURAMENTO_VAZIO = { nome: '', doc: '', email: '', cep: '', rua: '', numero: '', bairro: '', cidade: '', uf: '' };
+
+/** Quem aparece no recibo e na nota fiscal: sem isso, o recibo sai em nome de quem assinou e a nota não sai. */
+function Faturamento({ atual, aoSalvar }: { atual: FaturamentoAtende | null; aoSalvar: (d: SituacaoDaAssinatura) => void }) {
+  const [aberto, setAberto] = useState(!atual);
+  const [f, setF] = useState(() => (atual ? { nome: atual.nome, doc: atual.doc, email: atual.email ?? '', cep: atual.endereco?.cep ?? '', rua: atual.endereco?.rua ?? '', numero: atual.endereco?.numero ?? '', bairro: atual.endereco?.bairro ?? '', cidade: atual.endereco?.cidade ?? '', uf: atual.endereco?.uf ?? '' } : FATURAMENTO_VAZIO));
+  const [salvando, setSalvando] = useState(false);
+  const campo = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF((v) => ({ ...v, [k]: e.target.value }));
+
+  async function salvar(e: React.FormEvent) {
+    e.preventDefault();
+    setSalvando(true);
+    try {
+      const temEndereco = [f.cep, f.rua, f.numero, f.bairro, f.cidade, f.uf].some((x) => x.trim());
+      const d = await api.put<SituacaoDaAssinatura>('/assinatura/faturamento', { faturamento: { nome: f.nome, doc: f.doc, email: f.email || null, endereco: temEndereco ? { cep: f.cep, rua: f.rua, numero: f.numero, bairro: f.bairro, cidade: f.cidade, uf: f.uf } : null } });
+      aoSalvar(d);
+      setAberto(false);
+      toast.success('Dados de faturamento salvos.');
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível salvar.');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardHeader title="Dados de faturamento" />
+          <p className="mt-1 text-sm text-[var(--text-muted)]">{atual ? `${atual.nome} · ${atual.tipoDoc} ${atual.doc}${atual.email ? ` · ${atual.email}` : ''}` : 'Sem CPF/CNPJ, o recibo sai em nome de quem assinou e a nota fiscal não é emitida.'}</p>
+        </div>
+        {!aberto && (
+          <Button type="button" variant="outline" size="sm" onClick={() => setAberto(true)}>
+            {atual ? 'Editar' : 'Cadastrar'}
+          </Button>
+        )}
+      </div>
+      {aberto && (
+        <form onSubmit={salvar} className="mt-4 space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Input label="Nome ou razão social" required value={f.nome} onChange={campo('nome')} maxLength={120} />
+            <Input label="CPF ou CNPJ" required value={f.doc} onChange={campo('doc')} inputMode="numeric" placeholder="Só números" />
+            <Input label="E-mail de cobrança (opcional)" type="email" value={f.email} onChange={campo('email')} />
+          </div>
+          <p className="text-xs text-[var(--text-muted)]">Endereço (opcional; alguns municípios exigem na nota):</p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Input label="CEP" value={f.cep} onChange={campo('cep')} inputMode="numeric" />
+            <Input label="Rua" value={f.rua} onChange={campo('rua')} className="sm:col-span-2" />
+            <Input label="Número" value={f.numero} onChange={campo('numero')} />
+            <Input label="Bairro" value={f.bairro} onChange={campo('bairro')} />
+            <Input label="Cidade" value={f.cidade} onChange={campo('cidade')} className="sm:col-span-2" />
+            <Input label="UF" value={f.uf} onChange={campo('uf')} maxLength={2} />
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" loading={salvando}>
+              Salvar
+            </Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setAberto(false)}>
+              Cancelar
+            </Button>
+          </div>
+        </form>
+      )}
+    </Card>
+  );
 }

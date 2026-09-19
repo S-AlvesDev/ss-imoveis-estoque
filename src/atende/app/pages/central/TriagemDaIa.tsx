@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Sparkles, Pencil, X } from 'lucide-react';
+import { Sparkles, Pencil, X, Send } from 'lucide-react';
 import { api, ErroDaApi } from '../../lib/api';
 import { useCentral } from '../../store/central';
 import { useDadosAtende } from '../../store/dados';
@@ -94,6 +94,39 @@ export function TriagemDaIa({ conversa }: { conversa: Conversa }) {
 
   const semNada = !carregando && !ultima && !lead;
 
+  // A retomada sugerida pela IA: viva enquanto ninguém enviou nem descartou depois da sugestão.
+  const sugestaoViva = Boolean(lead?.followup_sugestao && lead.followup_sugerido_em && !(lead.followup_enviado_em && lead.followup_enviado_em >= lead.followup_sugerido_em) && !(lead.followup_descartado_em && lead.followup_descartado_em >= lead.followup_sugerido_em));
+  const [textoDaRetomada, setTextoDaRetomada] = useState('');
+  const [retomando, setRetomando] = useState(false);
+  useEffect(() => {
+    if (sugestaoViva) setTextoDaRetomada(lead?.followup_sugestao ?? '');
+  }, [sugestaoViva, lead?.followup_sugestao]);
+
+  async function enviarRetomada() {
+    if (!textoDaRetomada.trim()) return;
+    setRetomando(true);
+    try {
+      const r = await api.post<{ lead: Lead }>(`/conversas/${conversa.id}/followup/enviar`, { texto: textoDaRetomada });
+      setLead(r.lead);
+      toast.success('Retomada enviada ao cliente.');
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível enviar.');
+    } finally {
+      setRetomando(false);
+    }
+  }
+  async function descartarRetomada() {
+    setRetomando(true);
+    try {
+      const r = await api.post<{ lead: Lead }>(`/conversas/${conversa.id}/followup/descartar`);
+      setLead(r.lead);
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível descartar.');
+    } finally {
+      setRetomando(false);
+    }
+  }
+
   return (
     <section className="rounded-xl border border-[var(--brand)]/25 bg-[var(--brand)]/[0.04] p-3 text-sm">
       <p className="mb-1.5 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-[var(--brand)]">
@@ -119,6 +152,23 @@ export function TriagemDaIa({ conversa }: { conversa: Conversa }) {
           {ultima.rodada > 1 && <Linha rotulo="Rodadas">{ultima.rodada} (pediu esclarecimento antes)</Linha>}
           {ultima.modelo && <Linha rotulo="Modelo">{ultima.modelo === 'palavras-chave' ? 'palavras-chave (sem IA)' : ultima.modelo}</Linha>}
         </dl>
+      )}
+      {sugestaoViva && conversa.estado !== 'encerrada' && (
+        <div className="mt-2 space-y-1.5 rounded-lg border border-amber-400/40 bg-amber-500/10 p-2">
+          <p className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+            <Sparkles size={11} /> Retomar contato?
+          </p>
+          <p className="text-[11px] text-[var(--text-muted)]">O cliente está em silêncio há mais de 24 h. A IA sugeriu esta mensagem — edite se quiser; nada sai sem você enviar.</p>
+          <textarea value={textoDaRetomada} onChange={(e) => setTextoDaRetomada(e.target.value)} rows={3} maxLength={1000} className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-xs text-[var(--text)]" />
+          <div className="flex gap-2">
+            <button type="button" onClick={enviarRetomada} disabled={retomando || !textoDaRetomada.trim()} className="inline-flex items-center gap-1 rounded-lg bg-[var(--brand)] px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">
+              <Send size={12} /> Enviar ao cliente
+            </button>
+            <button type="button" onClick={descartarRetomada} disabled={retomando} className="rounded-lg px-2.5 py-1 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)] disabled:opacity-50">
+              Descartar
+            </button>
+          </div>
+        </div>
       )}
       {ultima?.resumo && <p className="mt-2 rounded-lg bg-[var(--surface)] p-2 text-xs text-[var(--text)]">{ultima.resumo}</p>}
       {ultima?.resposta_enviada && <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">Disse ao cliente: “{ultima.resposta_enviada}”</p>}

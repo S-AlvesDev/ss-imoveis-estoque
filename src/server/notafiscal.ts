@@ -75,17 +75,24 @@ export function nfseConfigurada(env?: AmbienteNfse): boolean {
 }
 
 /** "Stok Aí — plano Profissional (mensal), período 14/09/2026 a 14/10/2026. Pagamento Pix #123." */
-export function discriminacao(pg: Pagamento): string {
+/** De que produto é a nota: nome e o que é (para a discriminação do serviço). Padrão: Stok Aí. */
+export interface ProdutoDaNota {
+  nome: string;
+  descricao: string;
+}
+export const PRODUTO_STOK: ProdutoDaNota = { nome: 'Stok Aí', descricao: 'software de controle de estoque' };
+
+export function discriminacao(pg: Pagamento, produto: ProdutoDaNota = PRODUTO_STOK): string {
   const fmt = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeZone: 'America/Sao_Paulo' });
   const plano = pg.plano ? NOME_DO_PLANO[pg.plano] : 'assinatura';
   const ciclo = pg.ciclo ? ` (${NOME_DO_CICLO[pg.ciclo].toLowerCase()})` : '';
   const periodo = pg.periodo_de && pg.periodo_ate ? `, período de ${fmt.format(new Date(pg.periodo_de))} a ${fmt.format(new Date(pg.periodo_ate))}` : '';
   const metodo = pg.metodo === 'cartao' ? 'cartão' : pg.metodo;
-  return `Licença de uso do Stok Aí (software de controle de estoque) — plano ${plano}${ciclo}${periodo}. Pagamento por ${metodo}, Mercado Pago #${pg.mp_payment_id ?? pg.id}.`;
+  return `Licença de uso do ${produto.nome} (${produto.descricao}) — plano ${plano}${ciclo}${periodo}. Pagamento por ${metodo}, Mercado Pago #${pg.mp_payment_id ?? pg.id}.`;
 }
 
 /** O corpo que o Focus NFe recebe para esta nota. */
-export function corpoDaNfse(pg: Pagamento, cfg: ConfiguracaoNfse, agora: Date = new Date()): Record<string, unknown> | null {
+export function corpoDaNfse(pg: Pagamento, cfg: ConfiguracaoNfse, agora: Date = new Date(), produto: ProdutoDaNota = PRODUTO_STOK): Record<string, unknown> | null {
   const pagador = (pg.pagador ?? {}) as { nome?: string; email?: string; tipoDoc?: string; doc?: string; endereco?: { cep?: string; rua?: string; numero?: string; bairro?: string; cidade?: string; uf?: string } | null };
   const doc = String(pagador.doc ?? '').replace(/\D/g, '');
   if (!pagador.nome || (doc.length !== 11 && doc.length !== 14)) return null;
@@ -104,7 +111,7 @@ export function corpoDaNfse(pg: Pagamento, cfg: ConfiguracaoNfse, agora: Date = 
     tomador,
     servico: {
       aliquota: cfg.aliquota,
-      discriminacao: discriminacao(pg),
+      discriminacao: discriminacao(pg, produto),
       iss_retido: 'false',
       item_lista_servico: cfg.item_lista_servico,
       ...(cfg.codigo_tributario_municipio ? { codigo_tributario_municipio: cfg.codigo_tributario_municipio } : {}),
@@ -144,15 +151,18 @@ export function traduzirFocus(status: number, corpo: any): ResultadoNfse {
 }
 
 /** Envia a nota de um pagamento aprovado. Idempotente pela referência (o id do pagamento). */
-export async function emitirNota(pg: Pagamento, cfg: ConfiguracaoNfse | null = configuracaoNfse()): Promise<ResultadoNfse | null> {
+export async function emitirNota(pg: Pagamento, cfg: ConfiguracaoNfse | null = configuracaoNfse(), opcoes: { tabela?: string; produto?: ProdutoDaNota } = {}): Promise<ResultadoNfse | null> {
   if (!cfg) return null;
   if (pg.status !== 'aprovado') return null;
+  // Outro produto (o Atende Aí) guarda as cobranças na própria tabela; a nota é a mesma.
+  const tabela = opcoes.tabela ?? 'pagamentos';
+  const produto = opcoes.produto ?? PRODUTO_STOK;
   const ref = pg.nf_ref ?? pg.id;
   let r: ResultadoNfse;
   if (!pg.nf_ref) {
-    const corpo = corpoDaNfse(pg, cfg);
+    const corpo = corpoDaNfse(pg, cfg, new Date(), produto);
     if (!corpo) {
-      await supabaseServer.from('pagamentos').update({ nf_status: 'erro', nf_erro: 'sem CPF/CNPJ ou nome do tomador' }).eq('id', pg.id);
+      await supabaseServer.from(tabela).update({ nf_status: 'erro', nf_erro: 'sem CPF/CNPJ ou nome do tomador' }).eq('id', pg.id);
       return { situacao: 'erro', erro: 'sem CPF/CNPJ ou nome do tomador' };
     }
     const resp = await focus(cfg, `/v2/nfse?ref=${encodeURIComponent(ref)}`, { method: 'POST', body: JSON.stringify(corpo) });
@@ -162,7 +172,7 @@ export async function emitirNota(pg: Pagamento, cfg: ConfiguracaoNfse | null = c
     r = traduzirFocus(resp.status, resp.corpo);
   }
   await supabaseServer
-    .from('pagamentos')
+    .from(tabela)
     .update({
       nf_ref: ref,
       nf_status: r.situacao === 'emitida' ? 'emitida' : r.situacao === 'erro' ? 'erro' : 'pendente',

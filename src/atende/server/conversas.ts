@@ -510,7 +510,7 @@ export function cursorDoDelta(carimbos: Array<string | null | undefined>, desde:
 // ---------------------------------------------------------------------------
 
 const TRIAGEM_COLUNAS = 'id, conversa_id, rodada, assunto, intencao, time_sugerido_id, atendente_sugerido_id, prioridade, confianca, resumo, pediu_esclarecimento, resposta_enviada, desfecho, modelo, corrigido_por, time_corrigido_id, corrigido_em, motivo_correcao, criado_em';
-const LEAD_COLUNAS = 'id, conversa_id, cliente_id, estado, sugestao_ia, valor, atualizado_por, criado_em, atualizado_em';
+const LEAD_COLUNAS = 'id, conversa_id, cliente_id, estado, sugestao_ia, valor, atualizado_por, criado_em, atualizado_em, followup_sugestao, followup_sugerido_em, followup_enviado_em, followup_descartado_em';
 
 function montarTriagem(linha: any): Triagem {
   return { ...linha, atendente_sugerido_id: linha.atendente_sugerido_id === null ? null : Number(linha.atendente_sugerido_id), corrigido_por: linha.corrigido_por === null ? null : Number(linha.corrigido_por), confianca: linha.confianca === null ? null : Number(linha.confianca) };
@@ -688,4 +688,36 @@ export async function definirPresenca(req: RequisicaoAtende, presenca: unknown):
   if (presenca !== 'online' && presenca !== 'ausente' && presenca !== 'offline') throw new ErroDeConversa('Presença inválida.');
   const { error } = await req.dbAtende!.from('atende_usuarios').update({ presenca, presenca_em: new Date().toISOString() }).eq('id', req.sessao!.id);
   if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+//  Follow-up do lead: a sugestão da IA só sai pela mão de alguém
+// ---------------------------------------------------------------------------
+
+/** Envia a retomada (o texto pode ter sido editado) e marca o lead. */
+export async function enviarFollowup(req: RequisicaoAtende, conversaId: string, textoBruto: unknown): Promise<{ mensagem: Mensagem; lead: Lead }> {
+  const db = req.dbAtende!;
+  const c = await exigirConversa(req, conversaId);
+  const { data: lead } = await db.from('atende_leads').select(LEAD_COLUNAS).eq('conversa_id', c.id).maybeSingle();
+  if (!lead) throw new ErroDeConversa('Esta conversa não tem lead.', 404);
+  const texto = String(textoBruto ?? lead.followup_sugestao ?? '').trim().slice(0, 1000);
+  if (!texto) throw new ErroDeConversa('Escreva a mensagem de retomada.');
+  const mensagem = await enviarMensagem(req, c.id, { tipo: 'texto', texto } as Envio);
+  const agora = new Date().toISOString();
+  const { data: atualizado, error } = await db.from('atende_leads').update({ followup_enviado_em: agora, followup_descartado_em: null, atualizado_por: req.sessao!.id }).eq('id', lead.id).select(LEAD_COLUNAS).single();
+  if (error || !atualizado) throw error ?? new Error('não marcou o follow-up');
+  await registrarEvento(db, c.id, req.sessao!.id, 'followup_enviado', { editado: texto !== (lead.followup_sugestao ?? '').trim() });
+  return { mensagem, lead: montarLead(atualizado) };
+}
+
+/** Descarta a sugestão: não insiste até o cliente ou a equipe falarem de novo. */
+export async function descartarFollowup(req: RequisicaoAtende, conversaId: string): Promise<Lead> {
+  const db = req.dbAtende!;
+  const c = await exigirConversa(req, conversaId);
+  const { data: lead } = await db.from('atende_leads').select(LEAD_COLUNAS).eq('conversa_id', c.id).maybeSingle();
+  if (!lead) throw new ErroDeConversa('Esta conversa não tem lead.', 404);
+  const { data: atualizado, error } = await db.from('atende_leads').update({ followup_descartado_em: new Date().toISOString(), atualizado_por: req.sessao!.id }).eq('id', lead.id).select(LEAD_COLUNAS).single();
+  if (error || !atualizado) throw error ?? new Error('não descartou o follow-up');
+  await registrarEvento(db, c.id, req.sessao!.id, 'followup_descartado');
+  return montarLead(atualizado);
 }
