@@ -23,7 +23,8 @@ import { vigiarSlaSePassouUmMinuto, vigiarSlaDeTodas } from './sla';
 import { gerarFollowupsSePassouUmaHora, gerarFollowupsDeTodas } from './followup';
 import { lembretesDoAtende, cobrancasPendentes, validarFaturamento } from './cobrancas';
 import { resumosSemanaisDoAtende, vigiarConexoesDoAtende } from './rotinas';
-import { enviarFollowup, descartarFollowup } from './conversas';
+import { enviarFollowup, descartarFollowup, encerrarComAvaliacao } from './conversas';
+import { resumoDeAvaliacoes } from './avaliacao';
 import { destinatarioDemo, remetente } from '../../server/mail';
 import type { PeriodoDoDashboard } from '../shared/tipos';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
@@ -603,7 +604,8 @@ export function criarRouterAtende(): express.Router {
 
   r.post('/conversas/:id/encerrar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
     try {
-      res.json({ conversa: await encerrar(req, req.params.id, req.body?.motivo) });
+      // `avaliar: true` manda a despedida da IA com o pedido de nota antes de encerrar.
+      res.json({ conversa: req.body?.avaliar === true ? await encerrarComAvaliacao(req, req.params.id, req.body?.motivo) : await encerrar(req, req.params.id, req.body?.motivo) });
     } catch (err: any) {
       tratar(res, err, 'POST /api/atende/conversas/:id/encerrar', 'Não foi possível encerrar.');
     }
@@ -659,6 +661,16 @@ export function criarRouterAtende(): express.Router {
       res.json({ ok: true });
     } catch (err: any) {
       tratar(res, err, 'DELETE /api/atende/push/inscrever', 'Não foi possível desativar as notificações.');
+    }
+  });
+
+  /** As avaliações (média, por pessoa, as melhores) para quem supervisiona — sem depender do plano do dashboard. */
+  r.get('/avaliacoes', exigir('conversas.supervisionar'), async (req: RequisicaoAtende, res) => {
+    try {
+      const periodo = (PERIODOS as readonly string[]).includes(String(req.query.periodo)) ? (String(req.query.periodo) as PeriodoDoDashboard) : '30d';
+      res.json(await resumoDeAvaliacoes(req, periodo));
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/avaliacoes', 'Erro ao carregar as avaliações.');
     }
   });
 

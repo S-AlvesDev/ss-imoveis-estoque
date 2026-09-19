@@ -1,4 +1,6 @@
 import type { RequisicaoAtende } from './auth';
+import { agregarAvaliacoes, resumoDeAvaliacoes } from './avaliacao';
+import type { ResumoDeAvaliacoes } from '../shared/tipos';
 import { visaoDe, type Visao } from './conversas';
 import { FUSO_PADRAO } from './triagem';
 import type { Dashboard, PeriodoDoDashboard, LinhaPorPessoa, LinhaPorSetor, EstadoDoLead } from '../shared/tipos';
@@ -130,7 +132,7 @@ function segundosDeResolucao(c: ConversaDoPeriodo): number | null {
 
 const ESTADOS_DO_LEAD: EstadoDoLead[] = ['novo', 'em_atendimento', 'em_negociacao', 'aguardando_cliente', 'convertido', 'perdido'];
 
-export function agregarDashboard(dados: DadosDoDashboard, periodo: { de: Date; ate: Date }, fuso = FUSO_PADRAO): Dashboard {
+export function agregarDashboard(dados: DadosDoDashboard, periodo: { de: Date; ate: Date }, fuso = FUSO_PADRAO, avaliacoes: ResumoDeAvaliacoes = agregarAvaliacoes([])): Dashboard {
   const { conversas, leads, triagens, mensagens, abertasAgora } = dados;
 
   // ---- Atendimentos
@@ -267,6 +269,7 @@ export function agregarDashboard(dados: DadosDoDashboard, periodo: { de: Date; a
     },
     por_pessoa: [...pessoas.values()].sort((a, b) => b.conversas - a.conversas || a.usuario_id - b.usuario_id),
     por_setor: [...setores.values()].sort((a, b) => b.conversas - a.conversas),
+    avaliacoes,
   };
 }
 
@@ -288,7 +291,7 @@ async function todas<T>(montar: () => any, teto = TETO): Promise<T[]> {
 }
 
 /** Supervisor: só os times dele (e o que está com ele). Admin: tudo. */
-function filtrarPelaVisao<T extends { time_id: string | null; atendente_id?: number | null }>(linhas: T[], visao: Visao): T[] {
+export function filtrarPelaVisao<T extends { time_id: string | null; atendente_id?: number | null }>(linhas: T[], visao: Visao): T[] {
   if (visao.tudo) return linhas;
   return linhas.filter((c) => (c.time_id && visao.supervisiona.includes(c.time_id)) || c.atendente_id === visao.eu);
 }
@@ -317,6 +320,7 @@ export async function montarDashboard(req: RequisicaoAtende, periodo: PeriodoDoD
     todas<MensagemDoPeriodo & { conversa_id: string }>(() => db.from('atende_mensagens').select('conversa_id, autor_id, autor_tipo, direcao').gte('criado_em', de).in('direcao', ['entrada', 'saida']).order('criado_em', { ascending: true })),
   ]);
 
+  const avaliacoes = await resumoDeAvaliacoes(req, periodo, agora);
   return agregarDashboard(
     {
       conversas,
@@ -326,5 +330,7 @@ export async function montarDashboard(req: RequisicaoAtende, periodo: PeriodoDoD
       abertasAgora: filtrarPelaVisao(abertasAgora.map((c) => ({ ...c, atendente_id: c.atendente_id === null ? null : Number(c.atendente_id) })), visao),
     },
     intervalo,
+    FUSO_PADRAO,
+    avaliacoes,
   );
 }

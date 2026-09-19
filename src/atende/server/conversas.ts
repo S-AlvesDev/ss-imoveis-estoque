@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { supabaseServer } from '../../lib/supabaseServer';
+import { escreverDespedida, enviarComoIa, mensagemDeEncerramento } from './avaliacao';
 import { enviarTextoComId, enviarMidia, enviarAudio, enviarLocalizacao, enviarContato, marcarLidas, type Enviada } from '../../server/evolution';
 import type { ScopedDb } from '../../server/tenant';
 import { previaDe } from './eventos';
@@ -60,7 +61,7 @@ export function filtroDaVisao(v: Visao): string | null {
 //  Leitura
 // ---------------------------------------------------------------------------
 
-const CONVERSA_COLUNAS = 'id, cliente_id, conexao_id, estado, time_id, atendente_id, prioridade, assunto, intencao, resumo, aberta_em, primeira_resposta_em, ultima_mensagem_em, ultima_mensagem_do_cliente_em, ultima_mensagem_texto, ultima_mensagem_de, nao_lidas, encerrada_em, atualizado_em';
+const CONVERSA_COLUNAS = 'id, cliente_id, conexao_id, estado, time_id, atendente_id, prioridade, assunto, intencao, resumo, aberta_em, primeira_resposta_em, ultima_mensagem_em, ultima_mensagem_do_cliente_em, ultima_mensagem_texto, ultima_mensagem_de, nao_lidas, encerrada_em, avaliacao_pedida_em, avaliacao_nota, atualizado_em';
 const CLIENTE_COLUNAS = 'id, telefone, nome, nome_whatsapp, foto_url, email, observacoes, primeiro_contato_em, ultimo_contato_em';
 const MENSAGEM_COLUNAS = 'id, conversa_id, direcao, autor_tipo, autor_id, tipo, texto, midia, wa_id, status, erro, respondendo_a, criado_em';
 const COM_CLIENTE = `${CONVERSA_COLUNAS}, cliente:atende_clientes(${CLIENTE_COLUNAS}), etiquetas:atende_conversa_etiquetas(etiqueta_id)`;
@@ -338,6 +339,31 @@ export async function assumir(req: RequisicaoAtende, conversaId: string): Promis
   if (error) throw error;
   await registrarEvento(req.dbAtende!, c.id, s.id, c.atendente_id && c.atendente_id !== s.id ? 'transferida' : 'assumida', { de: c.atendente_id, para: s.id });
   return (await conversaPorId(req, c.id))!;
+}
+
+/**
+ * Encerra pedindo a nota: a IA escreve a despedida (no tom da conversa), a
+ * mensagem sai com a pergunta de 0 a 10, e a conversa fica marcada como
+ * "avaliação pedida" — o webhook reconhece a resposta do cliente.
+ */
+export async function encerrarComAvaliacao(req: RequisicaoAtende, conversaId: string, motivo?: string): Promise<Conversa> {
+  const db = req.dbAtende!;
+  const s = req.sessao!;
+  const c = await exigirConversa(req, conversaId);
+  if (c.estado === 'encerrada') throw new ErroDeConversa('A conversa já está encerrada.');
+  const [{ data: emp }, { data: msgs }] = await Promise.all([
+    db.from('atende_empresas').select('nome, segmento, regras_atendimento').eq('id', s.empresa_id).maybeSingle(),
+    db.from('atende_mensagens').select('direcao, texto, tipo').eq('conversa_id', c.id).neq('direcao', 'sistema').order('criado_em', { ascending: false }).limit(8),
+  ]);
+  const cliente = (c.cliente.nome ?? c.cliente.nome_whatsapp ?? '').trim().split(/\s+/)[0] || null;
+  const { texto: despedida, modelo } = await escreverDespedida({ empresa: { nome: emp?.nome ?? '', segmento: emp?.segmento ?? null, regras_atendimento: emp?.regras_atendimento ?? null }, cliente, atendente: s.nome, assunto: c.assunto, resumo: c.resumo, mensagens: ((msgs || []) as any[]).reverse() });
+  const enviou = await enviarComoIa({ empresaId: s.empresa_id, conversaId: c.id, conexaoId: c.conexao_id, telefone: c.cliente.telefone, texto: mensagemDeEncerramento(despedida) });
+  if (!enviou) throw new ErroDeConversa('Não foi possível enviar a mensagem de encerramento pelo WhatsApp. Confira a conexão e tente de novo, ou encerre sem mensagem.', 502);
+  const agora = new Date().toISOString();
+  const { error } = await db.from('atende_conversas').update({ avaliacao_pedida_em: agora, avaliacao_nota: null, avaliacao_em: null, avaliacao_comentario: null }).eq('id', c.id);
+  if (error) throw error;
+  await registrarEvento(db, c.id, s.id, 'avaliacao_pedida', { modelo });
+  return encerrar(req, conversaId, motivo);
 }
 
 export async function encerrar(req: RequisicaoAtende, conversaId: string, motivo?: string): Promise<Conversa> {

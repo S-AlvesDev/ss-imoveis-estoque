@@ -14,6 +14,7 @@ import { presencaEfetiva, NOME_DA_PRESENCA } from '../../shared/presenca';
 import { NOME_DO_ESTADO, type Conversa, type Funcionario, type Mensagem, type Presenca } from '../../shared/tipos';
 import { Transferir, Bolinha } from './central/Transferir';
 import { nomeDoCliente, iniciais, duracao, COR_DO_ESTADO } from './central/util';
+import { CartaoDeAvaliacoes } from './Avaliacoes';
 
 /**
  * A Supervisão: a equipe agora, em tempo real, com os mesmos dados que a
@@ -169,6 +170,8 @@ export function Supervisao() {
           </Card>
         </div>
       </div>
+
+      <CartaoDeAvaliacoes periodo="30d" />
 
       {transferindo && <Transferir conversa={transferindo} aberto onFechar={() => setTransferindo(null)} />}
       {orientando && <Orientar conversa={orientando} onFechar={() => setOrientando(null)} />}

@@ -233,8 +233,26 @@ export interface Conversa {
   ultima_mensagem_de: string | null;
   nao_lidas: number;
   encerrada_em: string | null;
+  /** Avaliação do atendimento (0 a 10): quando foi pedida e a nota, se o cliente respondeu. */
+  avaliacao_pedida_em: string | null;
+  avaliacao_nota: number | null;
   etiquetas: string[];
   atualizado_em: string;
+}
+
+/** Média, distribuição, por pessoa e os atendimentos mais bem avaliados — para a supervisão e o dashboard. */
+export interface ResumoDeAvaliacoes {
+  pedidas: number;
+  respondidas: number;
+  /** % respondidas entre as pedidas; nulo sem pedido. */
+  taxa_de_resposta: number | null;
+  media: number | null;
+  /** Promotores (9–10) menos detratores (0–6), em %; nulo sem resposta. */
+  nps: number | null;
+  /** Quantas notas de 0 a 10, índice = nota. */
+  distribuicao: number[];
+  por_pessoa: Array<{ usuario_id: number; avaliacoes: number; media: number }>;
+  melhores: Array<{ conversa_id: string; nota: number; comentario: string | null; cliente: string; atendente_id: number | null; assunto: string | null; avaliada_em: string }>;
 }
 
 export type DirecaoDaMensagem = 'entrada' | 'saida' | 'interna' | 'sistema';
@@ -440,5 +458,7 @@ export interface Dashboard {
     modelos: string[];
   };
   por_pessoa: LinhaPorPessoa[];
+  /** As avaliações pedidas no período. */
+  avaliacoes: ResumoDeAvaliacoes;
   por_setor: LinhaPorSetor[];
 }

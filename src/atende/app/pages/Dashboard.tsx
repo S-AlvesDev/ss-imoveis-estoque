@@ -7,6 +7,7 @@ import { StatCard } from '@/shared/ui/StatCard';
 import { api, ErroDaApi } from '../lib/api';
 import { useDadosAtende } from '../store/dados';
 import { useSessaoAtende } from '../store/sessao';
+import { CartaoDeAvaliacoes } from './Avaliacoes';
 import { ESTADOS_DO_LEAD, NOME_DO_ESTADO_DO_LEAD, NOME_DA_SUGESTAO, NOME_DO_PERIODO, type Dashboard as TDashboard, type PeriodoDoDashboard, type SugestaoDeLead } from '../../shared/tipos';
 
 /**
@@ -136,6 +137,8 @@ export function Dashboard() {
               )}
             </Card>
           </div>
+
+          <CartaoDeAvaliacoes dados={dados.avaliacoes} />
 
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
             <Card className="p-5">

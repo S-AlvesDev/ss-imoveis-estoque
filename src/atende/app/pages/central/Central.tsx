@@ -10,6 +10,7 @@ import { TELAS, useRotaAtende } from '../../router';
 import { pode } from '../../../shared/papeis';
 import { NOME_DO_ESTADO, type Conversa } from '../../../shared/tipos';
 import { Mensagens } from './Mensagens';
+import { Encerrar } from './Encerrar';
 import { Composer } from './Composer';
 import { PainelDoCliente } from './PainelDoCliente';
 import { Transferir } from './Transferir';
@@ -174,19 +175,20 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
   const abrir = useCentral((s) => s.abrir);
   const [agindo, setAgindo] = useState(false);
   const [transferindo, setTransferindo] = useState(false);
+  const [encerrando, setEncerrando] = useState(false);
   const minha = conversa.atendente_id === sessao.id;
   const naFila = conversa.estado === 'na_fila' || conversa.estado === 'nova' || conversa.estado === 'em_triagem';
   const podeTransferir = conversa.estado !== 'encerrada' && (minha || naFila || pode(sessao.papel, 'conversas.supervisionar'));
   const atendente = conversa.atendente_id ? equipe.find((f) => f.id === conversa.atendente_id)?.nome : null;
 
-  async function acao(rota: 'assumir' | 'encerrar' | 'reabrir', corpo?: unknown) {
+  async function acao(rota: 'assumir' | 'reabrir', corpo?: unknown) {
     setAgindo(true);
     try {
       const r = await api.post<{ conversa: Conversa }>(`/conversas/${conversa.id}/${rota}`, corpo);
       aplicarConversa(r.conversa);
-      // Encerrar põe um aviso na linha do tempo: recarrega para ele aparecer já.
-      if (rota === 'encerrar') void abrir(conversa.id);
-      toast.success(rota === 'assumir' ? 'Conversa é sua.' : rota === 'encerrar' ? 'Conversa encerrada.' : 'Conversa reaberta.');
+      // Reabrir põe um aviso na linha do tempo: recarrega para ele aparecer já.
+      if (rota === 'reabrir') void abrir(conversa.id);
+      toast.success(rota === 'assumir' ? 'Conversa é sua.' : 'Conversa reaberta.');
     } catch (err) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível.');
     } finally {
@@ -204,6 +206,7 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
         <p className="truncate text-[11px] text-[var(--text-muted)]">
           {telefoneBonito(conversa.cliente.telefone)} · {NOME_DO_ESTADO[conversa.estado]}
           {atendente ? ` · ${minha ? 'com você' : `com ${atendente}`}` : ''}
+          {conversa.avaliacao_nota !== null && conversa.avaliacao_nota !== undefined ? <span className={`ml-1 font-bold ${conversa.avaliacao_nota >= 9 ? 'text-emerald-600 dark:text-emerald-400' : conversa.avaliacao_nota >= 7 ? 'text-amber-600' : 'text-rose-600'}`}>· ★ {conversa.avaliacao_nota}/10</span> : conversa.avaliacao_pedida_em && conversa.estado === 'encerrada' ? <span className="ml-1 text-[var(--text-muted)]">· avaliação pedida</span> : null}
         </p>
       </button>
       <div className="flex shrink-0 items-center gap-1">
@@ -221,7 +224,7 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
           </Button>
         )}
         {conversa.estado !== 'encerrada' ? (
-          <Button size="sm" variant="ghost" icon={<CheckCircle2 size={14} />} loading={agindo} onClick={() => acao('encerrar')}>
+          <Button size="sm" variant="ghost" icon={<CheckCircle2 size={14} />} loading={agindo} onClick={() => setEncerrando(true)}>
             <span className="hidden sm:inline">Encerrar</span>
           </Button>
         ) : (
@@ -231,6 +234,7 @@ function Cabecalho({ conversa, onVoltar, onFicha }: { conversa: Conversa; onVolt
         )}
       </div>
       <Transferir conversa={conversa} aberto={transferindo} onFechar={() => setTransferindo(false)} />
+      <Encerrar conversa={conversa} aberto={encerrando} onFechar={() => setEncerrando(false)} />
     </header>
   );
 }

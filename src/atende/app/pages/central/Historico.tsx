@@ -64,6 +64,10 @@ export function Historico({ conversa }: { conversa: Conversa }) {
         return `${quem ?? 'Alguém'} moveu o lead: ${d.de ?? 'novo'} → ${d.para}`;
       case 'encerrada':
         return `${quem ?? 'Alguém'} encerrou${d.motivo ? ` — ${d.motivo}` : ''}`;
+      case 'avaliacao_pedida':
+        return `${quem ?? 'Alguém'} encerrou com a despedida da IA e pediu a avaliação`;
+      case 'avaliada':
+        return `Cliente avaliou o atendimento: ${d.nota}/10${d.comentario ? ` — “${d.comentario}”` : ''}`;
       case 'sla_aviso':
         return `SLA: ${d.minutos} min sem resposta — quem atende e quem supervisiona foram avisados (limite ${d.limite} min)`;
       case 'sla_escalonada':

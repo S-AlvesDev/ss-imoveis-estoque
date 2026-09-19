@@ -18,6 +18,15 @@
         "set PORT=3002&& set EVOLUTION_WEBHOOK_TOKEN=teste-local&& npx tsx server.ts"
       ],
       "port": 3002
+    },
+    {
+      "name": "estoque-app-3002-evo-fake",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set PORT=3002&& set EVOLUTION_WEBHOOK_TOKEN=teste-local&& set EVOLUTION_URL=http://localhost:3999&& set EVOLUTION_API_KEY=fake&& set EVOLUTION_INSTANCE=fake&& npx tsx server.ts"
+      ],
+      "port": 3002
     }
   ]
 }

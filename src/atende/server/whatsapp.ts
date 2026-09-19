@@ -4,6 +4,7 @@ import { siteUrl } from '../../server/senha';
 import { lerEventoDoAtende, previaDe, type MensagemDoWhatsApp, type AtualizacaoDeStatus, type AtualizacaoDeConexao } from './eventos';
 import { caminhoDaMidia, guardarMidia } from './midias';
 import { triar, triagemAtiva } from './triagem';
+import { tratarRespostaDeAvaliacao } from './avaliacao';
 import { avisarSobreConversa } from './push';
 import type { Conexao, EstadoDaConexao, StatusDaMensagem } from '../shared/tipos';
 
@@ -191,6 +192,9 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
     if (e.nomeWhatsapp && e.nomeWhatsapp !== cliente.nome_whatsapp) patch.nome_whatsapp = e.nomeWhatsapp;
     await supabaseServer.from('atende_clientes').update(patch).eq('id', cliente.id);
   }
+
+  // ---- É a nota do atendimento encerrado? Grava e agradece, sem reabrir (a menos que venha texto junto).
+  if (!e.fromMe && (await tratarRespostaDeAvaliacao(empresaId, cliente.id, e))) return true;
 
   // ---- Conversa aberta, reaberta, ou nova
   // Um contato, um fio: como no WhatsApp. "Encerrar" marca o fim; a próxima mensagem
