@@ -331,6 +331,7 @@ interface ConversaParaTriar {
   cliente_id: string;
   conexao_id: string | null;
   estado: string;
+  aberta_em: string | null;
   cliente: { telefone: string; nome: string | null; nome_whatsapp: string | null } | null;
 }
 
@@ -370,10 +371,11 @@ export async function triagemAtiva(empresaId: string): Promise<boolean> {
  * presa: se a IA falhar, a conversa vai para a fila sem time.
  */
 export async function triar(conversaId: string, mensagemId: string | null): Promise<ResultadoDaTriagem | null> {
-  const { data: c } = await supabaseServer.from('atende_conversas').select('id, empresa_id, cliente_id, conexao_id, estado, cliente:atende_clientes(telefone, nome, nome_whatsapp)').eq('id', conversaId).maybeSingle();
+  const { data: c } = await supabaseServer.from('atende_conversas').select('id, empresa_id, cliente_id, conexao_id, estado, aberta_em, cliente:atende_clientes(telefone, nome, nome_whatsapp)').eq('id', conversaId).maybeSingle();
   const conversa = c as unknown as ConversaParaTriar | null;
   if (!conversa || (conversa.estado !== 'nova' && conversa.estado !== 'em_triagem')) return null;
   const empresaId = conversa.empresa_id;
+  const desde = conversa.aberta_em ?? '1970-01-01T00:00:00.000Z';
 
   // Reivindica a conversa: duas mensagens ao mesmo tempo não disparam duas triagens da primeira rodada.
   if (conversa.estado === 'nova') {
@@ -385,8 +387,9 @@ export async function triar(conversaId: string, mensagemId: string | null): Prom
     const [empresa, times, { data: historicoBruto }, { count: rodadasAnteriores }] = await Promise.all([
       carregarEmpresa(empresaId),
       carregarTimes(empresaId),
-      supabaseServer.from('atende_mensagens').select('direcao, autor_tipo, tipo, texto').eq('conversa_id', conversaId).order('criado_em', { ascending: false }).limit(HISTORICO),
-      supabaseServer.from('atende_triagens').select('id', { count: 'exact', head: true }).eq('conversa_id', conversaId).eq('pediu_esclarecimento', true),
+      // Só o atendimento atual: uma conversa reaberta não arrasta as mensagens (nem as rodadas) de antes do encerramento.
+      supabaseServer.from('atende_mensagens').select('direcao, autor_tipo, tipo, texto').eq('conversa_id', conversaId).gte('criado_em', desde).order('criado_em', { ascending: false }).limit(HISTORICO),
+      supabaseServer.from('atende_triagens').select('id', { count: 'exact', head: true }).eq('conversa_id', conversaId).eq('pediu_esclarecimento', true).gte('criado_em', desde),
     ]);
     if (!empresa) throw new Error('empresa não encontrada');
     const rodada = (rodadasAnteriores ?? 0) + 1;

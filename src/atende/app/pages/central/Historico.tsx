@@ -65,6 +65,8 @@ export function Historico({ conversa }: { conversa: Conversa }) {
       case 'encerrada':
         return `${quem ?? 'Alguém'} encerrou${d.motivo ? ` — ${d.motivo}` : ''}`;
       case 'reaberta':
+        if (d.por === 'cliente') return 'Reaberta pelo cliente (escreveu de novo)';
+        if (d.por === 'aparelho') return 'Reaberta pela empresa, pelo celular';
         return `${quem ?? 'Alguém'} reabriu${d.ao_responder ? ' ao responder' : ''}`;
       default:
         return e.tipo;

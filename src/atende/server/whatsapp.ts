@@ -192,25 +192,48 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
     await supabaseServer.from('atende_clientes').update(patch).eq('id', cliente.id);
   }
 
-  // ---- Conversa aberta, ou nova
-  let { data: conversa } = await supabaseServer.from('atende_conversas').select('id, estado, nao_lidas, primeira_resposta_em, atendente_id, time_id').eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
+  // ---- Conversa aberta, reaberta, ou nova
+  // Um contato, um fio: como no WhatsApp. "Encerrar" marca o fim; a próxima mensagem
+  // reabre a MESMA conversa (o histórico continua ali), em vez de criar outra.
+  const COLUNAS = 'id, estado, nao_lidas, primeira_resposta_em, atendente_id, time_id';
+  let { data: conversa } = await supabaseServer.from('atende_conversas').select(COLUNAS).eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
   let nova = false;
+  let reaberta = false;
   if (!conversa) {
-    // Cliente escreveu: nasce 'nova' para a IA triar (ou direto na fila, se a empresa desligou a triagem).
+    // Cliente escreveu: 'nova' para a IA triar (ou direto na fila, se a empresa desligou a triagem).
     // A empresa escreveu primeiro pelo celular: alguém já está atendendo por lá.
     const estadoInicial = e.fromMe ? 'em_atendimento' : (await triagemAtiva(empresaId)) ? 'nova' : 'na_fila';
-    const { data: criada, error } = await supabaseServer
-      .from('atende_conversas')
-      .insert({ empresa_id: empresaId, cliente_id: cliente.id, conexao_id: conexao.id, estado: estadoInicial, aberta_em: agora, ultima_mensagem_em: agora })
-      .select('id, estado, nao_lidas, primeira_resposta_em, atendente_id, time_id')
-      .single();
-    if (error || !criada) {
-      const { data: existente } = await supabaseServer.from('atende_conversas').select('id, estado, nao_lidas, primeira_resposta_em, atendente_id, time_id').eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
-      if (!existente) throw error ?? new Error('não criou a conversa');
-      conversa = existente;
-    } else {
-      conversa = criada;
-      nova = true;
+    const { data: encerrada } = await supabaseServer.from('atende_conversas').select(`${COLUNAS}, encerrada_em`).eq('cliente_id', cliente.id).eq('estado', 'encerrada').order('encerrada_em', { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
+    if (encerrada) {
+      // Reabre: novo atendimento (contadores do zero), mesmo fio. Quem atendia antes não é
+      // dono de novo automaticamente — a triagem/fila decide; pelo celular, fica sem dono como antes.
+      const { data: atualizada, error } = await supabaseServer
+        .from('atende_conversas')
+        .update({ estado: estadoInicial, aberta_em: agora, ultima_mensagem_em: agora, primeira_resposta_em: null, encerrada_em: null, encerrada_por: null, motivo_encerramento: null, atendente_id: null, time_id: null, nao_lidas: 0 })
+        .eq('id', encerrada.id)
+        .eq('estado', 'encerrada')
+        .select(COLUNAS)
+        .maybeSingle();
+      if (error) throw error;
+      if (atualizada) {
+        conversa = atualizada;
+        reaberta = true;
+      }
+    }
+    if (!conversa) {
+      const { data: criada, error } = await supabaseServer
+        .from('atende_conversas')
+        .insert({ empresa_id: empresaId, cliente_id: cliente.id, conexao_id: conexao.id, estado: estadoInicial, aberta_em: agora, ultima_mensagem_em: agora })
+        .select(COLUNAS)
+        .single();
+      if (error || !criada) {
+        const { data: existente } = await supabaseServer.from('atende_conversas').select(COLUNAS).eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
+        if (!existente) throw error ?? new Error('não criou a conversa');
+        conversa = existente;
+      } else {
+        conversa = criada;
+        nova = true;
+      }
     }
   }
 
@@ -261,7 +284,9 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
     if (conversa.estado === 'na_fila' || conversa.estado === 'nova' || conversa.estado === 'em_triagem') patch.estado = 'em_atendimento';
   }
   await supabaseServer.from('atende_conversas').update(patch).eq('id', conversa.id);
-  if (nova) await supabaseServer.from('atende_eventos').insert({ empresa_id: empresaId, conversa_id: conversa.id, tipo: 'aberta', dados: { por: e.fromMe ? 'aparelho' : 'cliente' } });
+  if (nova || reaberta) await supabaseServer.from('atende_eventos').insert({ empresa_id: empresaId, conversa_id: conversa.id, tipo: reaberta ? 'reaberta' : 'aberta', dados: { por: e.fromMe ? 'aparelho' : 'cliente' } });
+  // Na linha do tempo, a reabertura aparece entre o "encerrada por…" e a mensagem nova.
+  if (reaberta) await supabaseServer.from('atende_mensagens').insert({ empresa_id: empresaId, conversa_id: conversa.id, direcao: 'sistema', autor_tipo: 'sistema', tipo: 'texto', texto: e.fromMe ? 'Conversa reaberta pela empresa (pelo celular).' : 'Conversa reaberta pelo cliente.', status: 'entregue', criado_em: new Date(Date.parse(agora) - 1).toISOString() });
 
   // ---- O arquivo: a mensagem já existe mesmo que o download falhe.
   if (e.temArquivo) await baixarArquivoDaMensagem(conexao, empresaId, conversa.id, mensagem.id, e);
