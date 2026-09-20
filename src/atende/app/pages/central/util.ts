@@ -1,14 +1,9 @@
 import type { Cliente, Conversa } from '../../../shared/tipos';
+import type { TomDaEtiqueta } from '../../ui/Etiqueta';
 
 /** Nome para mostrar: o que a equipe deu, o do WhatsApp, ou o telefone formatado. */
 export function nomeDoCliente(c: Cliente): string {
   return c.nome?.trim() || c.nome_whatsapp?.trim() || telefoneBonito(c.telefone);
-}
-
-export function iniciais(nome: string): string {
-  const p = nome.replace(/[^\p{L}\p{N} ]/gu, '').trim().split(/\s+/);
-  const s = ((p[0]?.[0] ?? '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
-  return s || '#';
 }
 
 /** 5584991234567 → +55 (84) 99123-4567; outros países, só com o +. */
@@ -58,13 +53,14 @@ export function duracaoBonita(s?: number): string {
   return `${m}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 }
 
-export const COR_DO_ESTADO: Record<Conversa['estado'], string> = {
-  nova: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
-  em_triagem: 'bg-violet-500/15 text-violet-700 dark:text-violet-300',
-  na_fila: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-  em_atendimento: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
-  aguardando_cliente: 'bg-slate-500/15 text-slate-600 dark:text-slate-300',
-  encerrada: 'bg-slate-500/10 text-slate-500',
+/** O tom da etiqueta de cada estado — o mesmo em toda tela. */
+export const TOM_DO_ESTADO: Record<Conversa['estado'], TomDaEtiqueta> = {
+  nova: 'azul',
+  em_triagem: 'roxo',
+  na_fila: 'ambar',
+  em_atendimento: 'verde',
+  aguardando_cliente: 'cinza',
+  encerrada: 'cinza',
 };
 
 /** Lê um arquivo do navegador como base64 puro (sem o prefixo data:). */

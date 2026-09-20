@@ -1,15 +1,20 @@
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Pencil, Plus, UserX, Users } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { Card } from '@/shared/ui/Card';
-import { Badge } from '@/shared/ui/Badge';
-import { EmptyState } from '@/shared/ui/EmptyState';
-import { Modal } from '@/shared/ui/Modal';
-import { Input, Select } from '@/shared/ui/Field';
+import { Botao } from '../ui/Botao';
+import { Cartao } from '../ui/Cartao';
+import { Etiqueta } from '../ui/Etiqueta';
+import { Avatar } from '../ui/Avatar';
+import { Modal } from '../ui/Modal';
+import { Entrada, Selecao, Marcar } from '../ui/Campo';
+import { Pagina } from '../ui/Pagina';
+import { Vazio } from '../ui/Estados';
+import { Tabela, type Coluna } from '../ui/Tabela';
 import { api, ErroDaApi } from '../lib/api';
 import { useDadosAtende } from '../store/dados';
 import { useSessaoAtende } from '../store/sessao';
+import { useCentral } from '../store/central';
+import { presencaEfetiva, NOME_DA_PRESENCA } from '../../shared/presenca';
 import { DESCRICAO_DO_PAPEL, NOME_DO_PAPEL, PAPEIS_ATRIBUIVEIS, pode, type Papel } from '../../shared/papeis';
 import { MIN_SENHA } from '../../shared/validacao';
 import type { Funcionario, Time } from '../../shared/tipos';
@@ -18,12 +23,11 @@ import type { Funcionario, Time } from '../../shared/tipos';
  * A equipe: quem atende, quem supervisiona, quem administra — e em que
  * times cada um está. Admin gere; supervisor e atendente só veem.
  */
-const COR_DA_PRESENCA = { online: 'bg-emerald-500', ausente: 'bg-amber-400', offline: 'bg-slate-400' } as const;
-
 export function Equipe() {
   const equipe = useDadosAtende((s) => s.equipe);
   const times = useDadosAtende((s) => s.times);
   const aplicar = useDadosAtende((s) => s.aplicar);
+  const presenca = useCentral((s) => s.presenca);
   const sessao = useSessaoAtende((s) => s.sessao)!;
   const gere = pode(sessao.papel, 'equipe.gerir');
   const [editando, setEditando] = useState<Funcionario | 'novo' | null>(null);
@@ -33,6 +37,9 @@ export function Equipe() {
   const nomeDoTime = (id: string) => times.find((t) => t.id === id)?.nome ?? '—';
   const visiveis = equipe.filter((f) => mostrarInativos || f.ativo);
   const inativos = equipe.filter((f) => !f.ativo).length;
+  const agora = Date.now();
+  const estadoDe = (f: Funcionario) => (f.ativo ? presencaEfetiva(presenca[f.id] ?? f, agora) : 'offline');
+  const online = equipe.filter((f) => f.ativo && estadoDe(f) === 'online').length;
 
   async function desativar() {
     if (!desativando) return;
@@ -46,97 +53,86 @@ export function Equipe() {
     }
   }
 
-  return (
-    <div className="mx-auto max-w-4xl space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-[var(--text)]">Equipe</h1>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">{gere ? 'Quem atende, quem supervisiona, quem administra — e em que times.' : 'Quem está na equipe e em que times.'}</p>
-        </div>
-        {gere && (
-          <Button icon={<Plus size={15} />} onClick={() => setEditando('novo')}>
-            Nova pessoa
-          </Button>
-        )}
-      </div>
-
-      {visiveis.length === 0 ? (
-        <Card className="p-8">
-          <EmptyState icon={<Users size={22} />} title="Só você por aqui" subtitle="Cadastre a equipe: cada pessoa entra com o próprio e-mail e vê só o que o papel dela permite." />
-        </Card>
-      ) : (
-        <Card className="divide-y divide-[var(--border)] p-0">
-          {visiveis.map((f) => (
-            <div key={f.id} className={`flex flex-wrap items-center gap-3 px-4 py-3 ${f.ativo ? '' : 'opacity-60'}`}>
-              <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--brand)]/12 text-sm font-extrabold text-[var(--brand)]">
-                {iniciais(f.nome)}
-                <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[var(--surface)] ${COR_DA_PRESENCA[f.ativo ? f.presenca : 'offline']}`} />
+  const tomDoPapel = (p: Papel) => (p === 'admin' ? 'roxo' : p === 'supervisor' ? 'azul' : 'cinza');
+  const colunas: Coluna<Funcionario>[] = [
+    {
+      chave: 'pessoa',
+      titulo: 'Pessoa',
+      principal: true,
+      render: (f) => (
+        <span className={`flex items-center gap-3 ${f.ativo ? '' : 'opacity-60'}`}>
+          <Avatar nome={f.nome} tamanho={36} presenca={estadoDe(f)} />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium text-[var(--text)]">
+              {f.nome} {f.id === sessao.id && <span className="text-xs font-normal text-[var(--text-muted)]">(você)</span>}
+            </span>
+            <span className="block truncate text-xs text-[var(--text-muted)]">{f.email}</span>
+          </span>
+        </span>
+      ),
+    },
+    { chave: 'papel', titulo: 'Papel', render: (f) => <span className="inline-flex flex-wrap gap-1"><Etiqueta tom={tomDoPapel(f.papel)}>{NOME_DO_PAPEL[f.papel]}</Etiqueta>{!f.ativo && <Etiqueta tom="vermelho">Inativo</Etiqueta>}</span> },
+    { chave: 'times', titulo: 'Times', render: (f) => (f.times.length === 0 ? <span className="text-xs text-[var(--text-muted)]">nenhum</span> : <span className="inline-flex flex-wrap gap-1">{f.times.map((id) => <span key={id} className="rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-muted)]">{nomeDoTime(id)}</span>)}</span>) },
+    { chave: 'presenca', titulo: 'Presença', render: (f) => <span className="text-xs text-[var(--text-muted)]">{f.ativo ? NOME_DA_PRESENCA[estadoDe(f)] : '—'}</span> },
+    ...(gere
+      ? [
+          {
+            chave: 'acoes',
+            titulo: <span className="sr-only">Ações</span>,
+            alinhar: 'direita' as const,
+            acoes: true,
+            render: (f: Funcionario) => (
+              <span className="inline-flex gap-0.5">
+                <Botao tamanho="sm" variante="fantasma" quadrado icone={<Pencil size={14} />} onClick={() => setEditando(f)} aria-label="Editar" />
+                {f.ativo && f.id !== sessao.id && <Botao tamanho="sm" variante="fantasma" quadrado icone={<UserX size={14} />} onClick={() => setDesativando(f)} aria-label="Desativar" className="hover:!bg-rose-50 hover:!text-rose-600" />}
               </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-bold text-[var(--text)]">
-                  {f.nome} {f.id === sessao.id && <span className="text-xs font-normal text-[var(--text-muted)]">(você)</span>}
-                </p>
-                <p className="truncate text-xs text-[var(--text-muted)]">{f.email}</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Badge variant={f.papel === 'admin' ? 'indigo' : f.papel === 'supervisor' ? 'info' : 'neutral'}>{NOME_DO_PAPEL[f.papel]}</Badge>
-                {f.times.map((id) => (
-                  <span key={id} className="rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-muted)]">
-                    {nomeDoTime(id)}
-                  </span>
-                ))}
-                {!f.ativo && <Badge variant="critical">Inativo</Badge>}
-              </div>
-              {gere && (
-                <span className="flex shrink-0 gap-1 text-[var(--text-muted)]">
-                  <button type="button" onClick={() => setEditando(f)} className="rounded-lg p-1.5 hover:bg-[var(--bg-2)] hover:text-[var(--text)]" aria-label="Editar">
-                    <Pencil size={14} />
-                  </button>
-                  {f.ativo && f.id !== sessao.id && (
-                    <button type="button" onClick={() => setDesativando(f)} className="rounded-lg p-1.5 hover:bg-rose-500/10 hover:text-rose-600" aria-label="Desativar">
-                      <UserX size={14} />
-                    </button>
-                  )}
-                </span>
-              )}
-            </div>
-          ))}
-        </Card>
-      )}
+            ),
+          } satisfies Coluna<Funcionario>,
+        ]
+      : []),
+  ];
 
-      {inativos > 0 && (
-        <button type="button" onClick={() => setMostrarInativos((v) => !v)} className="text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)]">
-          {mostrarInativos ? 'Ocultar' : 'Mostrar'} {inativos} {inativos === 1 ? 'pessoa inativa' : 'pessoas inativas'}
-        </button>
-      )}
+  return (
+    <Pagina titulo="Equipe" descricao={gere ? 'Quem atende, quem supervisiona, quem administra — e em que times.' : 'Quem está na equipe e em que times.'} largura="md" acoes={gere ? <Botao icone={<Plus size={15} />} onClick={() => setEditando('novo')}>Nova pessoa</Botao> : undefined}>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
+          <Etiqueta tom="verde" ponto>{online} online</Etiqueta>
+          <span>{equipe.filter((f) => f.ativo).length} {equipe.filter((f) => f.ativo).length === 1 ? 'pessoa ativa' : 'pessoas ativas'}</span>
+          {inativos > 0 && (
+            <button type="button" onClick={() => setMostrarInativos((v) => !v)} className="font-semibold text-[var(--brand)] hover:underline">
+              {mostrarInativos ? 'Ocultar' : 'Mostrar'} {inativos} {inativos === 1 ? 'inativa' : 'inativas'}
+            </button>
+          )}
+        </div>
+
+        <Cartao className="p-3 sm:p-5">
+          <Tabela colunas={colunas} linhas={visiveis} chave={(f) => String(f.id)} vazio={<Vazio icone={<Users size={22} />} titulo="Só você por aqui" texto="Cadastre a equipe: cada pessoa entra com o próprio e-mail e vê só o que o papel dela permite." acao={gere ? <Botao icone={<Plus size={15} />} onClick={() => setEditando('novo')}>Nova pessoa</Botao> : undefined} />} />
+        </Cartao>
+      </div>
 
       {editando && <ModalDaPessoa pessoa={editando === 'novo' ? null : editando} times={times} onClose={() => setEditando(null)} />}
 
       <Modal
-        open={Boolean(desativando)}
-        onClose={() => setDesativando(null)}
-        title={`Desativar ${desativando?.nome}?`}
-        subtitle="A pessoa deixa de entrar em até um minuto. O histórico de atendimentos dela continua."
-        footer={
+        aberto={Boolean(desativando)}
+        onFechar={() => setDesativando(null)}
+        titulo={`Desativar ${desativando?.nome}?`}
+        descricao="A pessoa deixa de entrar em até um minuto. O histórico de atendimentos dela continua."
+        largura="sm"
+        rodape={
           <>
-            <Button variant="ghost" onClick={() => setDesativando(null)}>
+            <Botao variante="fantasma" onClick={() => setDesativando(null)}>
               Cancelar
-            </Button>
-            <Button variant="danger" onClick={desativar}>
+            </Botao>
+            <Botao variante="perigo" onClick={desativar}>
               Desativar
-            </Button>
+            </Botao>
           </>
         }
       >
         <span />
       </Modal>
-    </div>
+    </Pagina>
   );
-}
-
-function iniciais(nome: string): string {
-  const p = nome.trim().split(/\s+/);
-  return ((p[0]?.[0] ?? '') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
 }
 
 function ModalDaPessoa({ pessoa, times, onClose }: { pessoa: Funcionario | null; times: Time[]; onClose: () => void }) {
@@ -172,34 +168,34 @@ function ModalDaPessoa({ pessoa, times, onClose }: { pessoa: Funcionario | null;
 
   return (
     <Modal
-      open
-      onClose={onClose}
-      title={novo ? 'Nova pessoa' : `Editar ${pessoa!.nome}`}
-      footer={
+      aberto
+      onFechar={onClose}
+      titulo={novo ? 'Nova pessoa' : `Editar ${pessoa!.nome}`}
+      descricao={novo ? 'Ela entra com o próprio e-mail e vê só o que o papel permite.' : undefined}
+      rodape={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Botao variante="fantasma" onClick={onClose}>
             Cancelar
-          </Button>
-          <Button type="submit" form="form-pessoa" loading={salvando}>
+          </Botao>
+          <Botao type="submit" form="form-pessoa" carregando={salvando}>
             {novo ? 'Cadastrar' : 'Salvar'}
-          </Button>
+          </Botao>
         </>
       }
     >
       <form id="form-pessoa" onSubmit={salvar} className="space-y-4">
-        <Input label="Nome" required value={nome} onChange={(e) => setNome(e.target.value)} maxLength={80} autoFocus />
-        <Input label="E-mail (é o login)" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-        <Input label={novo ? `Senha inicial (mínimo ${MIN_SENHA})` : 'Nova senha (deixe em branco para manter)'} type="password" autoComplete="new-password" required={novo} minLength={MIN_SENHA} value={senha} onChange={(e) => setSenha(e.target.value)} />
-        <Select label="Papel" value={papel} onChange={(e) => setPapel(e.target.value as Papel)} disabled={ehEu}>
+        <Entrada rotulo="Nome" required value={nome} onChange={(e) => setNome(e.target.value)} maxLength={80} autoFocus />
+        <Entrada rotulo="E-mail (é o login)" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Entrada rotulo={novo ? `Senha inicial (mínimo ${MIN_SENHA})` : 'Nova senha'} ajuda={novo ? undefined : 'Deixe em branco para manter a atual.'} type="password" autoComplete="new-password" required={novo} minLength={MIN_SENHA} value={senha} onChange={(e) => setSenha(e.target.value)} />
+        <Selecao rotulo="Papel" value={papel} onChange={(e) => setPapel(e.target.value as Papel)} disabled={ehEu} ajuda={DESCRICAO_DO_PAPEL[papel]}>
           {PAPEIS_ATRIBUIVEIS.map((p) => (
             <option key={p} value={p}>
               {NOME_DO_PAPEL[p]}
             </option>
           ))}
-        </Select>
-        <p className="-mt-2 text-xs text-[var(--text-muted)]">{DESCRICAO_DO_PAPEL[papel]}</p>
+        </Selecao>
         <div>
-          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Times</p>
+          <p className="mb-1.5 text-xs font-semibold text-[var(--text)]">Times</p>
           {times.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)]">Nenhum time criado ainda. Crie em Times e volte aqui.</p>
           ) : (
@@ -207,12 +203,7 @@ function ModalDaPessoa({ pessoa, times, onClose }: { pessoa: Funcionario | null;
               {times.map((t) => {
                 const marcado = selecionados.includes(t.id);
                 return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setSelecionados((l) => (marcado ? l.filter((x) => x !== t.id) : [...l, t.id]))}
-                    className={`rounded-full px-3 py-1 text-xs font-bold transition-colors ${marcado ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-2)] text-[var(--text-muted)] hover:text-[var(--text)]'}`}
-                  >
+                  <button key={t.id} type="button" aria-pressed={marcado} onClick={() => setSelecionados((l) => (marcado ? l.filter((x) => x !== t.id) : [...l, t.id]))} className={`h-8 rounded-full px-3 text-xs font-semibold transition-colors ${marcado ? 'bg-[var(--brand)] text-white' : 'border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:border-[var(--brand)]/40 hover:text-[var(--text)]'}`}>
                     {t.nome}
                   </button>
                 );
@@ -222,10 +213,9 @@ function ModalDaPessoa({ pessoa, times, onClose }: { pessoa: Funcionario | null;
           <p className="mt-1.5 text-xs text-[var(--text-muted)]">{papel === 'supervisor' ? 'Um supervisor acompanha os times em que está.' : papel === 'admin' ? 'Administrador vê todos os times; marcar aqui só diz onde ele também atende.' : 'Atendente recebe conversas dos times em que está.'}</p>
         </div>
         {!novo && !ehEu && (
-          <label className="flex items-center gap-2 text-sm text-[var(--text)]">
-            <input type="checkbox" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} />
+          <Marcar marcado={ativo} onChange={setAtivo}>
             Conta ativa
-          </label>
+          </Marcar>
         )}
       </form>
     </Modal>

@@ -3,6 +3,8 @@ import { ChevronDown, History } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useDadosAtende } from '../../store/dados';
 import type { Conversa } from '../../../shared/tipos';
+import { Rotulo } from '../../ui/Cartao';
+import { Esqueleto } from '../../ui/Estados';
 
 /**
  * A auditoria de uma conversa, dobrada no painel do cliente: quem abriu,
@@ -15,6 +17,14 @@ interface Evento {
   usuario_id: number | null;
   dados: Record<string, any> | null;
   criado_em: string;
+}
+
+/** Os eventos da IA ganham o ponto roxo; os do sistema/SLA, âmbar; o resto, cinza. */
+function corDoEvento(tipo: string): string {
+  if (tipo === 'triagem' || tipo.startsWith('followup') || tipo === 'avaliacao_pedida') return 'bg-[var(--brand)]';
+  if (tipo.startsWith('sla')) return 'bg-amber-400';
+  if (tipo === 'encerrada' || tipo === 'avaliada') return 'bg-emerald-500';
+  return 'bg-[var(--border-strong)]';
 }
 
 export function Historico({ conversa }: { conversa: Conversa }) {
@@ -35,8 +45,8 @@ export function Historico({ conversa }: { conversa: Conversa }) {
     };
   }, [aberto, conversa.id, conversa.atualizado_em]);
 
-  const nome = (id: number | null | undefined) => (id ? equipe.find((f) => f.id === id)?.nome ?? `#${id}` : null);
-  const time = (id: string | null | undefined) => (id ? times.find((t) => t.id === id)?.nome ?? 'setor removido' : null);
+  const nome = (id: number | null | undefined) => (id ? (equipe.find((f) => f.id === id)?.nome ?? `#${id}`) : null);
+  const time = (id: string | null | undefined) => (id ? (times.find((t) => t.id === id)?.nome ?? 'setor removido') : null);
 
   function descrever(e: Evento): string {
     const d = e.dados ?? {};
@@ -91,21 +101,30 @@ export function Historico({ conversa }: { conversa: Conversa }) {
 
   return (
     <section>
-      <button type="button" onClick={() => setAberto((v) => !v)} className="flex w-full items-center justify-between text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)] hover:text-[var(--text)]">
-        <span className="inline-flex items-center gap-1">
+      <button type="button" onClick={() => setAberto((v) => !v)} aria-expanded={aberto} className="flex w-full items-center justify-between rounded-lg py-1 text-left transition-colors hover:text-[var(--text)]">
+        <Rotulo className="flex items-center gap-1">
           <History size={11} /> Histórico
-        </span>
-        <ChevronDown size={13} className={`transition-transform ${aberto ? 'rotate-180' : ''}`} />
+        </Rotulo>
+        <ChevronDown size={14} className={`text-[var(--text-muted)] transition-transform ${aberto ? 'rotate-180' : ''}`} />
       </button>
       {aberto && (
-        <ol className="mt-2 space-y-1.5 border-l border-[var(--border)] pl-3">
-          {eventos === null && <li className="text-xs text-[var(--text-muted)]">Carregando…</li>}
+        <ol className="mt-2 space-y-2.5 border-l border-[var(--border)] pl-3.5">
+          {eventos === null && (
+            <>
+              <li>
+                <Esqueleto className="h-3 w-3/4" />
+              </li>
+              <li>
+                <Esqueleto className="h-3 w-1/2" />
+              </li>
+            </>
+          )}
           {eventos?.length === 0 && <li className="text-xs text-[var(--text-muted)]">Nada registrado.</li>}
           {eventos?.map((e) => (
             <li key={e.id} className="relative text-xs">
-              <span className="absolute -left-[15px] top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
-              <span className="block text-[var(--text)]">{descrever(e)}</span>
-              <span className="block text-[10px] text-[var(--text-muted)]">{new Date(e.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+              <span className={`absolute -left-[19px] top-1.5 h-2 w-2 rounded-full ring-2 ring-[var(--surface)] ${corDoEvento(e.tipo)}`} />
+              <span className="block leading-5 text-[var(--text)]">{descrever(e)}</span>
+              <span className="block text-[10px] tabular-nums text-[var(--text-muted)]">{new Date(e.criado_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
             </li>
           ))}
         </ol>

@@ -1,11 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
-import { Plus, Save, Sparkles, Trash2, Timer } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { Card, CardHeader } from '@/shared/ui/Card';
-import { Input, Textarea } from '@/shared/ui/Field';
+import { Bot, Building2, Clock, FlaskConical, MessageCircleQuestion, Plus, Save, Sparkles, Timer, Trash2 } from 'lucide-react';
+import { Botao } from '../ui/Botao';
+import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
+import { Entrada, AreaDeTexto, Interruptor, ESTILO_DO_CAMPO } from '../ui/Campo';
+import { Abas } from '../ui/Controles';
+import { Pagina } from '../ui/Pagina';
+import { Vazio } from '../ui/Estados';
+import { SeloIa } from '../ui/Ia';
 import { api, ErroDaApi } from '../lib/api';
 import { useDadosAtende } from '../store/dados';
+import { TELAS, useRotaAtende } from '../router';
 import { DIAS_DA_SEMANA, NOME_DO_DIA, type Empresa as TEmpresa, type HorarioDeAtendimento, type PerguntaFrequente } from '../../shared/tipos';
 import { SimuladorDaTriagem } from './SimuladorDaTriagem';
 
@@ -13,16 +18,24 @@ import { SimuladorDaTriagem } from './SimuladorDaTriagem';
  * A empresa: o que ela é e o que a IA vai saber. Tudo que a triagem usa
  * como contexto nasce desta tela — descrição, produtos e serviços,
  * informações, perguntas frequentes, horário e regras. Nada de fora.
+ *
+ * Duas abas do mesmo formulário: Configurações (a empresa, o horário, o
+ * SLA) e IA (o contexto, as perguntas frequentes, a triagem, o simulador).
+ * Salvar grava tudo de uma vez, de qualquer aba.
  */
-export function Empresa() {
+type Aba = 'empresa' | 'ia';
+
+export function Empresa({ aba = 'empresa' }: { aba?: Aba }) {
   const empresa = useDadosAtende((s) => s.empresa)!;
   const aplicar = useDadosAtende((s) => s.aplicar);
+  const ir = useRotaAtende((s) => s.ir);
   const [form, setForm] = useState(() => paraForm(empresa));
   const [salvando, setSalvando] = useState(false);
 
   useEffect(() => setForm(paraForm(empresa)), [empresa]);
 
   const campo = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: v }));
+  const mudou = JSON.stringify(form) !== JSON.stringify(paraForm(empresa));
 
   async function salvar(e: FormEvent) {
     e.preventDefault();
@@ -52,120 +65,124 @@ export function Empresa() {
     }
   }
 
+  const titulo = aba === 'ia' ? 'IA' : 'Configurações';
+  const descricao = aba === 'ia' ? `O que a IA sabe sobre a ${empresa.nome} vem daqui — e só daqui.` : 'A empresa, o horário de atendimento e as regras de tempo de resposta.';
+
   return (
-    <form onSubmit={salvar} className="mx-auto max-w-3xl space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-[var(--text)]">Empresa</h1>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">O que a IA sabe sobre a {empresa.nome} vem daqui — e só daqui.</p>
-        </div>
-        <Button type="submit" loading={salvando} icon={<Save size={15} />}>
+    <Pagina
+      titulo={titulo}
+      descricao={descricao}
+      largura="md"
+      acoes={
+        <Botao type="submit" form="form-empresa" carregando={salvando} icone={<Save size={15} />} variante={mudou ? 'primaria' : 'secundaria'}>
           Salvar
-        </Button>
-      </div>
+        </Botao>
+      }
+    >
+      <Abas
+        valor={aba}
+        onChange={(a) => ir(TELAS.empresa, a === 'ia' ? 'ia' : '')}
+        className="mb-5"
+        opcoes={[
+          { valor: 'empresa', rotulo: 'Empresa', icone: <Building2 size={15} /> },
+          { valor: 'ia', rotulo: 'IA e triagem', icone: <Bot size={15} /> },
+        ]}
+      />
 
-      <Card className="space-y-4 p-5">
-        <CardHeader title="Identificação" />
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Input label="Nome da empresa" required value={form.nome} onChange={(e) => campo('nome', e.target.value)} maxLength={80} />
-          <Input label="Segmento" value={form.segmento} onChange={(e) => campo('segmento', e.target.value)} placeholder="Imobiliária, clínica, loja…" maxLength={60} />
-        </div>
-        <Textarea label="Descrição" rows={3} value={form.descricao} onChange={(e) => campo('descricao', e.target.value)} placeholder="O que a empresa faz, para quem, onde atua." maxLength={2000} />
-      </Card>
-
-      <Card className="space-y-4 p-5">
-        <CardHeader title="O que a IA precisa saber" />
-        <Textarea label="Produtos e serviços" rows={4} value={form.produtos_servicos} onChange={(e) => campo('produtos_servicos', e.target.value)} placeholder="Ex.: venda e aluguel de imóveis residenciais e comerciais em Natal e Nova Cruz; administração de condomínios…" maxLength={4000} />
-        <Textarea label="Informações relevantes" rows={4} value={form.informacoes_ia} onChange={(e) => campo('informacoes_ia', e.target.value)} placeholder="Endereço, formas de pagamento, documentos necessários, prazos, o que NÃO fazemos…" maxLength={4000} />
-        <Textarea label="Regras de atendimento" rows={3} value={form.regras_atendimento} onChange={(e) => campo('regras_atendimento', e.target.value)} placeholder="Ex.: nunca informar valores por mensagem; urgências de manutenção têm prioridade alta; cliente de aluguel em atraso vai para o Financeiro." maxLength={2000} />
-      </Card>
-
-      <Card className="space-y-3 p-5">
-        <CardHeader title="Perguntas frequentes" actions={<Button type="button" size="sm" variant="outline" icon={<Plus size={14} />} onClick={() => campo('faq', [...form.faq, { pergunta: '', resposta: '' }])}>Adicionar</Button>} />
-        {form.faq.length === 0 && <p className="text-sm text-[var(--text-muted)]">Perguntas que os clientes fazem sempre, com a resposta oficial. A IA pode responder essas antes de encaminhar.</p>}
-        {form.faq.map((f, i) => (
-          <div key={i} className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-3 sm:grid-cols-[1fr_1fr_auto]">
-            <Input placeholder="Pergunta" value={f.pergunta} onChange={(e) => campo('faq', form.faq.map((x, j) => (j === i ? { ...x, pergunta: e.target.value } : x)))} maxLength={300} />
-            <Input placeholder="Resposta" value={f.resposta} onChange={(e) => campo('faq', form.faq.map((x, j) => (j === i ? { ...x, resposta: e.target.value } : x)))} maxLength={1000} />
-            <button type="button" onClick={() => campo('faq', form.faq.filter((_, j) => j !== i))} className="self-center rounded-lg p-2 text-[var(--text-muted)] hover:bg-rose-500/10 hover:text-rose-600" aria-label="Remover">
-              <Trash2 size={15} />
-            </button>
-          </div>
-        ))}
-      </Card>
-
-      <Card className="space-y-4 p-5">
-        <CardHeader title="Horário de atendimento" />
-        <div className="space-y-2">
-          {DIAS_DA_SEMANA.map((dia) => {
-            const faixa = form.horario[dia] ?? null;
-            return (
-              <div key={dia} className="flex flex-wrap items-center gap-3 text-sm">
-                <label className="flex w-32 items-center gap-2 font-semibold text-[var(--text)]">
-                  <input type="checkbox" checked={Boolean(faixa)} onChange={(e) => campo('horario', { ...form.horario, [dia]: e.target.checked ? { de: '08:00', ate: '18:00' } : null })} />
-                  {NOME_DO_DIA[dia]}
-                </label>
-                {faixa ? (
-                  <>
-                    <input type="time" value={faixa.de} onChange={(e) => campo('horario', { ...form.horario, [dia]: { ...faixa, de: e.target.value } })} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[var(--text)]" />
-                    <span className="text-[var(--text-muted)]">às</span>
-                    <input type="time" value={faixa.ate} onChange={(e) => campo('horario', { ...form.horario, [dia]: { ...faixa, ate: e.target.value } })} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[var(--text)]" />
-                  </>
-                ) : (
-                  <span className="text-[var(--text-muted)]">Fechado</span>
-                )}
+      <form id="form-empresa" onSubmit={salvar} className="space-y-4">
+        {aba === 'empresa' && (
+          <>
+            <Cartao className="space-y-4 p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<Building2 size={14} />} titulo="Identificação" descricao="Como a empresa aparece para a equipe e para a IA." />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Entrada rotulo="Nome da empresa" required value={form.nome} onChange={(e) => campo('nome', e.target.value)} maxLength={80} />
+                <Entrada rotulo="Segmento" value={form.segmento} onChange={(e) => campo('segmento', e.target.value)} placeholder="Imobiliária, clínica, loja…" maxLength={60} />
               </div>
-            );
-          })}
-        </div>
-        <Textarea label="Mensagem fora do horário" rows={2} value={form.mensagem_fora_do_horario} onChange={(e) => campo('mensagem_fora_do_horario', e.target.value)} placeholder="Ex.: Olá! Nosso atendimento é de segunda a sexta, das 8h às 18h. Deixe sua mensagem e retornamos assim que abrirmos." maxLength={500} />
-      </Card>
+              <AreaDeTexto rotulo="Descrição" rows={3} value={form.descricao} onChange={(e) => campo('descricao', e.target.value)} placeholder="O que a empresa faz, para quem, onde atua." maxLength={2000} />
+            </Cartao>
 
-      <Card className="space-y-4 p-5">
-        <CardHeader icon={<Sparkles size={14} />} title="Triagem da IA" />
-        <p className="text-sm text-[var(--text-muted)]">A IA lê cada conversa nova, escolhe o setor e a prioridade, resume para o atendente e dá uma primeira resposta. Ela nunca vende nem negocia — só encaminha.</p>
-        <div className="space-y-2">
-          <Interruptor ligado={form.triagem_ativa} onChange={(v) => campo('triagem_ativa', v)} titulo="Triagem ligada" descricao="Desligada, toda conversa nova cai direto na fila geral, sem setor, e a IA não fala com o cliente." />
-          <Interruptor ligado={form.responde_fora_do_horario} onChange={(v) => campo('responde_fora_do_horario', v)} titulo="Responder fora do horário" descricao="Fora do horário, a IA ainda tria e manda a mensagem de fora do horário (acima). Desligado, ela tria em silêncio e o cliente só ouve a equipe quando abrir." />
-        </div>
-        <div>
-          <p className="mb-1.5 flex items-center gap-1 text-xs font-bold text-[var(--text)]">
-            <Sparkles size={12} className="text-[var(--brand)]" /> Testar a triagem
-          </p>
-          <SimuladorDaTriagem />
-        </div>
-      </Card>
+            <Cartao className="space-y-4 p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<Clock size={14} />} titulo="Horário de atendimento" descricao="Fora dele, a IA pode avisar o cliente com a mensagem abaixo." />
+              <div className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
+                {DIAS_DA_SEMANA.map((dia) => {
+                  const faixa = form.horario[dia] ?? null;
+                  return (
+                    <div key={dia} className="flex flex-wrap items-center gap-3 px-3 py-2.5 text-sm">
+                      <label className="flex w-36 cursor-pointer items-center gap-2.5 font-medium text-[var(--text)]">
+                        <input type="checkbox" checked={Boolean(faixa)} onChange={(e) => campo('horario', { ...form.horario, [dia]: e.target.checked ? { de: '08:00', ate: '18:00' } : null })} className="h-4 w-4 rounded accent-[var(--brand)]" />
+                        {NOME_DO_DIA[dia]}
+                      </label>
+                      {faixa ? (
+                        <span className="flex items-center gap-2">
+                          <input type="time" value={faixa.de} onChange={(e) => campo('horario', { ...form.horario, [dia]: { ...faixa, de: e.target.value } })} className={`${ESTILO_DO_CAMPO} h-9 w-auto py-1`} />
+                          <span className="text-[var(--text-muted)]">às</span>
+                          <input type="time" value={faixa.ate} onChange={(e) => campo('horario', { ...form.horario, [dia]: { ...faixa, ate: e.target.value } })} className={`${ESTILO_DO_CAMPO} h-9 w-auto py-1`} />
+                        </span>
+                      ) : (
+                        <span className="text-xs text-[var(--text-muted)]">Fechado</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <AreaDeTexto rotulo="Mensagem fora do horário" rows={2} value={form.mensagem_fora_do_horario} onChange={(e) => campo('mensagem_fora_do_horario', e.target.value)} placeholder="Ex.: Olá! Nosso atendimento é de segunda a sexta, das 8h às 18h. Deixe sua mensagem e retornamos assim que abrirmos." maxLength={500} />
+            </Cartao>
 
-      <Card className="space-y-4 p-5">
-        <CardHeader icon={<Timer size={14} />} title="SLA: tempo sem resposta" />
-        <p className="text-sm text-[var(--text-muted)]">O dashboard mede o tempo de resposta; aqui o sistema age sobre ele. Quando um cliente fica esperando, quem atende e quem supervisiona recebem um aviso (push); passado mais tempo, a conversa vai para a fila geral com prioridade alta, para qualquer pessoa livre pegar. Deixe em branco para desligar.</p>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Input label="Avisar após (minutos)" type="number" min={1} max={1440} inputMode="numeric" value={form.sla_aviso_min} onChange={(e) => campo('sla_aviso_min', e.target.value)} placeholder="Ex.: 10" />
-          <Input label="Escalonar para a fila geral após (minutos)" type="number" min={1} max={2880} inputMode="numeric" value={form.sla_escalonar_min} onChange={(e) => campo('sla_escalonar_min', e.target.value)} placeholder="Ex.: 30" />
+            <Cartao className="space-y-4 p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<Timer size={14} />} titulo="SLA: tempo sem resposta" descricao="Quando um cliente fica esperando, o sistema age." />
+              <p className="text-sm leading-6 text-[var(--text-muted)]">O dashboard mede o tempo de resposta; aqui o sistema age sobre ele. Quando um cliente fica esperando, quem atende e quem supervisiona recebem um aviso (push); passado mais tempo, a conversa vai para a fila geral com prioridade alta, para qualquer pessoa livre pegar. Deixe em branco para desligar.</p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Entrada rotulo="Avisar após (minutos)" type="number" min={1} max={1440} inputMode="numeric" value={form.sla_aviso_min} onChange={(e) => campo('sla_aviso_min', e.target.value)} placeholder="Ex.: 10" />
+                <Entrada rotulo="Escalonar para a fila geral após (minutos)" type="number" min={1} max={2880} inputMode="numeric" value={form.sla_escalonar_min} onChange={(e) => campo('sla_escalonar_min', e.target.value)} placeholder="Ex.: 30" />
+              </div>
+              <p className="text-xs text-[var(--text-muted)]">A verificação roda enquanto alguém da equipe está com o Atende Aí aberto (a cada minuto) e uma vez por dia pelo servidor.</p>
+            </Cartao>
+          </>
+        )}
+
+        {aba === 'ia' && (
+          <>
+            <Cartao className="space-y-4 p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<Sparkles size={14} />} titulo="O que a IA precisa saber" descricao="É o contexto de cada triagem. Quanto mais concreto, melhor ela encaminha." />
+              <AreaDeTexto rotulo="Produtos e serviços" rows={4} value={form.produtos_servicos} onChange={(e) => campo('produtos_servicos', e.target.value)} placeholder="Ex.: venda e aluguel de imóveis residenciais e comerciais em Natal e Nova Cruz; administração de condomínios…" maxLength={4000} />
+              <AreaDeTexto rotulo="Informações relevantes" rows={4} value={form.informacoes_ia} onChange={(e) => campo('informacoes_ia', e.target.value)} placeholder="Endereço, formas de pagamento, documentos necessários, prazos, o que NÃO fazemos…" maxLength={4000} />
+              <AreaDeTexto rotulo="Regras de atendimento" rows={3} value={form.regras_atendimento} onChange={(e) => campo('regras_atendimento', e.target.value)} placeholder="Ex.: nunca informar valores por mensagem; urgências de manutenção têm prioridade alta; cliente de aluguel em atraso vai para o Financeiro." maxLength={2000} />
+            </Cartao>
+
+            <Cartao className="space-y-3 p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<MessageCircleQuestion size={14} />} titulo="Perguntas frequentes" descricao="A IA pode responder estas antes de encaminhar." acoes={<Botao type="button" tamanho="sm" variante="secundaria" icone={<Plus size={14} />} onClick={() => campo('faq', [...form.faq, { pergunta: '', resposta: '' }])}>Adicionar</Botao>} />
+              {form.faq.length === 0 && <Vazio compacto icone={<MessageCircleQuestion size={18} />} titulo="Nenhuma pergunta cadastrada." texto="Perguntas que os clientes fazem sempre, com a resposta oficial." />}
+              {form.faq.map((f, i) => (
+                <div key={i} className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3 sm:grid-cols-[1fr_1fr_auto]">
+                  <Entrada placeholder="Pergunta" value={f.pergunta} onChange={(e) => campo('faq', form.faq.map((x, j) => (j === i ? { ...x, pergunta: e.target.value } : x)))} maxLength={300} />
+                  <Entrada placeholder="Resposta" value={f.resposta} onChange={(e) => campo('faq', form.faq.map((x, j) => (j === i ? { ...x, resposta: e.target.value } : x)))} maxLength={1000} />
+                  <Botao type="button" tamanho="md" variante="fantasma" quadrado icone={<Trash2 size={15} />} onClick={() => campo('faq', form.faq.filter((_, j) => j !== i))} aria-label="Remover" className="self-center hover:!bg-rose-50 hover:!text-rose-600" />
+                </div>
+              ))}
+            </Cartao>
+
+            <Cartao className="space-y-4 p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<Bot size={14} />} titulo="Triagem da IA" descricao="A IA lê cada conversa nova, escolhe o setor e a prioridade, resume para o atendente e dá uma primeira resposta. Ela nunca vende nem negocia — só encaminha." />
+              <div className="space-y-2">
+                <Interruptor ligado={form.triagem_ativa} onChange={(v) => campo('triagem_ativa', v)} titulo="Triagem ligada" descricao="Desligada, toda conversa nova cai direto na fila geral, sem setor, e a IA não fala com o cliente." />
+                <Interruptor ligado={form.responde_fora_do_horario} onChange={(v) => campo('responde_fora_do_horario', v)} titulo="Responder fora do horário" descricao="Fora do horário, a IA ainda tria e manda a mensagem de fora do horário (em Configurações). Desligado, ela tria em silêncio e o cliente só ouve a equipe quando abrir." />
+              </div>
+            </Cartao>
+
+            <Cartao className="space-y-4 p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<FlaskConical size={14} />} titulo="Testar a triagem" descricao="Escreva como um cliente e veja o que a IA faria. Nada é gravado nem enviado." acoes={<SeloIa>simulador</SeloIa>} />
+              <SimuladorDaTriagem />
+            </Cartao>
+          </>
+        )}
+
+        <div className="flex justify-end lg:hidden">
+          <Botao type="submit" carregando={salvando} icone={<Save size={15} />}>
+            Salvar
+          </Botao>
         </div>
-        <p className="text-xs text-[var(--text-muted)]">A verificação roda enquanto alguém da equipe está com o Atende Aí aberto (a cada minuto) e uma vez por dia pelo servidor.</p>
-      </Card>
-
-      <div className="flex justify-end">
-        <Button type="submit" loading={salvando} icon={<Save size={15} />}>
-          Salvar
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-function Interruptor({ ligado, onChange, titulo, descricao }: { ligado: boolean; onChange: (v: boolean) => void; titulo: string; descricao: string }) {
-  return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-3">
-      <button type="button" role="switch" aria-checked={ligado} onClick={() => onChange(!ligado)} className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors ${ligado ? 'bg-[var(--brand)]' : 'bg-[var(--border)]'}`}>
-        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${ligado ? 'left-[22px]' : 'left-0.5'}`} />
-      </button>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold text-[var(--text)]">{titulo}</span>
-        <span className="block text-xs text-[var(--text-muted)]">{descricao}</span>
-      </span>
-    </label>
+      </form>
+    </Pagina>
   );
 }
 

@@ -39,6 +39,14 @@ export function Composer({ conversa }: { conversa: Conversa }) {
     setModoNota(false);
   }, [conversa.id]);
 
+  // A caixa cresce com o texto, até um limite.
+  useEffect(() => {
+    const el = campo.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [texto]);
+
   async function depoisDeEnviar(m: Mensagem) {
     aplicarMensagem(m);
     // A conversa mudou (estado, prévia, atendente): busca a versão nova.
@@ -137,68 +145,74 @@ export function Composer({ conversa }: { conversa: Conversa }) {
   }
 
   const encerrada = conversa.estado === 'encerrada';
+  const botaoDeIcone = 'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-40';
 
   return (
-    <div className={`border-t px-2 pt-2.5 pb-[calc(0.625rem+env(safe-area-inset-bottom))] sm:px-3 ${modoNota ? 'border-amber-400/40 bg-amber-50/60 dark:bg-amber-500/5' : 'border-[var(--border)] bg-[var(--surface)]'}`}>
-      {anexo && (
-        <div className="mb-2 flex items-center gap-2 rounded-lg bg-[var(--bg-2)] px-3 py-2 text-xs text-[var(--text)]">
-          <Paperclip size={13} />
-          <span className="min-w-0 flex-1 truncate">
-            {anexo.name} <span className="text-[var(--text-muted)]">· {tamanhoBonito(anexo.size)}</span>
-          </span>
-          <button type="button" onClick={() => setAnexo(null)} className="rounded p-1 hover:bg-black/10" aria-label="Remover anexo">
-            <X size={13} />
-          </button>
-        </div>
-      )}
-      {encerrada && !modoNota && <p className="mb-2 text-xs text-[var(--text-muted)]">Conversa encerrada — responder reabre.</p>}
-      <div className="flex min-w-0 items-end gap-1 sm:gap-1.5">
-        <button type="button" onClick={() => setModoNota((v) => !v)} title={modoNota ? 'Voltar a responder o cliente' : 'Nota interna (o cliente não vê)'} className={`shrink-0 rounded-xl p-2.5 transition-colors ${modoNota ? 'bg-amber-400 text-amber-950' : 'text-[var(--text-muted)] hover:bg-[var(--bg-2)] hover:text-[var(--text)]'}`}>
-          <StickyNote size={18} />
-        </button>
-        {!modoNota && (
-          <>
-            <input ref={arquivo} type="file" className="hidden" onChange={(e) => setAnexo(e.target.files?.[0] ?? null)} />
-            <button type="button" onClick={() => arquivo.current?.click()} disabled={gravando} title="Anexar arquivo" aria-label="Anexar arquivo" className="shrink-0 rounded-xl p-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-40">
-              <Paperclip size={18} />
-            </button>
-          </>
-        )}
-        {gravando ? (
-          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-rose-400/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
-            <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />
-            Gravando… {Math.floor(segundos / 60)}:{String(segundos % 60).padStart(2, '0')}
-            <button type="button" onClick={() => pararGravacao(true)} className="ml-auto text-xs font-semibold underline">
-              Cancelar
+    <div className={`border-t px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:px-4 sm:pt-3 sm:pb-3 ${modoNota ? 'border-amber-200 bg-amber-50/70' : 'border-[var(--border)] bg-[var(--surface)]'}`}>
+      <div className="mx-auto max-w-3xl">
+        {anexo && (
+          <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text)]">
+            <Paperclip size={13} className="text-[var(--text-muted)]" />
+            <span className="min-w-0 flex-1 truncate">
+              {anexo.name} <span className="text-[var(--text-muted)]">· {tamanhoBonito(anexo.size)}</span>
+            </span>
+            <button type="button" onClick={() => setAnexo(null)} className="rounded-md p-1 hover:bg-[var(--bg-2)]" aria-label="Remover anexo">
+              <X size={13} />
             </button>
           </div>
-        ) : (
-          <textarea
-            ref={campo}
-            value={texto}
-            onChange={(e) => setTexto(e.target.value)}
-            onKeyDown={aoTeclar}
-            rows={1}
-            maxLength={4000}
-            placeholder={modoNota ? 'Nota interna — só a equipe vê…' : anexo ? 'Legenda (opcional)…' : ehCelular() ? 'Mensagem' : 'Escreva a resposta… (Enter envia, Shift+Enter quebra linha)'}
-            className={`max-h-40 min-h-[42px] min-w-0 flex-1 resize-none rounded-xl border px-3 py-2.5 text-sm outline-none transition-colors ${modoNota ? 'border-amber-400/60 bg-white text-amber-950 focus:border-amber-500 dark:bg-amber-500/10 dark:text-amber-50' : 'border-[var(--border)] bg-[var(--bg)] text-[var(--text)] focus:border-[var(--brand)]'}`}
-          />
         )}
-        {!modoNota && !texto.trim() && !anexo ? (
-          gravando ? (
-            <button type="button" onClick={() => pararGravacao(false)} title="Parar e enviar" aria-label="Parar e enviar" className="shrink-0 rounded-xl bg-[var(--brand)] p-2.5 text-white">
-              <Square size={18} />
-            </button>
-          ) : (
-            <button type="button" onClick={comecarGravacao} disabled={enviando} title="Gravar áudio" aria-label="Gravar áudio" className="shrink-0 rounded-xl p-2.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-40">
-              <Mic size={18} />
-            </button>
-          )
-        ) : (
-          <button type="button" onClick={enviarTexto} disabled={enviando || (!texto.trim() && !anexo)} title="Enviar" aria-label="Enviar" className={`shrink-0 rounded-xl p-2.5 text-white transition disabled:opacity-40 ${modoNota ? 'bg-amber-500' : 'bg-[var(--brand)]'}`}>
-            <Send size={18} />
+        {modoNota && <p className="mb-1.5 flex items-center gap-1.5 px-1 text-[11px] font-semibold text-amber-700"><StickyNote size={12} /> Nota interna — o cliente não vê.</p>}
+        {encerrada && !modoNota && <p className="mb-1.5 px-1 text-[11px] text-[var(--text-muted)]">Conversa encerrada — responder reabre.</p>}
+        <div className="flex min-w-0 items-end gap-1 sm:gap-1.5">
+          <button type="button" onClick={() => setModoNota((v) => !v)} data-dica={modoNota ? 'Voltar a responder o cliente' : 'Nota interna (o cliente não vê)'} aria-label={modoNota ? 'Voltar a responder o cliente' : 'Nota interna'} className={`${botaoDeIcone} ${modoNota ? 'bg-amber-400 text-amber-950 hover:bg-amber-400 hover:text-amber-950' : ''}`}>
+            <StickyNote size={18} />
           </button>
-        )}
+          {!modoNota && (
+            <>
+              <input ref={arquivo} type="file" className="hidden" onChange={(e) => setAnexo(e.target.files?.[0] ?? null)} />
+              <button type="button" onClick={() => arquivo.current?.click()} disabled={gravando} data-dica="Anexar arquivo" aria-label="Anexar arquivo" className={botaoDeIcone}>
+                <Paperclip size={18} />
+              </button>
+            </>
+          )}
+          {gravando ? (
+            <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 text-sm text-rose-700">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-500" />
+              <span className="tabular-nums">
+                Gravando… {Math.floor(segundos / 60)}:{String(segundos % 60).padStart(2, '0')}
+              </span>
+              <button type="button" onClick={() => pararGravacao(true)} className="ml-auto text-xs font-semibold underline">
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <textarea
+              ref={campo}
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              onKeyDown={aoTeclar}
+              rows={1}
+              maxLength={4000}
+              placeholder={modoNota ? 'Escreva a nota para a equipe…' : anexo ? 'Legenda (opcional)…' : ehCelular() ? 'Mensagem' : 'Escreva a resposta… (Enter envia, Shift+Enter quebra linha)'}
+              className={`max-h-40 min-h-[40px] min-w-0 flex-1 resize-none rounded-xl border px-3.5 py-2.5 text-sm leading-5 outline-none transition-[border-color,box-shadow] placeholder:text-[var(--text-disable)] focus:ring-4 ${modoNota ? 'border-amber-300 bg-white text-amber-950 focus:border-amber-500 focus:ring-amber-500/10' : 'border-[var(--border)] bg-[var(--bg)] text-[var(--text)] focus:border-[var(--brand)] focus:bg-[var(--surface)] focus:ring-[var(--brand)]/10'}`}
+            />
+          )}
+          {!modoNota && !texto.trim() && !anexo ? (
+            gravando ? (
+              <button type="button" onClick={() => pararGravacao(false)} data-dica="Parar e enviar" aria-label="Parar e enviar" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--brand)] text-white shadow-[0_8px_20px_-10px_rgba(124,58,237,0.7)]">
+                <Square size={18} />
+              </button>
+            ) : (
+              <button type="button" onClick={comecarGravacao} disabled={enviando} data-dica="Gravar áudio" aria-label="Gravar áudio" className={botaoDeIcone}>
+                <Mic size={18} />
+              </button>
+            )
+          ) : (
+            <button type="button" onClick={enviarTexto} disabled={enviando || (!texto.trim() && !anexo)} data-dica="Enviar" aria-label="Enviar" className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white transition-[background-color,transform] active:scale-95 disabled:opacity-40 ${modoNota ? 'bg-amber-500' : 'bg-[var(--brand)] shadow-[0_8px_20px_-10px_rgba(124,58,237,0.7)] hover:bg-[var(--brand-deep)]'}`}>
+              <Send size={18} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

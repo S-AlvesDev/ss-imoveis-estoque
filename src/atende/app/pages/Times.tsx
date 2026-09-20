@@ -1,12 +1,15 @@
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Pencil, Plus, Trash2, UsersRound } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { Card } from '@/shared/ui/Card';
-import { Badge } from '@/shared/ui/Badge';
-import { EmptyState } from '@/shared/ui/EmptyState';
-import { Modal } from '@/shared/ui/Modal';
-import { Input, Textarea } from '@/shared/ui/Field';
+import { Botao } from '../ui/Botao';
+import { Cartao } from '../ui/Cartao';
+import { Etiqueta } from '../ui/Etiqueta';
+import { Avatar, Avatares } from '../ui/Avatar';
+import { Modal } from '../ui/Modal';
+import { Entrada, AreaDeTexto, Marcar } from '../ui/Campo';
+import { Pagina } from '../ui/Pagina';
+import { Vazio } from '../ui/Estados';
+import { SeloIa } from '../ui/Ia';
 import { api, ErroDaApi } from '../lib/api';
 import { useDadosAtende } from '../store/dados';
 import type { Time } from '../../shared/tipos';
@@ -40,62 +43,65 @@ export function Times() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-[var(--text)]">Times</h1>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">Os setores para onde a IA encaminha. Descreva bem o que cada um atende: é isso que ela lê.</p>
-        </div>
-        <Button icon={<Plus size={15} />} onClick={() => setEditando('novo')}>
-          Novo time
-        </Button>
-      </div>
-
+    <Pagina titulo="Times" descricao="Os setores para onde a IA encaminha. Descreva bem o que cada um atende: é isso que ela lê." largura="md" acoes={<Botao icone={<Plus size={15} />} onClick={() => setEditando('novo')}>Novo time</Botao>}>
       {times.length === 0 ? (
-        <Card className="p-8">
-          <EmptyState icon={<UsersRound size={22} />} title="Nenhum time ainda" subtitle="Crie os setores da empresa. Sugestões:" />
-          <div className="mt-4 flex flex-wrap justify-center gap-2">
-            {SUGESTOES.map((s) => (
-              <button key={s} type="button" onClick={() => setEditando({ id: '', nome: s, descricao_para_ia: null, palavras_chave: [], ordem: times.length, ativo: true, membros: [], supervisores: [] })} className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs font-bold text-[var(--text-muted)] hover:border-[var(--brand)] hover:text-[var(--text)]">
-                + {s}
-              </button>
-            ))}
-          </div>
-        </Card>
+        <Cartao>
+          <Vazio
+            icone={<UsersRound size={22} />}
+            titulo="Nenhum time ainda"
+            texto="Crie os setores da empresa. A IA encaminha cada conversa para o time certo pela descrição. Sugestões:"
+            acao={
+              <div className="flex flex-wrap justify-center gap-2">
+                {SUGESTOES.map((s) => (
+                  <button key={s} type="button" onClick={() => setEditando({ id: '', nome: s, descricao_para_ia: null, palavras_chave: [], ordem: times.length, ativo: true, membros: [], supervisores: [] })} className="h-8 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--text-muted)] transition-colors hover:border-[var(--brand)]/50 hover:text-[var(--brand)]">
+                    + {s}
+                  </button>
+                ))}
+              </div>
+            }
+          />
+        </Cartao>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {times.map((t) => (
-            <Card key={t.id} className={`flex flex-col gap-3 p-4 ${t.ativo ? '' : 'opacity-60'}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-base font-extrabold text-[var(--text)]">{t.nome}</p>
-                  <p className="mt-0.5 line-clamp-3 text-sm text-[var(--text-muted)]">{t.descricao_para_ia || <span className="italic">Sem descrição para a IA — ela não vai saber quando encaminhar para cá.</span>}</p>
+            <Cartao key={t.id} className={`flex flex-col gap-3 p-4 sm:p-5 ${t.ativo ? '' : 'opacity-60'}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <Avatar nome={t.nome} tamanho={40} quadrado />
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] font-semibold text-[var(--text)]">{t.nome}</p>
+                    <p className="mt-0.5 line-clamp-3 text-sm leading-5 text-[var(--text-muted)]">{t.descricao_para_ia || <span className="italic">Sem descrição para a IA — ela não vai saber quando encaminhar para cá.</span>}</p>
+                  </div>
                 </div>
-                {!t.ativo && <Badge variant="neutral">Inativo</Badge>}
+                <span className="flex shrink-0 gap-0.5">
+                  <Botao tamanho="sm" variante="fantasma" quadrado icone={<Pencil size={14} />} onClick={() => setEditando(t)} aria-label="Editar" />
+                  <Botao tamanho="sm" variante="fantasma" quadrado icone={<Trash2 size={14} />} onClick={() => setExcluindo(t)} aria-label="Excluir" className="hover:!bg-rose-50 hover:!text-rose-600" />
+                </span>
               </div>
               {t.palavras_chave.length > 0 && (
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap items-center gap-1">
+                  <SeloIa>palavras-chave</SeloIa>
                   {t.palavras_chave.map((p) => (
-                    <span key={p} className="rounded-full bg-[var(--brand)]/10 px-2 py-0.5 text-[11px] font-semibold text-[var(--brand)]">
+                    <span key={p} className="rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--text-muted)]">
                       {p}
                     </span>
                   ))}
                 </div>
               )}
-              <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] pt-3 text-xs text-[var(--text-muted)]">
-                <span>
-                  {t.membros.length === 0 ? 'Ninguém neste time' : `${t.membros.length} ${t.membros.length === 1 ? 'pessoa' : 'pessoas'}: ${t.membros.slice(0, 3).map(nomeDe).join(', ')}${t.membros.length > 3 ? '…' : ''}`}
-                </span>
-                <span className="flex shrink-0 gap-1">
-                  <button type="button" onClick={() => setEditando(t)} className="rounded-lg p-1.5 hover:bg-[var(--bg-2)] hover:text-[var(--text)]" aria-label="Editar">
-                    <Pencil size={14} />
-                  </button>
-                  <button type="button" onClick={() => setExcluindo(t)} className="rounded-lg p-1.5 hover:bg-rose-500/10 hover:text-rose-600" aria-label="Excluir">
-                    <Trash2 size={14} />
-                  </button>
-                </span>
+              <div className="mt-auto flex items-center justify-between gap-2 border-t border-[var(--border)] pt-3 text-xs text-[var(--text-muted)]">
+                {t.membros.length === 0 ? (
+                  <span>Ninguém neste time</span>
+                ) : (
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Avatares nomes={t.membros.map(nomeDe)} tamanho={22} maximo={4} />
+                    <span className="truncate">
+                      {t.membros.length} {t.membros.length === 1 ? 'pessoa' : 'pessoas'}
+                    </span>
+                  </span>
+                )}
+                {!t.ativo ? <Etiqueta tom="cinza">Inativo</Etiqueta> : t.supervisores.length > 0 ? <span className="shrink-0">{t.supervisores.length} {t.supervisores.length === 1 ? 'supervisor' : 'supervisores'}</span> : null}
               </div>
-            </Card>
+            </Cartao>
           ))}
         </div>
       )}
@@ -103,24 +109,25 @@ export function Times() {
       {editando && <ModalDoTime time={editando === 'novo' ? null : editando} onClose={() => setEditando(null)} />}
 
       <Modal
-        open={Boolean(excluindo)}
-        onClose={() => setExcluindo(null)}
-        title={`Excluir ${excluindo?.nome}?`}
-        subtitle="As pessoas continuam na equipe; só saem deste time. Se preferir, desative o time em vez de excluir."
-        footer={
+        aberto={Boolean(excluindo)}
+        onFechar={() => setExcluindo(null)}
+        titulo={`Excluir ${excluindo?.nome}?`}
+        descricao="As pessoas continuam na equipe; só saem deste time. Se preferir, desative o time em vez de excluir."
+        largura="sm"
+        rodape={
           <>
-            <Button variant="ghost" onClick={() => setExcluindo(null)}>
+            <Botao variante="fantasma" onClick={() => setExcluindo(null)}>
               Cancelar
-            </Button>
-            <Button variant="danger" onClick={excluir}>
+            </Botao>
+            <Botao variante="perigo" onClick={excluir}>
               Excluir
-            </Button>
+            </Botao>
           </>
         }
       >
         <span />
       </Modal>
-    </div>
+    </Pagina>
   );
 }
 
@@ -151,30 +158,29 @@ function ModalDoTime({ time, onClose }: { time: Time | null; onClose: () => void
 
   return (
     <Modal
-      open
-      onClose={onClose}
-      title={novo ? 'Novo time' : `Editar ${time!.nome}`}
-      subtitle="A descrição é o que a IA lê para decidir se uma conversa é deste setor."
-      footer={
+      aberto
+      onFechar={onClose}
+      titulo={novo ? 'Novo time' : `Editar ${time!.nome}`}
+      descricao="A descrição é o que a IA lê para decidir se uma conversa é deste setor."
+      rodape={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Botao variante="fantasma" onClick={onClose}>
             Cancelar
-          </Button>
-          <Button type="submit" form="form-time" loading={salvando}>
+          </Botao>
+          <Botao type="submit" form="form-time" carregando={salvando}>
             {novo ? 'Criar' : 'Salvar'}
-          </Button>
+          </Botao>
         </>
       }
     >
       <form id="form-time" onSubmit={salvar} className="space-y-4">
-        <Input label="Nome" required value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Vendas" maxLength={60} autoFocus />
-        <Textarea label="O que este time atende (para a IA)" rows={4} value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Ex.: Quem quer comprar um imóvel, agendar visita, saber preço de venda, financiamento." maxLength={1000} />
-        <Input label="Palavras-chave (separadas por vírgula)" value={palavras} onChange={(e) => setPalavras(e.target.value)} placeholder="comprar, financiamento, visita" />
+        <Entrada rotulo="Nome" required value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Vendas" maxLength={60} autoFocus />
+        <AreaDeTexto rotulo={<span className="inline-flex items-center gap-1.5">O que este time atende <SeloIa>a IA lê isto</SeloIa></span>} rows={4} value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Ex.: Quem quer comprar um imóvel, agendar visita, saber preço de venda, financiamento." maxLength={1000} />
+        <Entrada rotulo="Palavras-chave" ajuda="Separadas por vírgula. Reforçam a decisão da IA (e valem sozinhas se a IA estiver desligada)." value={palavras} onChange={(e) => setPalavras(e.target.value)} placeholder="comprar, financiamento, visita" />
         {!novo && (
-          <label className="flex items-center gap-2 text-sm text-[var(--text)]">
-            <input type="checkbox" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} />
+          <Marcar marcado={ativo} onChange={setAtivo}>
             Time ativo (a IA só encaminha para times ativos)
-          </label>
+          </Marcar>
         )}
       </form>
     </Modal>

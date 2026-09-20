@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Bell, BellOff, Smartphone, Volume2, VolumeX } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { Card, CardHeader } from '@/shared/ui/Card';
+import { Botao } from '../ui/Botao';
+import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
+import { Etiqueta } from '../ui/Etiqueta';
 import { api } from '../lib/api';
 import { ativarNotificacoes, desativarNotificacoes, estadoDasNotificacoes, ehIphoneNoNavegador, somLigado, definirSom, tocarAviso, type EstadoDasNotificacoes } from '../notificacoes';
 
@@ -55,47 +56,47 @@ export function CartaoDeNotificacoes() {
   }
 
   const ativas = estado === 'ativas';
+  const rotuloDoEstado = estado === null ? '…' : ativas ? 'ativas' : estado === 'negadas' ? 'bloqueadas pelo navegador' : estado === 'sem_suporte' ? 'sem suporte' : 'desligadas';
   return (
-    <Card className="space-y-4 p-5">
-      <CardHeader icon={<Bell size={14} />} title="Notificações" />
-      <p className="text-sm text-[var(--text-muted)]">Aviso quando um cliente responde, chega conversa nova para você ou para a sua fila, ou alguém transfere uma conversa para você.</p>
+    <Cartao className="space-y-4 p-4 sm:p-5">
+      <CabecalhoDoCartao icone={<Bell size={14} />} titulo="Notificações" descricao="Aviso quando um cliente responde, chega conversa nova para você ou para a sua fila, ou alguém transfere uma conversa para você." acoes={estado !== null && <Etiqueta tom={ativas ? 'verde' : estado === 'negadas' ? 'vermelho' : 'cinza'} ponto={ativas}>{rotuloDoEstado}</Etiqueta>} />
 
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-2)] p-3">
-        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${ativas ? 'bg-[var(--verde)]/12 text-[var(--verde)]' : 'bg-[var(--text-muted)]/10 text-[var(--text-muted)]'}`}>{ativas ? <Bell size={17} /> : <BellOff size={17} />}</span>
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5">
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${ativas ? 'bg-emerald-50 text-emerald-600' : 'bg-[var(--bg-2)] text-[var(--text-muted)]'}`}>{ativas ? <Bell size={18} /> : <BellOff size={18} />}</span>
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold text-[var(--text)]">Neste aparelho: {estado === null ? '…' : ativas ? 'ativas' : estado === 'negadas' ? 'bloqueadas pelo navegador' : estado === 'sem_suporte' ? 'sem suporte' : 'desligadas'}</span>
-          <span className="block text-xs text-[var(--text-muted)]">
+          <span className="block text-sm font-semibold text-[var(--text)]">Neste aparelho: {rotuloDoEstado}</span>
+          <span className="block text-xs leading-5 text-[var(--text-muted)]">
             {ativas ? 'Chegam mesmo com o Atende fechado.' : estado === 'negadas' ? 'Libere as notificações do site nas configurações do navegador e tente de novo.' : estado === 'sem_suporte' ? (iphone ? 'No iPhone, instale o Atende (abaixo) e ative por lá.' : 'Este navegador não tem notificações por push.') : servidor && !servidor.configurado ? 'O push não está configurado neste servidor.' : 'Ligue para receber mesmo com o Atende fechado.'}
             {servidor && servidor.inscricoes > 0 ? ` · ${servidor.inscricoes} ${servidor.inscricoes === 1 ? 'aparelho ativo' : 'aparelhos ativos'} na sua conta` : ''}
           </span>
         </span>
         {estado !== 'sem_suporte' && estado !== 'negadas' && (
-          <Button size="sm" variant={ativas ? 'outline' : 'primary'} loading={ocupado} onClick={alternar} disabled={Boolean(servidor && !servidor.configurado && !ativas)}>
+          <Botao tamanho="sm" variante={ativas ? 'secundaria' : 'primaria'} carregando={ocupado} onClick={alternar} disabled={Boolean(servidor && !servidor.configurado && !ativas)}>
             {ativas ? 'Desativar' : 'Ativar'}
-          </Button>
+          </Botao>
         )}
       </div>
 
-      <button type="button" onClick={alternarSom} className="flex w-full items-center gap-3 rounded-xl border border-[var(--border)] p-3 text-left hover:bg-[var(--bg-2)]">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--brand)]/12 text-[var(--brand)]">{som ? <Volume2 size={17} /> : <VolumeX size={17} />}</span>
+      <button type="button" onClick={alternarSom} aria-pressed={som} className="flex w-full items-center gap-3 rounded-xl border border-[var(--border)] p-3.5 text-left transition-colors hover:bg-[var(--bg)]">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--brand-soft)] text-[var(--brand)]">{som ? <Volume2 size={18} /> : <VolumeX size={18} />}</span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-semibold text-[var(--text)]">Som na aba aberta: {som ? 'ligado' : 'desligado'}</span>
-          <span className="block text-xs text-[var(--text-muted)]">Um toque curto quando chega novidade sua, com o Atende aberto.</span>
+          <span className="block text-xs leading-5 text-[var(--text-muted)]">Um toque curto quando chega novidade sua, com o Atende aberto.</span>
         </span>
         <span className="text-xs font-semibold text-[var(--brand)]">{som ? 'desligar' : 'ligar'}</span>
       </button>
 
-      <div className="flex items-start gap-3 rounded-xl border border-dashed border-[var(--border)] p-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-2)] text-[var(--text-muted)]">
-          <Smartphone size={17} />
+      <div className="flex items-start gap-3 rounded-xl border border-dashed border-[var(--border-strong)] p-3.5">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-2)] text-[var(--text-muted)]">
+          <Smartphone size={18} />
         </span>
-        <span className="text-xs text-[var(--text-muted)]">
+        <span className="min-w-0 text-xs leading-5 text-[var(--text-muted)]">
           <span className="block text-sm font-semibold text-[var(--text)]">Instalar no celular</span>
           <span className="block">
             <strong>Android (Chrome):</strong> menu ⋮ → <em>Instalar aplicativo</em> (ou "Adicionar à tela inicial"). <strong>iPhone (Safari):</strong> compartilhar <span aria-hidden>⎋</span> → <em>Adicionar à Tela de Início</em>; as notificações só funcionam pelo app instalado.
           </span>
         </span>
       </div>
-    </Card>
+    </Cartao>
   );
 }

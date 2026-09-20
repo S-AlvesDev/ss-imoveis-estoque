@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { motion } from 'motion/react';
 import { RefreshCw } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
 import { Acesso } from './pages/Acesso';
 import { Landing } from './pages/Landing';
 import { Planos } from './pages/Planos';
@@ -14,6 +13,7 @@ import { Whatsapp } from './pages/Whatsapp';
 import { Central } from './pages/central/Central';
 import { Supervisao } from './pages/Supervisao';
 import { Dashboard } from './pages/Dashboard';
+import { Avaliacoes } from './pages/Avaliacoes';
 import { Plano } from './pages/Plano';
 import { Bloqueada, SemRecurso } from './pages/SemPlano';
 import { planoAtendeLibera } from '../shared/planos';
@@ -23,6 +23,8 @@ import { lerCaminho, TELAS, TELAS_PUBLICAS, useRotaAtende, type Tela } from './r
 import { useSessaoAtende } from './store/sessao';
 import { useDadosAtende } from './store/dados';
 import { pode } from '../shared/papeis';
+import { Botao } from './ui/Botao';
+import { Erro } from './ui/Estados';
 
 /**
  * O Atende Aí. A URL decide a tela; a sessão decide se pode. Sem sessão,
@@ -69,7 +71,7 @@ export default function App() {
     return (
       <>
         <Acesso tela={tela} />
-        <Toaster position="top-center" richColors mobileOffset={{ top: "calc(16px + env(safe-area-inset-top, 0px))" }} />
+        <Toaster position="top-center" richColors mobileOffset={{ top: 'calc(16px + env(safe-area-inset-top, 0px))' }} />
       </>
     );
   }
@@ -82,7 +84,7 @@ export default function App() {
   return (
     <>
       <Dentro tela={tela} resto={resto} />
-      <Toaster position="top-right" richColors mobileOffset={{ top: "calc(16px + env(safe-area-inset-top, 0px))" }} />
+      <Toaster position="top-right" richColors toastOptions={{ style: { borderRadius: 14 } }} mobileOffset={{ top: 'calc(16px + env(safe-area-inset-top, 0px))' }} />
     </>
   );
 }
@@ -103,13 +105,14 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
   if (!carregado) return <Carregando />;
   if (erro) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-6 text-center">
-        <div className="max-w-sm">
-          <p className="text-lg font-bold text-[var(--text)]">Não consegui carregar a empresa.</p>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">{erro}</p>
-          <Button className="mt-5" icon={<RefreshCw size={15} />} onClick={() => carregar()}>
-            Tentar de novo
-          </Button>
+      <div className="flex min-h-dvh items-center justify-center bg-[var(--bg)] p-6">
+        <div className="w-full max-w-md">
+          <Erro mensagem={`Não consegui carregar a empresa. ${erro}`} aoTentar={() => carregar()} />
+          <div className="mt-4 text-center">
+            <Botao variante="fantasma" tamanho="sm" icone={<RefreshCw size={14} />} onClick={() => carregar()}>
+              Recarregar
+            </Botao>
+          </div>
         </div>
       </div>
     );
@@ -126,20 +129,21 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
   }
 
   return (
-    <Shell tela={tela}>
+    <Shell tela={tela} resto={resto}>
       {bloqueada ? (
         <Bloqueada />
       ) : (
         <>
-      {tela === TELAS.central && <Central conversaId={resto || null} />}
-      {tela === TELAS.supervisao && pode(sessao.papel, 'conversas.supervisionar') && (libera('supervisao') ? <Supervisao /> : <SemRecurso recurso="supervisao" />)}
-      {tela === TELAS.dashboard && pode(sessao.papel, 'dashboard.ver') && (libera('dashboard') ? <Dashboard /> : <SemRecurso recurso="dashboard" />)}
-      {tela === TELAS.empresa && pode(sessao.papel, 'empresa.gerir') && <Empresa />}
-      {tela === TELAS.times && pode(sessao.papel, 'times.gerir') && <Times />}
-      {tela === TELAS.equipe && <Equipe />}
-      {tela === TELAS.whatsapp && pode(sessao.papel, 'whatsapp.gerir') && <Whatsapp />}
-      {tela === TELAS.plano && pode(sessao.papel, 'empresa.gerir') && <Plano />}
-      {tela === TELAS.conta && <Conta />}
+          {tela === TELAS.central && <Central conversaId={resto || null} />}
+          {tela === TELAS.supervisao && pode(sessao.papel, 'conversas.supervisionar') && (libera('supervisao') ? <Supervisao /> : <SemRecurso recurso="supervisao" />)}
+          {tela === TELAS.dashboard && pode(sessao.papel, 'dashboard.ver') && (libera('dashboard') ? <Dashboard /> : <SemRecurso recurso="dashboard" />)}
+          {tela === TELAS.avaliacoes && pode(sessao.papel, 'conversas.supervisionar') && (libera('supervisao') ? <Avaliacoes /> : <SemRecurso recurso="supervisao" />)}
+          {tela === TELAS.empresa && pode(sessao.papel, 'empresa.gerir') && <Empresa aba={resto === 'ia' ? 'ia' : 'empresa'} />}
+          {tela === TELAS.times && pode(sessao.papel, 'times.gerir') && <Times />}
+          {tela === TELAS.equipe && <Equipe />}
+          {tela === TELAS.whatsapp && pode(sessao.papel, 'whatsapp.gerir') && <Whatsapp />}
+          {tela === TELAS.plano && pode(sessao.papel, 'empresa.gerir') && <Plano />}
+          {tela === TELAS.conta && <Conta />}
         </>
       )}
     </Shell>
@@ -148,11 +152,15 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
 
 function Carregando() {
   return (
-    <div className="fundo-navy flex h-dvh flex-col items-center justify-center gap-4">
-      <motion.div animate={{ scale: [1, 1.08, 1], opacity: [0.85, 1, 0.85] }} transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }} className="rounded-2xl bg-white/10 p-3">
+    <div className="flex h-dvh flex-col items-center justify-center gap-5 bg-[var(--bg)]">
+      <motion.div animate={{ scale: [1, 1.06, 1], opacity: [0.85, 1, 0.85] }} transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--sombra-cartao)]">
         <Simbolo tamanho={44} />
       </motion.div>
-      <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-[var(--lilas)]">Carregando</p>
+      <div className="flex items-center gap-1.5" aria-label="Carregando">
+        <span className="ponto-ia h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+        <span className="ponto-ia h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+        <span className="ponto-ia h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+      </div>
     </div>
   );
 }

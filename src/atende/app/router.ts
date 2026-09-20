@@ -20,6 +20,8 @@ export const TELAS = {
   central: 'central',
   supervisao: 'supervisao',
   dashboard: 'dashboard',
+  /** As avaliações do atendimento (0 a 10), por período — supervisor e admin. */
+  avaliacoes: 'avaliacoes',
   empresa: 'empresa',
   times: 'times',
   equipe: 'equipe',

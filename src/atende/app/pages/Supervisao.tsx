@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { AlertTriangle, ArrowRightLeft, Clock, Eye, Hand, Inbox, MessageSquareText, Users, Wifi } from 'lucide-react';
-import { Button } from '@/shared/ui/Button';
-import { Card, CardHeader } from '@/shared/ui/Card';
-import { Modal } from '@/shared/ui/Modal';
-import { StatCard } from '@/shared/ui/StatCard';
+import { Botao } from '../ui/Botao';
+import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
+import { Modal } from '../ui/Modal';
+import { Kpi } from '../ui/Kpi';
+import { Avatar } from '../ui/Avatar';
+import { Etiqueta } from '../ui/Etiqueta';
+import { Pagina } from '../ui/Pagina';
+import { Vazio } from '../ui/Estados';
+import { AreaDeTexto } from '../ui/Campo';
 import { api, ErroDaApi } from '../lib/api';
 import { useCentral } from '../store/central';
 import { useDadosAtende } from '../store/dados';
@@ -12,8 +17,8 @@ import { useSessaoAtende } from '../store/sessao';
 import { TELAS, useRotaAtende } from '../router';
 import { presencaEfetiva, NOME_DA_PRESENCA } from '../../shared/presenca';
 import { NOME_DO_ESTADO, type Conversa, type Funcionario, type Mensagem, type Presenca } from '../../shared/tipos';
-import { Transferir, Bolinha } from './central/Transferir';
-import { nomeDoCliente, iniciais, duracao, COR_DO_ESTADO } from './central/util';
+import { Transferir } from './central/Transferir';
+import { nomeDoCliente, duracao, TOM_DO_ESTADO } from './central/util';
 import { CartaoDeAvaliacoes } from './Avaliacoes';
 
 /**
@@ -79,103 +84,90 @@ export function Supervisao() {
     }
   }
 
+  const descricao = `${sessao.papel === 'admin' ? 'Toda a equipe, agora.' : `Seus times, agora: ${meusTimes.map((t) => t.nome).join(', ') || 'nenhum time para supervisionar'}.`} Atualiza sozinho.`;
+
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight text-[var(--text)]">Supervisão</h1>
-        <p className="mt-1 text-sm text-[var(--text-muted)]">{sessao.papel === 'admin' ? 'Toda a equipe, agora.' : `Seus times, agora: ${meusTimes.map((t) => t.nome).join(', ') || 'nenhum time para supervisionar'}.`} Atualiza sozinho.</p>
-      </div>
+    <Pagina titulo="Supervisão" descricao={descricao} largura="xl" acoes={<Etiqueta tom="verde" ponto pulsa tamanho="md">Ao vivo</Etiqueta>}>
+      <div className="space-y-5">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <Kpi rotulo="Online agora" valor={online} icone={<Wifi size={16} />} tom="verde" legenda={`de ${pessoas.length} na equipe`} />
+          <Kpi rotulo="Na fila" valor={naFila.length} icone={<Inbox size={16} />} tom={naFila.length ? 'ambar' : 'cinza'} legenda={naFila.length ? `mais antiga há ${duracao(agora - Date.parse(maisAntiga(naFila)))}` : 'ninguém esperando'} />
+          <Kpi rotulo="Em atendimento" valor={emAtendimento.length} icone={<MessageSquareText size={16} />} tom="roxo" legenda={`${abertas.filter((c) => c.estado === 'aguardando_cliente').length} aguardando o cliente`} />
+          <Kpi rotulo="Sem resposta há 5+ min" valor={emAlerta.length} icone={<AlertTriangle size={16} />} tom={emAlerta.length ? 'vermelho' : 'cinza'} legenda={emAlerta.length ? `a mais antiga há ${duracao(emAlerta[0].espera)}` : 'todo mundo respondido'} />
+        </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Online agora" value={online} icon={<Wifi size={18} />} accent="green" sublabel={`de ${pessoas.length} na equipe`} />
-        <StatCard label="Na fila" value={naFila.length} icon={<Inbox size={18} />} accent="amber" sublabel={naFila.length ? `mais antiga há ${duracao(agora - Date.parse(maisAntiga(naFila)))}` : 'ninguém esperando'} />
-        <StatCard label="Em atendimento" value={emAtendimento.length} icon={<MessageSquareText size={18} />} accent="brand" sublabel={`${abertas.filter((c) => c.estado === 'aguardando_cliente').length} aguardando o cliente`} />
-        <StatCard label="Sem resposta há 5+ min" value={emAlerta.length} icon={<AlertTriangle size={18} />} accent={emAlerta.length ? 'red' : 'slate'} sublabel={emAlerta.length ? `a mais antiga há ${duracao(emAlerta[0].espera)}` : 'todo mundo respondido'} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[3fr_2fr]">
-        <Card className="p-5">
-          <CardHeader icon={<Clock size={14} />} title="Cliente esperando resposta" actions={<span className="text-xs text-[var(--text-muted)]">{esperando.length} {esperando.length === 1 ? 'conversa' : 'conversas'}</span>} />
-          {esperando.length === 0 ? (
-            <p className="py-8 text-center text-sm text-[var(--text-muted)]">Nenhum cliente esperando. A última palavra é da equipe em todas as conversas abertas.</p>
-          ) : (
-            <ul className="mt-3 divide-y divide-[var(--border)]">
-              {esperando.slice(0, 30).map(({ c, espera }) => {
-                const atendente = c.atendente_id ? equipe.find((f) => f.id === c.atendente_id) : null;
-                const time = c.time_id ? times.find((t) => t.id === c.time_id)?.nome : null;
-                const alerta = espera >= ESPERA_ALERTA_MS;
-                return (
-                  <li key={c.id} className="flex flex-wrap items-center gap-3 py-2.5">
-                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-extrabold ${alerta ? 'bg-rose-500/15 text-rose-600' : 'bg-[var(--brand)]/12 text-[var(--brand)]'}`}>{iniciais(nomeDoCliente(c.cliente))}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 truncate text-sm font-bold text-[var(--text)]">{nomeDoCliente(c.cliente)}</span>
-                        <span className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${COR_DO_ESTADO[c.estado]}`}>{NOME_DO_ESTADO[c.estado]}</span>
-                        {c.prioridade === 'alta' || c.prioridade === 'urgente' ? <span className="shrink-0 whitespace-nowrap rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-bold text-rose-600">{c.prioridade}</span> : null}
-                      </span>
-                      <span className="block truncate text-xs text-[var(--text-muted)]">
-                        {[time, atendente ? `com ${atendente.nome}` : c.estado === 'na_fila' ? 'sem atendente' : null, c.assunto].filter(Boolean).join(' · ') || c.ultima_mensagem_texto}
-                      </span>
-                    </span>
-                    <span className={`shrink-0 text-sm font-extrabold tabular-nums ${alerta ? 'text-rose-600' : 'text-[var(--text)]'}`}>{duracao(espera)}</span>
-                    {/* No celular, os botões descem para a linha de baixo, alinhados ao texto. */}
-                    <span className="flex w-full shrink-0 gap-1 pl-12 sm:w-auto sm:pl-0">
-                      <Button size="sm" variant="outline" icon={<Eye size={13} />} onClick={() => ir(TELAS.central, c.id)}>
-                        Abrir
-                      </Button>
-                      {c.atendente_id !== sessao.id && (
-                        <Button size="sm" variant="ghost" icon={<Hand size={13} />} onClick={() => assumir(c)} title="Assumir">
-                          <span className="sr-only">Assumir</span>
-                        </Button>
-                      )}
-                      <Button size="sm" variant="ghost" icon={<ArrowRightLeft size={13} />} onClick={() => setTransferindo(c)} title="Transferir">
-                        <span className="sr-only">Transferir</span>
-                      </Button>
-                      {c.atendente_id && c.atendente_id !== sessao.id && (
-                        <Button size="sm" variant="ghost" icon={<MessageSquareText size={13} />} onClick={() => setOrientando(c)} title="Orientar (nota interna)">
-                          <span className="sr-only">Orientar</span>
-                        </Button>
-                      )}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </Card>
-
-        <div className="space-y-5">
-          <Card className="p-5">
-            <CardHeader icon={<Users size={14} />} title="Equipe" actions={<span className="text-xs text-[var(--text-muted)]">{online} online</span>} />
-            {pessoas.length === 0 ? (
-              <p className="py-6 text-center text-sm text-[var(--text-muted)]">Nenhuma pessoa nos seus times.</p>
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[3fr_2fr]">
+          <Cartao className="p-4 sm:p-5">
+            <CabecalhoDoCartao icone={<Clock size={14} />} titulo="Cliente esperando resposta" descricao="Da espera mais longa para a mais curta" acoes={<span className="text-xs text-[var(--text-muted)]">{esperando.length} {esperando.length === 1 ? 'conversa' : 'conversas'}</span>} />
+            {esperando.length === 0 ? (
+              <Vazio tom="positivo" compacto icone={<MessageSquareText size={18} />} titulo="Tudo tranquilo por aqui ✨" texto="Nenhum cliente esperando: a última palavra é da equipe em todas as conversas abertas." />
             ) : (
-              <ul className="mt-3 space-y-1">
-                {[...pessoas].sort(porPresenca).map((p) => (
-                  <LinhaDaPessoa key={p.id} pessoa={p} estado={p.estado} conversas={abertas} agora={agora} eu={sessao.id} />
-                ))}
+              <ul className="mt-3 divide-y divide-[var(--border)]">
+                {esperando.slice(0, 30).map(({ c, espera }) => {
+                  const atendente = c.atendente_id ? equipe.find((f) => f.id === c.atendente_id) : null;
+                  const time = c.time_id ? times.find((t) => t.id === c.time_id)?.nome : null;
+                  const alerta = espera >= ESPERA_ALERTA_MS;
+                  return (
+                    <li key={c.id} className="flex flex-wrap items-center gap-3 py-3">
+                      <Avatar nome={nomeDoCliente(c.cliente)} foto={c.cliente.foto_url} tamanho={38} marca />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span className="min-w-0 truncate text-sm font-semibold text-[var(--text)]">{nomeDoCliente(c.cliente)}</span>
+                          <Etiqueta tom={TOM_DO_ESTADO[c.estado]}>{NOME_DO_ESTADO[c.estado]}</Etiqueta>
+                          {c.prioridade === 'alta' || c.prioridade === 'urgente' ? <Etiqueta tom="vermelho">{c.prioridade}</Etiqueta> : null}
+                        </span>
+                        <span className="block truncate text-xs text-[var(--text-muted)]">{[time, atendente ? `com ${atendente.nome}` : c.estado === 'na_fila' ? 'sem atendente' : null, c.assunto].filter(Boolean).join(' · ') || c.ultima_mensagem_texto}</span>
+                      </span>
+                      <span className={`shrink-0 rounded-lg px-2 py-1 text-sm font-semibold tabular-nums ${alerta ? 'bg-rose-50 text-rose-700' : 'bg-[var(--bg-2)] text-[var(--text)]'}`}>{duracao(espera)}</span>
+                      {/* No celular, os botões descem para a linha de baixo, alinhados ao texto. */}
+                      <span className="flex w-full shrink-0 gap-1 pl-[50px] sm:w-auto sm:pl-0">
+                        <Botao tamanho="sm" variante="secundaria" icone={<Eye size={13} />} onClick={() => ir(TELAS.central, c.id)}>
+                          Abrir
+                        </Botao>
+                        {c.atendente_id !== sessao.id && <Botao tamanho="sm" variante="fantasma" quadrado icone={<Hand size={14} />} onClick={() => assumir(c)} aria-label="Assumir" />}
+                        <Botao tamanho="sm" variante="fantasma" quadrado icone={<ArrowRightLeft size={14} />} onClick={() => setTransferindo(c)} aria-label="Transferir" />
+                        {c.atendente_id && c.atendente_id !== sessao.id && <Botao tamanho="sm" variante="fantasma" quadrado icone={<MessageSquareText size={14} />} onClick={() => setOrientando(c)} aria-label="Orientar (nota interna)" />}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
-          </Card>
+          </Cartao>
 
-          <Card className="p-5">
-            <CardHeader icon={<Inbox size={14} />} title="Fila por setor" />
-            <ul className="mt-3 space-y-1.5">
-              {meusTimes.map((t) => {
-                const fila = naFila.filter((c) => c.time_id === t.id);
-                return <LinhaDaFila key={t.id} nome={t.nome} fila={fila} agora={agora} membrosOnline={pessoas.filter((p) => t.membros.includes(p.id) && p.estado === 'online').length} />;
-              })}
-              {(sessao.papel === 'admin' || naFila.some((c) => !c.time_id)) && <LinhaDaFila nome="Sem setor (fila geral)" fila={naFila.filter((c) => !c.time_id)} agora={agora} membrosOnline={null} />}
-            </ul>
-          </Card>
+          <div className="space-y-4">
+            <Cartao className="p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<Users size={14} />} titulo="Equipe" acoes={<span className="text-xs text-[var(--text-muted)]">{online} online</span>} />
+              {pessoas.length === 0 ? (
+                <Vazio compacto icone={<Users size={18} />} titulo="Nenhuma pessoa nos seus times." />
+              ) : (
+                <ul className="mt-3 space-y-0.5">
+                  {[...pessoas].sort(porPresenca).map((p) => (
+                    <LinhaDaPessoa key={p.id} pessoa={p} estado={p.estado} conversas={abertas} agora={agora} eu={sessao.id} />
+                  ))}
+                </ul>
+              )}
+            </Cartao>
+
+            <Cartao className="p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<Inbox size={14} />} titulo="Fila por setor" />
+              <ul className="mt-3 space-y-1.5">
+                {meusTimes.map((t) => {
+                  const fila = naFila.filter((c) => c.time_id === t.id);
+                  return <LinhaDaFila key={t.id} nome={t.nome} fila={fila} agora={agora} membrosOnline={pessoas.filter((p) => t.membros.includes(p.id) && p.estado === 'online').length} />;
+                })}
+                {(sessao.papel === 'admin' || naFila.some((c) => !c.time_id)) && <LinhaDaFila nome="Sem setor (fila geral)" fila={naFila.filter((c) => !c.time_id)} agora={agora} membrosOnline={null} />}
+              </ul>
+            </Cartao>
+          </div>
         </div>
+
+        <CartaoDeAvaliacoes periodo="30d" />
+
+        {transferindo && <Transferir conversa={transferindo} aberto onFechar={() => setTransferindo(null)} />}
+        {orientando && <Orientar conversa={orientando} onFechar={() => setOrientando(null)} />}
       </div>
-
-      <CartaoDeAvaliacoes periodo="30d" />
-
-      {transferindo && <Transferir conversa={transferindo} aberto onFechar={() => setTransferindo(null)} />}
-      {orientando && <Orientar conversa={orientando} onFechar={() => setOrientando(null)} />}
-    </div>
+    </Pagina>
   );
 }
 
@@ -189,12 +181,12 @@ function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu }: { pessoa: Funci
   const esperando = minhas.filter((c) => c.ultima_mensagem_de === 'cliente' && c.ultima_mensagem_do_cliente_em);
   const maisEsperando = esperando.length ? Math.max(...esperando.map((c) => agora - Date.parse(c.ultima_mensagem_do_cliente_em!))) : 0;
   return (
-    <li className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-[var(--bg-2)]">
-      <Bolinha estado={estado} />
+    <li className="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-[var(--bg)]">
+      <Avatar nome={pessoa.nome} tamanho={34} presenca={estado} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-[var(--text)]">
+        <span className="block truncate text-sm font-medium text-[var(--text)]">
           {pessoa.nome}
-          {pessoa.id === eu ? ' (você)' : ''}
+          {pessoa.id === eu ? <span className="text-[var(--text-muted)]"> (você)</span> : ''}
         </span>
         <span className="block text-[11px] text-[var(--text-muted)]">
           {NOME_DA_PRESENCA[estado]}
@@ -202,17 +194,17 @@ function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu }: { pessoa: Funci
         </span>
       </span>
       <span className="text-right text-xs">
-        <span className="block font-extrabold tabular-nums text-[var(--text)]">{minhas.length}</span>
+        <span className="block font-semibold tabular-nums text-[var(--text)]">{minhas.length}</span>
         <span className="block text-[10px] text-[var(--text-muted)]">{minhas.length === 1 ? 'conversa' : 'conversas'}</span>
       </span>
       <span className="w-16 text-right text-xs">
         {esperando.length ? (
           <>
-            <span className={`block font-extrabold tabular-nums ${maisEsperando >= ESPERA_ALERTA_MS ? 'text-rose-600' : 'text-[var(--text)]'}`}>{duracao(maisEsperando)}</span>
+            <span className={`block font-semibold tabular-nums ${maisEsperando >= ESPERA_ALERTA_MS ? 'text-rose-600' : 'text-[var(--text)]'}`}>{duracao(maisEsperando)}</span>
             <span className="block text-[10px] text-[var(--text-muted)]">{esperando.length} sem resp.</span>
           </>
         ) : (
-          <span className="block text-[10px] text-[var(--text-muted)]">em dia</span>
+          <span className="block text-[10px] text-emerald-600">em dia</span>
         )}
       </span>
     </li>
@@ -221,14 +213,14 @@ function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu }: { pessoa: Funci
 
 function LinhaDaFila({ nome, fila, agora, membrosOnline }: { nome: string; fila: Conversa[]; agora: number; membrosOnline: number | null }) {
   return (
-    <li className="flex items-center gap-3 rounded-xl border border-[var(--border)] px-3 py-2">
+    <li className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5">
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold text-[var(--text)]">{nome}</span>
+        <span className="block truncate text-sm font-medium text-[var(--text)]">{nome}</span>
         <span className="block text-[11px] text-[var(--text-muted)]">{membrosOnline === null ? 'qualquer um pode pegar' : `${membrosOnline} online no setor`}</span>
       </span>
       <span className="text-right">
-        <span className={`block text-lg font-extrabold tabular-nums ${fila.length ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>{fila.length}</span>
-        <span className="block text-[10px] text-[var(--text-muted)]">{fila.length ? `há ${duracao(agora - Date.parse(maisAntiga(fila)))}` : 'vazia'}</span>
+        <span className={`block text-lg font-semibold leading-none tabular-nums ${fila.length ? 'text-[var(--text)]' : 'text-[var(--text-muted)]'}`}>{fila.length}</span>
+        <span className="mt-0.5 block text-[10px] text-[var(--text-muted)]">{fila.length ? `há ${duracao(agora - Date.parse(maisAntiga(fila)))}` : 'vazia'}</span>
       </span>
     </li>
   );
@@ -258,23 +250,23 @@ function Orientar({ conversa, onFechar }: { conversa: Conversa; onFechar: () => 
 
   return (
     <Modal
-      open
-      onClose={onFechar}
-      title={`Orientar ${atendente}`}
-      subtitle={`Nota interna na conversa com ${nomeDoCliente(conversa.cliente)}. O cliente não vê.`}
-      maxWidth="max-w-md"
-      footer={
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onFechar}>
+      aberto
+      onFechar={onFechar}
+      titulo={`Orientar ${atendente}`}
+      descricao={`Nota interna na conversa com ${nomeDoCliente(conversa.cliente)}. O cliente não vê.`}
+      largura="sm"
+      rodape={
+        <>
+          <Botao variante="fantasma" onClick={onFechar}>
             Cancelar
-          </Button>
-          <Button icon={<MessageSquareText size={15} />} loading={enviando} disabled={!texto.trim()} onClick={enviar}>
+          </Botao>
+          <Botao icone={<MessageSquareText size={15} />} carregando={enviando} disabled={!texto.trim()} onClick={enviar}>
             Enviar orientação
-          </Button>
-        </div>
+          </Botao>
+        </>
       }
     >
-      <textarea autoFocus value={texto} onChange={(e) => setTexto(e.target.value)} rows={4} maxLength={4000} placeholder="Ex.: Esse cliente já pediu orçamento semana passada — confere com o Financeiro antes de responder." className="w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--brand)]" />
+      <AreaDeTexto autoFocus value={texto} onChange={(e) => setTexto(e.target.value)} rows={4} maxLength={4000} placeholder="Ex.: Esse cliente já pediu orçamento semana passada — confere com o Financeiro antes de responder." />
     </Modal>
   );
 }
