@@ -112,10 +112,10 @@ export class ErroDePlano extends Error {
   }
 }
 
-const ASSINATURA_COLUNAS = 'id, plano, ciclo, valor, status, payer_email, proxima_cobranca, created_at, autorizada_em, cancelada_em';
+const ASSINATURA_COLUNAS = 'id, plano, ciclo, valor, status, payer_email, proxima_cobranca, created_at, autorizada_em, cancelada_em, combo';
 
 function linhaParaAssinatura(a: any): AssinaturaAtende {
-  return { id: a.id, plano: a.plano, ciclo: a.ciclo, valor: Number(a.valor), status: a.status, payer_email: a.payer_email ?? null, proxima_cobranca: a.proxima_cobranca ?? null, created_at: a.created_at, autorizada_em: a.autorizada_em ?? null, cancelada_em: a.cancelada_em ?? null };
+  return { id: a.id, plano: a.plano, ciclo: a.ciclo, valor: Number(a.valor), status: a.status, payer_email: a.payer_email ?? null, proxima_cobranca: a.proxima_cobranca ?? null, created_at: a.created_at, autorizada_em: a.autorizada_em ?? null, cancelada_em: a.cancelada_em ?? null, combo: a.combo ?? null };
 }
 
 /** O pedido pendente ou a assinatura em vigor da empresa (a mais recente que não foi cancelada). */

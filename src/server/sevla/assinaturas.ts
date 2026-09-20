@@ -1,15 +1,17 @@
 import { supabaseServer } from '../../lib/supabaseServer';
 import { CEO } from '../../shared/constants';
-import { mpConfigurado, mpPlanId, ErroDoMercadoPago, mensagemParaOPagador } from '../mercadopago';
+import { mpConfigurado, mpPlanId } from '../mercadopago';
 import { validarPagador } from '../pagador';
-import { contaDe, assinaturaAtual, pagamentosDe, avulsoPendente, atualizarAvulso, iniciarAssinatura, criarAvulso, cancelarAssinatura, ErroDeAssinatura, type Assinatura, type Pagamento } from '../assinaturas';
+import { contaDe, assinaturaAtual, pagamentosDe, avulsoPendente, atualizarAvulso, iniciarAssinatura, criarAvulso, cancelarAssinatura, type Assinatura, type Pagamento } from '../assinaturas';
 import { ehPlano, CICLOS, precoDo, type Ciclo, type Plano } from '../../shared/planos';
-import { contaDaEmpresa, assinaturaDaEmpresa, ErroDePlano } from '../../atende/server/plano';
+import { contaDaEmpresa, assinaturaDaEmpresa } from '../../atende/server/plano';
 import { iniciarAssinaturaAtende, cancelarAssinaturaAtende, criarAvulsoAtende, avulsoPendenteAtende, atualizarAvulsoAtende, type PagamentoAvulsoAtende } from '../../atende/server/mercadopago';
 import { pagamentosDaEmpresa } from '../../atende/server/cobrancas';
 import { dbDaEmpresa } from '../../atende/server/tenant';
-import { ehPlanoAtende, ehCicloAtende, precoDoPeriodoAtende, type PlanoAtende, type CicloAtende } from '../../atende/shared/planos';
+import { ehPlanoAtende, ehCicloAtende, type CicloAtende } from '../../atende/shared/planos';
 import { acessosDaConta, ErroDaSevla } from './identidade';
+import { acessoEm, traduzir } from './comum';
+import { catalogoDeCombos, comboPendente, acertarCombo, type ComboNoCatalogo, type PagamentoCombo } from './combos';
 import type { ContaSevla, ProdutoSevla } from '../../shared/sevla';
 
 /**
@@ -21,17 +23,8 @@ import type { ContaSevla, ProdutoSevla } from '../../shared/sevla';
  * usam. A SEVLA só junta as portas — e confere, em cada produto, se a
  * pessoa pode mexer na cobrança (CEO no Stok; administrador no Atende).
  *
- * Combo = os dois produtos no mesmo plano. Como a tabela de preços é a soma
- * (sem desconto), o combo é uma conveniência: um pedido dispara os dois —
- * dois checkouts (cartão) ou dois Pix/boletos, um por produto, cada um com
- * o próprio recibo e nota.
+ * Os combos (os dois produtos com desconto) ficam em `combos.ts`.
  */
-
-export const COMBOS = [
-  { id: 'essencial', nome: 'Combo Essencial', stok: 'essencial' as Plano, atende: 'essencial' as PlanoAtende },
-  { id: 'profissional', nome: 'Combo Profissional', stok: 'profissional' as Plano, atende: 'profissional' as PlanoAtende },
-  { id: 'empresarial', nome: 'Combo Empresarial', stok: 'empresarial' as Plano, atende: 'empresarial' as PlanoAtende },
-] as const;
 
 export type Metodo = 'cartao' | 'pix' | 'boleto';
 
@@ -52,6 +45,8 @@ export interface EmpresaNasAssinaturas {
   organizacao: string;
   stok: LadoDoProduto<Assinatura, Pagamento> | null;
   atende: (LadoDoProduto<Awaited<ReturnType<typeof assinaturaDaEmpresa>>, PagamentoAvulsoAtende> & { empresa_id: string }) | null;
+  /** O Pix/boleto único de um combo ainda aguardando pagamento. */
+  combo_pendente: PagamentoCombo | null;
 }
 
 export interface AssinaturasDaSevla {
@@ -59,7 +54,7 @@ export interface AssinaturasDaSevla {
   pagamento_online: boolean;
   /** Por produto e ciclo, se dá para assinar com cartão agora. */
   cartao: { stok: Record<Ciclo, boolean>; atende: Record<CicloAtende, boolean> };
-  combos: Array<{ id: string; nome: string; stok: Plano; atende: PlanoAtende; mensal: number | null; anual: number | null }>;
+  combos: ComboNoCatalogo[];
 }
 
 /** O que a conta vê: cada empresa em que participa de algum produto, com o lado de cada produto. */
@@ -67,7 +62,7 @@ export async function assinaturasDaSevla(conta: ContaSevla): Promise<Assinaturas
   const acessos = await acessosDaConta(conta.id);
   const porOrg = new Map<string, EmpresaNasAssinaturas>();
   for (const a of acessos) {
-    const e = porOrg.get(a.organization_id) ?? { organization_id: a.organization_id, organizacao: a.organizacao, stok: null, atende: null };
+    const e = porOrg.get(a.organization_id) ?? { organization_id: a.organization_id, organizacao: a.organizacao, stok: null, atende: null, combo_pendente: null };
     if (a.produto === 'stok') {
       const org = await contaDe(a.organization_id);
       const [assinatura, pagamentos, pendente] = await Promise.all([assinaturaAtual(a.organization_id), pagamentosDe(a.organization_id, 6), avulsoPendente(a.organization_id)]);
@@ -79,6 +74,13 @@ export async function assinaturasDaSevla(conta: ContaSevla): Promise<Assinaturas
     }
     porOrg.set(a.organization_id, e);
   }
+  for (const e of porOrg.values()) {
+    if (!e.stok || !e.atende) continue;
+    // O Pix/boleto único de um combo aparece uma vez só, no alto da empresa — não como dois pedidos soltos.
+    e.combo_pendente = await comboPendente(e.stok.pendente_avulso, e.atende.empresa_id).catch(() => null);
+    // Um dos dois foi cancelado ou trocado por fora? O outro volta ao preço cheio. Nunca derruba a tela.
+    if (e.stok.gerencia && e.atende.gerencia) await acertarCombo(e.organization_id).catch((err) => console.warn('[sevla combo] acertar ao carregar:', err.message));
+  }
   return {
     empresas: [...porOrg.values()],
     pagamento_online: mpConfigurado(),
@@ -86,25 +88,8 @@ export async function assinaturasDaSevla(conta: ContaSevla): Promise<Assinaturas
       stok: Object.fromEntries(CICLOS.map((c) => [c, mpConfigurado() || (['essencial', 'profissional', 'empresarial'] as Plano[]).some((p) => mpPlanId(p, c))])) as Record<Ciclo, boolean>,
       atende: { mensal: mpConfigurado(), anual: mpConfigurado() },
     },
-    combos: COMBOS.map((c) => ({
-      id: c.id,
-      nome: c.nome,
-      stok: c.stok,
-      atende: c.atende,
-      mensal: somar(precoDo(c.stok, 'mensal'), precoDoPeriodoAtende(c.atende, 'mensal')),
-      anual: somar(precoDo(c.stok, 'anual'), precoDoPeriodoAtende(c.atende, 'anual')),
-    })),
+    combos: catalogoDeCombos(),
   };
-}
-
-const somar = (a: number | null, b: number | null) => (a === null || b === null ? null : Math.round((a + b) * 100) / 100);
-
-async function acessoEm(conta: ContaSevla, organizationId: string, produto: ProdutoSevla) {
-  const acesso = (await acessosDaConta(conta.id)).find((a) => a.produto === produto && a.organization_id === organizationId);
-  if (!acesso) throw new ErroDaSevla(`Você não participa desta empresa no ${produto === 'stok' ? 'Stok Aí' : 'Atende Aí'}.`, 403, 'sem_acesso');
-  if (produto === 'stok' && acesso.papel !== CEO) throw new ErroDaSevla('No Stok Aí, só o titular (CEO) mexe na assinatura.', 403, 'sem_acesso');
-  if (produto === 'atende' && acesso.papel !== 'admin') throw new ErroDaSevla('No Atende Aí, só o administrador mexe na assinatura.', 403, 'sem_acesso');
-  return acesso;
 }
 
 export type ResultadoDeAssinar = { produto: ProdutoSevla; metodo: 'cartao'; url: string } | { produto: ProdutoSevla; metodo: 'pix' | 'boleto'; pagamento: Pagamento | PagamentoAvulsoAtende };
@@ -167,6 +152,8 @@ export async function cancelarPelaSevla(conta: ContaSevla, corpo: unknown): Prom
   } catch (e) {
     throw traduzir(e);
   }
+  // Era metade de um combo? O outro produto volta ao preço cheio na renovação seguinte.
+  await acertarCombo(organizationId).catch((err) => console.warn('[sevla combo] acertar ao cancelar:', err.message));
 }
 
 /** Um Pix/boleto pendente: confere no MP e devolve como está — para a tela que espera o pagamento cair. */
@@ -190,11 +177,3 @@ export async function conferirAvulsoPelaSevla(conta: ContaSevla, produto: unknow
   }
 }
 
-/** Os erros dos produtos e do MP viram erros da SEVLA, com a frase certa para a tela. */
-function traduzir(e: unknown): unknown {
-  if (e instanceof ErroDaSevla) return e;
-  if (e instanceof ErroDeAssinatura) return new ErroDaSevla(e.message, e.status, 'invalido');
-  if (e instanceof ErroDePlano) return new ErroDaSevla(e.message, e.status, 'invalido');
-  if (e instanceof ErroDoMercadoPago) return new ErroDaSevla(mensagemParaOPagador(e), 402, 'invalido');
-  return e;
-}

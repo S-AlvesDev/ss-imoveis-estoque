@@ -65,3 +65,21 @@ export const SESSAO_DO_PRODUTO: Record<ProdutoSevla, { chave: string; inicio: st
 
 /** A chave do token SEVLA no navegador. */
 export const CHAVE_DA_SESSAO_SEVLA = 'sevla-sessao';
+
+// ---------------------------------------------------------------------------
+//  Combos: os dois produtos juntos, com desconto
+// ---------------------------------------------------------------------------
+
+/** O desconto do combo, em %, sobre o preço de cada produto — cada um cobra o seu, já descontado. */
+export const COMBO_DESCONTO = 5;
+
+/** O nome que vai na fatura, no recibo e na nota: "combo SEVLA". */
+export const NOME_DO_COMBO = 'combo SEVLA';
+
+/**
+ * Um preço com o desconto do combo. Conta em centavos inteiros e arredonda
+ * para baixo: nunca um centavo a mais do que os 5% prometem (199,90 → 189,90).
+ */
+export function comDescontoDoCombo(valor: number): number {
+  return Math.floor((Math.round(valor * 100) * (100 - COMBO_DESCONTO)) / 100) / 100;
+}

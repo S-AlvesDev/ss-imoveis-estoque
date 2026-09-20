@@ -18,6 +18,7 @@ import { situacao as situacaoDoPush, inscrever as inscreverPush, cancelar as can
 import { carregarConta, negarLimiteAtende, negarRecursoAtende, situacaoDaAssinatura, pedirAssinatura, esquecerContaAtende, ErroDePlano, type RequisicaoComPlano } from './plano';
 import { emailDePedidoDePlano, emailDePedidoDePlanoParaEquipe } from './email';
 import { pagamentoOnlineAtende, iniciarAssinaturaAtende, cancelarAssinaturaAtende, sincronizarAtende, avulsosPendentesAtende, atualizarAvulsoAtende } from './mercadopago';
+import { acertarCombos } from '../../server/sevla/combos';
 import { ErroDoMercadoPago, mensagemParaOPagador } from '../../server/mercadopago';
 import { vigiarSlaSePassouUmMinuto, vigiarSlaDeTodas } from './sla';
 import { gerarFollowupsSePassouUmaHora, gerarFollowupsDeTodas } from './followup';
@@ -296,8 +297,10 @@ export function criarRouterAtende(): express.Router {
       const resumos = segunda ? await resumosSemanaisDoAtende(agora) : { empresas: 0, enviados: 0 };
       const sla = await vigiarSlaDeTodas(agora);
       const followups = await gerarFollowupsDeTodas(agora);
-      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}.`);
-      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, resumos, sla, followups });
+      // Os combos da SEVLA (Stok + Atende com desconto): quem ficou sozinho volta ao preço cheio.
+      const combos = await acertarCombos().catch((e: any) => (console.warn('[atende cron] combos:', e.message), { empresas: 0, desfeitos: 0 }));
+      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}, combos ${combos.desfeitos}/${combos.empresas}.`);
+      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, resumos, sla, followups, combos });
     } catch (err: any) {
       console.error('[GET /api/atende/cron] erro:', err.message);
       res.status(500).json({ error: err.message });

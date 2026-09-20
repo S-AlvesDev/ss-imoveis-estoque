@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { entrar, lerSevla, contaPorId, sessaoDoProduto, ativarAtende, minhaSevla, ehProdutoSevla, ErroDaSevla } from './identidade';
 import type { ContaSevla } from '../../shared/sevla';
 import { assinaturasDaSevla, assinarPelaSevla, cancelarPelaSevla, conferirAvulsoPelaSevla } from './assinaturas';
+import { assinarCombo, conferirCombo } from './combos';
 
 /**
  * As rotas da SEVLA Identity, montadas em /api/sevla pelo createApp().
@@ -110,6 +111,25 @@ export function criarRouterSevla(): express.Router {
       res.json(await assinaturasDaSevla(req.contaSevla!));
     } catch (err: any) {
       tratar(res, err, 'POST /api/sevla/cancelar', 'Não foi possível cancelar.');
+    }
+  });
+  /** O combo: os dois produtos com desconto — dois checkouts (cartão) ou um Pix/boleto só. */
+  r.post('/assinar-combo', assinarLimiter, async (req: RequisicaoSevla, res) => {
+    try {
+      const r2 = await assinarCombo(req.contaSevla!, req.body);
+      console.info('[sevla combo]', { conta: req.contaSevla!.id, combo: r2.combo, metodo: r2.metodo });
+      res.json(r2);
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/sevla/assinar-combo', 'Não foi possível iniciar o combo.');
+    }
+  });
+  r.get('/combo/:organization_id/:id', async (req: RequisicaoSevla, res) => {
+    try {
+      const p = await conferirCombo(req.contaSevla!, req.params.organization_id, req.params.id);
+      if (!p) return res.status(404).json({ error: 'Pagamento não encontrado.', motivo: 'invalido' });
+      res.json({ pagamento: p });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/sevla/combo', 'Não foi possível consultar o pagamento do combo.');
     }
   });
   r.get('/avulso/:produto/:organization_id/:id', async (req: RequisicaoSevla, res) => {

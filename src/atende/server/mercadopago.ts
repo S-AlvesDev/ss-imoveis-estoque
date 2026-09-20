@@ -52,11 +52,12 @@ export function urlDeRetornoDoAtende(env: AmbienteMp = process.env as AmbienteMp
   return `${siteUrlDoMp(env)}${ATENDE.base}/plano?retorno=1`;
 }
 
-export function corpoDaAssinaturaAtende(args: { plano: PlanoAtende; ciclo: CicloAtende; empresaId: string; payerEmail: string; env?: AmbienteMp }) {
-  const cobranca = precoDoPeriodoAtende(args.plano, args.ciclo);
+/** `valor` e `motivo` próprios são o combo da SEVLA (o preço com desconto); sem eles, vale o catálogo. */
+export function corpoDaAssinaturaAtende(args: { plano: PlanoAtende; ciclo: CicloAtende; empresaId: string; payerEmail: string; valor?: number; motivo?: string; env?: AmbienteMp }) {
+  const cobranca = args.valor ?? precoDoPeriodoAtende(args.plano, args.ciclo);
   if (cobranca === null) throw new ErroDePlano('Este plano ainda não tem preço definido.', 409);
   return {
-    reason: motivoAtende(args.plano, args.ciclo),
+    reason: args.motivo ?? motivoAtende(args.plano, args.ciclo),
     external_reference: referenciaDe(args.empresaId),
     payer_email: args.payerEmail,
     // A cobrança do período: no anual, uma por ano com os 12 meses menos os grátis (como o Stok Aí).
@@ -88,9 +89,10 @@ interface Linha {
   cancelada_em: string | null;
   created_at: string;
   updated_at: string;
+  combo?: string | null;
 }
 
-const paraAssinatura = (a: Linha): AssinaturaAtende => ({ id: a.id, plano: a.plano, ciclo: a.ciclo, valor: Number(a.valor), status: a.status, payer_email: a.payer_email, proxima_cobranca: a.proxima_cobranca, created_at: a.created_at, autorizada_em: a.autorizada_em, cancelada_em: a.cancelada_em });
+const paraAssinatura = (a: Linha): AssinaturaAtende => ({ id: a.id, plano: a.plano, ciclo: a.ciclo, valor: Number(a.valor), status: a.status, payer_email: a.payer_email, proxima_cobranca: a.proxima_cobranca, created_at: a.created_at, autorizada_em: a.autorizada_em, cancelada_em: a.cancelada_em, combo: a.combo ?? null });
 
 /** De uma cobrança do MP (status da cobrança + status do pagamento) para o nosso — a mesma tabela do Stok Aí. */
 export function traduzirPagamento(ap: Pick<PagamentoAutorizadoMp, 'status' | 'payment'>): { status: PagamentoAtende['status']; detalhe: string | null } {
@@ -145,15 +147,20 @@ export const pagamentoOnlineAtende = () => mpConfigurado();
  * Abre o caminho para assinar: cria a assinatura no MP (pendente, com o
  * valor do catálogo), guarda a linha com o id dela e devolve a URL do
  * checkout. Uma em vigor é cancelada antes só com `trocar`.
+ *
+ * `opcoes.combo` é a SEVLA assinando os dois produtos juntos: o valor do
+ * período vem com o desconto e a linha fica carimbada com o combo. Nunca
+ * vem do corpo da requisição — só do servidor.
  */
-export async function iniciarAssinaturaAtende(db: ScopedDb, sessao: SessaoAtende, corpo: unknown): Promise<{ url: string; assinatura: AssinaturaAtende }> {
+export async function iniciarAssinaturaAtende(db: ScopedDb, sessao: SessaoAtende, corpo: unknown, opcoes: { combo?: { id: string; valor: number; motivo: string } } = {}): Promise<{ url: string; assinatura: AssinaturaAtende }> {
   const b = (corpo ?? {}) as { plano?: unknown; ciclo?: unknown; trocar?: unknown };
   const plano = b.plano;
   const ciclo = b.ciclo ?? 'mensal';
   if (!ehPlanoAtende(plano)) throw new ErroDePlano('Escolha um plano: Essencial, Profissional ou Empresarial.');
   if (!ehCicloAtende(ciclo)) throw new ErroDePlano('Ciclo inválido.');
   if (!mpConfigurado()) throw new ErroDePlano('Pagamento online não configurado neste servidor.', 503);
-  const valor = precoAtende(plano, ciclo);
+  // A linha guarda o valor por mês (como as telas mostram); no combo, o do período com desconto dividido pelos meses.
+  const valor = opcoes.combo ? (ciclo === 'anual' ? Math.round((opcoes.combo.valor / 12) * 100) / 100 : opcoes.combo.valor) : precoAtende(plano, ciclo);
   if (valor === null) throw new ErroDePlano('Este plano ainda não tem preço definido.', 409);
 
   const atual = await assinaturaDaEmpresa(db);
@@ -168,11 +175,11 @@ export async function iniciarAssinaturaAtende(db: ScopedDb, sessao: SessaoAtende
   // Uma intenção pendente por vez: as antigas (sem id do MP, ou com checkout nunca concluído) saem.
   await db.from('atende_assinaturas').delete().eq('status', 'pendente');
 
-  const pre = await criarPreapproval(corpoDaAssinaturaAtende({ plano, ciclo, empresaId: sessao.empresa_id, payerEmail: sessao.email }));
+  const pre = await criarPreapproval(corpoDaAssinaturaAtende({ plano, ciclo, empresaId: sessao.empresa_id, payerEmail: sessao.email, valor: opcoes.combo?.valor, motivo: opcoes.combo?.motivo }));
   if (!pre.init_point) throw new Error('O Mercado Pago não devolveu o link do checkout.');
   const { data, error } = await db
     .from('atende_assinaturas')
-    .insert({ empresa_id: sessao.empresa_id, plano, ciclo, valor, status: 'pendente', pedido_por: sessao.id, payer_email: sessao.email, mp_preapproval_id: pre.id })
+    .insert({ empresa_id: sessao.empresa_id, plano, ciclo, valor, status: 'pendente', pedido_por: sessao.id, payer_email: sessao.email, mp_preapproval_id: pre.id, ...(opcoes.combo ? { combo: opcoes.combo.id } : {}) })
     .select('*')
     .single();
   if (error) throw error;
@@ -375,7 +382,7 @@ function fimDoPeriodoAtende(de: Date, ciclo: CicloAtende): Date {
   return d;
 }
 
-const PAG_COLUNAS = 'id, status, valor, moeda, detalhe, data, metodo, plano, ciclo, periodo_de, periodo_ate, mp_payment_id, nf_status, nf_numero, nf_url, recibo_enviado_em, vence_em, dados';
+const PAG_COLUNAS = 'id, status, valor, moeda, detalhe, data, metodo, plano, ciclo, periodo_de, periodo_ate, mp_payment_id, nf_status, nf_numero, nf_url, recibo_enviado_em, vence_em, dados, combo';
 
 export type PagamentoAvulsoAtende = PagamentoAtende & { vence_em: string | null; dados: Record<string, string | null> | null };
 

@@ -22,7 +22,7 @@ import type { ContaAtende, PagamentoAtende } from '../shared/tipos';
  */
 
 export const PRODUTO_DA_NOTA: ProdutoDaNota = { nome: ATENDE.nome, descricao: 'software de atendimento pelo WhatsApp' };
-const PAGAMENTO_COLUNAS = 'id, status, valor, moeda, detalhe, data, metodo, plano, ciclo, periodo_de, periodo_ate, mp_payment_id, nf_status, nf_numero, nf_url, recibo_enviado_em';
+const PAGAMENTO_COLUNAS = 'id, status, valor, moeda, detalhe, data, metodo, plano, ciclo, periodo_de, periodo_ate, mp_payment_id, nf_status, nf_numero, nf_url, recibo_enviado_em, combo';
 
 /** Os dados de faturamento da empresa, quando cadastrados: quem aparece no recibo e na nota. */
 export interface Faturamento {

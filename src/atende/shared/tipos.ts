@@ -124,6 +124,8 @@ export interface AssinaturaAtende {
   created_at: string;
   autorizada_em: string | null;
   cancelada_em: string | null;
+  /** O combo da SEVLA de onde veio (essencial/profissional/empresarial); nulo = assinatura avulsa. */
+  combo?: string | null;
 }
 
 /** Uma cobrança da assinatura (o mesmo shape do Stok Aí: recibo e nota fiscal reaproveitam o código). */
@@ -144,6 +146,8 @@ export interface PagamentoAtende {
   nf_numero: string | null;
   nf_url: string | null;
   recibo_enviado_em: string | null;
+  /** O combo da SEVLA: este Pix/boleto é a parte do Atende Aí de um pagamento único com o Stok Aí. */
+  combo?: string | null;
 }
 
 /** Quem aparece no recibo e na nota fiscal. */

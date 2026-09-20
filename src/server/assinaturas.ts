@@ -49,6 +49,8 @@ export interface Assinatura {
   autorizada_em: string | null;
   cancelada_em: string | null;
   created_at: string;
+  /** O combo da SEVLA de onde veio (essencial/profissional/empresarial); nulo = assinatura avulsa. */
+  combo?: string | null;
 }
 
 export interface Pagamento {
@@ -76,6 +78,8 @@ export interface Pagamento {
   nf_numero: string | null;
   nf_url: string | null;
   recibo_enviado_em: string | null;
+  /** O combo da SEVLA: este Pix/boleto é a parte do Stok Aí de um pagamento único com o Atende Aí. */
+  combo?: string | null;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -167,8 +171,12 @@ export interface InicioDeAssinatura {
  * checkout. Com plano no painel, é a URL do plano; sem, cria a assinatura
  * pela API e usa o `init_point`. Uma assinatura autorizada em vigor é
  * cancelada antes — é a troca de plano.
+ *
+ * `combo` é a SEVLA assinando os dois produtos juntos: o valor vem com o
+ * desconto e a assinatura nasce sempre pela API (o plano do painel tem
+ * preço fixo), carimbada com o combo.
  */
-export async function iniciarAssinatura(args: { organizationId: string; plano: Plano; ciclo: Ciclo; payerEmail: string; trocar?: boolean }): Promise<InicioDeAssinatura> {
+export async function iniciarAssinatura(args: { organizationId: string; plano: Plano; ciclo: Ciclo; payerEmail: string; trocar?: boolean; combo?: { id: string; valor: number; motivo: string } }): Promise<InicioDeAssinatura> {
   const atual = await assinaturaAtual(args.organizationId);
   if (atual && (atual.status === 'autorizada' || atual.status === 'pausada')) {
     if (!args.trocar) throw new ErroDeAssinatura(409, 'Esta conta já tem uma assinatura em vigor. Para mudar de plano, use a troca.');
@@ -179,8 +187,8 @@ export async function iniciarAssinatura(args: { organizationId: string; plano: P
   // Uma intenção pendente por vez: as antigas (sem id do MP) saem.
   await supabaseServer.from('assinaturas').delete().eq('organization_id', args.organizationId).eq('status', 'pendente').is('mp_preapproval_id', null);
 
-  const planId = mpPlanId(args.plano, args.ciclo);
-  const base = { organization_id: args.organizationId, plano: args.plano, ciclo: args.ciclo, valor: precoDo(args.plano, args.ciclo), payer_email: args.payerEmail, status: 'pendente' as const };
+  const planId = args.combo ? null : mpPlanId(args.plano, args.ciclo);
+  const base = { organization_id: args.organizationId, plano: args.plano, ciclo: args.ciclo, valor: args.combo?.valor ?? precoDo(args.plano, args.ciclo), payer_email: args.payerEmail, status: 'pendente' as const, ...(args.combo ? { combo: args.combo.id } : {}) };
 
   if (planId) {
     const { data, error } = await supabaseServer.from('assinaturas').insert({ ...base, mp_plan_id: planId }).select('*').single();
@@ -188,7 +196,7 @@ export async function iniciarAssinatura(args: { organizationId: string; plano: P
     return { url: urlDoCheckoutDoPlano(planId, args.organizationId), assinatura: data as Assinatura };
   }
 
-  const pre = await criarAssinaturaSemPlano({ plano: args.plano, ciclo: args.ciclo, organizationId: args.organizationId, payerEmail: args.payerEmail });
+  const pre = await criarAssinaturaSemPlano({ plano: args.plano, ciclo: args.ciclo, organizationId: args.organizationId, payerEmail: args.payerEmail, valor: args.combo?.valor, motivo: args.combo?.motivo });
   if (!pre.init_point) throw new Error('O Mercado Pago não devolveu o link do checkout.');
   const { data, error } = await supabaseServer.from('assinaturas').insert({ ...base, mp_preapproval_id: pre.id }).select('*').single();
   if (error) throw error;

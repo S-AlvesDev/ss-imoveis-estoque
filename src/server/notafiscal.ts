@@ -12,6 +12,7 @@
  * que ficou para trás. Quando autoriza, o cliente recebe o link por e-mail.
  */
 import { supabaseServer } from '../lib/supabaseServer';
+import { COMBO_DESCONTO, NOME_DO_COMBO } from '../shared/sevla';
 import type { Pagamento } from './assinaturas';
 import { layoutEmail, escapeHtml, p, tabela } from './email-layout';
 import { NOME_DO_PLANO, NOME_DO_CICLO, formatarPreco } from '../shared/planos';
@@ -88,7 +89,8 @@ export function discriminacao(pg: Pagamento, produto: ProdutoDaNota = PRODUTO_ST
   const ciclo = pg.ciclo ? ` (${NOME_DO_CICLO[pg.ciclo].toLowerCase()})` : '';
   const periodo = pg.periodo_de && pg.periodo_ate ? `, período de ${fmt.format(new Date(pg.periodo_de))} a ${fmt.format(new Date(pg.periodo_ate))}` : '';
   const metodo = pg.metodo === 'cartao' ? 'cartão' : pg.metodo;
-  return `Licença de uso do ${produto.nome} (${produto.descricao}) — plano ${plano}${ciclo}${periodo}. Pagamento por ${metodo}, Mercado Pago #${pg.mp_payment_id ?? pg.id}.`;
+  const combo = pg.combo ? ` Valor do ${NOME_DO_COMBO} (Stok Aí + Atende Aí), com ${COMBO_DESCONTO}% de desconto.` : '';
+  return `Licença de uso do ${produto.nome} (${produto.descricao}) — plano ${plano}${ciclo}${periodo}. Pagamento por ${metodo}, Mercado Pago #${pg.mp_payment_id ?? pg.id}.${combo}`;
 }
 
 /** O corpo que o Focus NFe recebe para esta nota. */

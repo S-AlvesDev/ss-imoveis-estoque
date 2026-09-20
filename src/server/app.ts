@@ -26,6 +26,7 @@ import { responder, ehOperacaoWhatsapp, LIMITE_MENSAGENS_MES } from './assistent
 import { criarRouterAtende } from '../atende/server';
 import { criarRouterSevla } from './sevla';
 import { tratarEventoDoAtende } from '../atende/server/mercadopago';
+import { tratarEventoDoCombo, acertarCombo } from './sevla/combos';
 import { responderNaHome, responderNoPainel, confirmarPropostas, falantePelaSessao, sanearHistorico, registrarJatoba, perguntasNaHomeHoje, mensagensNoPainelNoMes, LIMITE_HOME_DIA, LIMITE_PAINEL_MES, TAMANHO_MAXIMO_DA_MENSAGEM, NOME as JATOBA } from './jatoba';
 import { enviarCotacao, fecharPedido, darEntradaDoPedido } from './cotacoes';
 import { vigiarWhatsapp, vigiarWhatsappDasEmpresas, avisosDoDiaPorWhatsapp, resumosSemanais, emailsDosAdministradores, apagarContasVencidas } from './rotinas';
@@ -2703,11 +2704,14 @@ export function createApp() {
     // congelada assim que a resposta sai, e o que ficou pendente some.
     // Duas chamadas à API e umas gravações cabem folgado no prazo do MP.
     try {
-      // O evento é do Atende Aí? Ele responde primeiro; se não é dele (nulo), segue para o Stok Aí.
-      const r = (await tratarEventoDoAtende(tipo, id)) ?? (await tratarEvento(tipo, id));
+      // O evento é o Pix/boleto de um combo da SEVLA? Ele responde primeiro (aplica nos dois produtos).
+      // Senão, é do Atende Aí? Se não é dele (nulo), segue para o Stok Aí.
+      const r = (await tratarEventoDoCombo(tipo, id)) ?? (await tratarEventoDoAtende(tipo, id)) ?? (await tratarEvento(tipo, id));
       const casou = 'casou' in r ? r.casou : true;
       await registrarEvento({ tipo, mpId: id, organizationId: 'organizationId' in r ? r.organizationId : null, tratado: casou, erro: 'motivo' in r ? (r.motivo ?? null) : null, payload: req.body });
       if ('pagamento' in r) await cuidarDaNota(r.pagamento);
+      // Uma assinatura mudou (cancelada, trocada): se era metade de um combo, a outra metade volta ao preço cheio.
+      if (tipo === 'subscription_preapproval' && 'organizationId' in r && r.organizationId) await acertarCombo(r.organizationId).catch((e) => console.warn('[webhook MP] combo:', e.message));
       if (!('ignorado' in r)) console.info(`[webhook MP] ${tipo} ${id}: ${casou ? 'aplicado' : `não casou (${r.motivo})`}`);
       // Não casou = fica no diário para resolver à mão; repetir não ajudaria.
       res.status(200).json({ ok: true, aplicado: casou });

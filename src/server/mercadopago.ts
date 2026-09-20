@@ -80,17 +80,21 @@ export function motivo(plano: Plano, ciclo: Ciclo): string {
   return `Stok Aí — ${DEFINICOES[plano].nome} (${NOME_DO_CICLO[ciclo].toLowerCase()})`;
 }
 
-/** O corpo de POST /preapproval para uma assinatura sem plano do painel. */
-export function corpoDaAssinatura(args: { plano: Plano; ciclo: Ciclo; organizationId: string; payerEmail: string; env?: AmbienteMp }) {
+/**
+ * O corpo de POST /preapproval para uma assinatura sem plano do painel.
+ * `valor` e `motivo` próprios são o combo da SEVLA (o preço com desconto);
+ * sem eles, vale o catálogo.
+ */
+export function corpoDaAssinatura(args: { plano: Plano; ciclo: Ciclo; organizationId: string; payerEmail: string; valor?: number; motivo?: string; env?: AmbienteMp }) {
   const env = args.env ?? (process.env as AmbienteMp);
   return {
-    reason: motivo(args.plano, args.ciclo),
+    reason: args.motivo ?? motivo(args.plano, args.ciclo),
     external_reference: args.organizationId,
     payer_email: args.payerEmail,
     auto_recurring: {
       frequency: args.ciclo === 'anual' ? 12 : 1,
       frequency_type: 'months',
-      transaction_amount: precoDo(args.plano, args.ciclo),
+      transaction_amount: args.valor ?? precoDo(args.plano, args.ciclo),
       currency_id: 'BRL',
     },
     back_url: urlDeRetorno(env),
@@ -230,7 +234,7 @@ export function buscarAssinatura(id: string): Promise<PreapprovalMp> {
 
 /** Muda o valor (e o motivo) de uma assinatura autorizada — a troca de plano no mesmo ciclo. */
 export function atualizarValor(id: string, valor: number, reason: string): Promise<PreapprovalMp> {
-  return mp<PreapprovalMp>(`/preapproval/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ auto_recurring: { transaction_amount: valor }, reason }) });
+  return mp<PreapprovalMp>(`/preapproval/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ auto_recurring: { transaction_amount: valor, currency_id: 'BRL' }, reason }) });
 }
 
 export function cancelarAssinatura(id: string): Promise<PreapprovalMp> {

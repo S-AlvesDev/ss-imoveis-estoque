@@ -3,6 +3,7 @@
  * e no PDF (navegador). Puro; quem chama diz quem é o emitente.
  */
 import { NOME_DO_PLANO, NOME_DO_CICLO, NOME_DO_METODO, type Plano, type Ciclo, type Metodo } from './planos';
+import { COMBO_DESCONTO, NOME_DO_COMBO } from './sevla';
 import { PRODUTO } from './produto';
 
 /** De que produto é o recibo. Padrão: Stok Aí; o Atende Aí passa o dele. */
@@ -23,6 +24,8 @@ export interface PagamentoParaRecibo {
   mp_payment_id: string | null;
   mp_authorized_payment_id?: string | null;
   pagador: { nome?: string; doc?: string; email?: string } | Record<string, unknown> | null;
+  /** O combo da SEVLA (quando o valor veio com o desconto dele). */
+  combo?: string | null;
 }
 
 export interface DadosDoRecibo {
@@ -53,7 +56,8 @@ export function descricaoDoRecibo(pg: PagamentoParaRecibo, produto: ProdutoDoRec
   const plano = pg.plano ? `Plano ${NOME_DO_PLANO[pg.plano]}` : 'Assinatura';
   const ciclo = pg.ciclo ? ` (${NOME_DO_CICLO[pg.ciclo].toLowerCase()})` : '';
   const periodo = pg.periodo_de && pg.periodo_ate ? ` — período de ${fmtData.format(new Date(pg.periodo_de))} a ${fmtData.format(new Date(pg.periodo_ate))}` : '';
-  return `${plano}${ciclo} do ${produto.nome}${periodo}`;
+  const combo = pg.combo ? ` · ${NOME_DO_COMBO} (${COMBO_DESCONTO}% de desconto)` : '';
+  return `${plano}${ciclo} do ${produto.nome}${periodo}${combo}`;
 }
 
 export function formatarDoc(doc: string | null | undefined): string | null {
