@@ -2,6 +2,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { entrar, lerSevla, contaPorId, sessaoDoProduto, ativarAtende, minhaSevla, ehProdutoSevla, ErroDaSevla } from './identidade';
 import type { ContaSevla } from '../../shared/sevla';
+import { assinaturasDaSevla, assinarPelaSevla, cancelarPelaSevla, conferirAvulsoPelaSevla } from './assinaturas';
 
 /**
  * As rotas da SEVLA Identity, montadas em /api/sevla pelo createApp().
@@ -82,6 +83,42 @@ export function criarRouterSevla(): express.Router {
       res.json(await sessaoDoProduto(req.contaSevla!.id, produto, org));
     } catch (err: any) {
       tratar(res, err, 'POST /api/sevla/sessao', 'Não foi possível abrir o produto.');
+    }
+  });
+
+  // ---- Assinaturas dos dois produtos, pela conta central
+  r.get('/assinaturas', async (req: RequisicaoSevla, res) => {
+    try {
+      res.json(await assinaturasDaSevla(req.contaSevla!));
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/sevla/assinaturas', 'Não foi possível carregar as assinaturas.');
+    }
+  });
+  const assinarLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `c:${(req as RequisicaoSevla).contaSevla?.id ?? req.ip}`, message: { error: 'Muitos pedidos nesta hora. Aguarde um pouco.' } });
+  r.post('/assinar', assinarLimiter, async (req: RequisicaoSevla, res) => {
+    try {
+      const r2 = await assinarPelaSevla(req.contaSevla!, req.body);
+      console.info('[sevla assinar]', { conta: req.contaSevla!.id, produto: r2.produto, metodo: r2.metodo });
+      res.json(r2);
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/sevla/assinar', 'Não foi possível iniciar a assinatura.');
+    }
+  });
+  r.post('/cancelar', assinarLimiter, async (req: RequisicaoSevla, res) => {
+    try {
+      await cancelarPelaSevla(req.contaSevla!, req.body);
+      res.json(await assinaturasDaSevla(req.contaSevla!));
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/sevla/cancelar', 'Não foi possível cancelar.');
+    }
+  });
+  r.get('/avulso/:produto/:organization_id/:id', async (req: RequisicaoSevla, res) => {
+    try {
+      const p = await conferirAvulsoPelaSevla(req.contaSevla!, req.params.produto, req.params.organization_id, req.params.id);
+      if (!p) return res.status(404).json({ error: 'Pagamento não encontrado.', motivo: 'invalido' });
+      res.json({ pagamento: p });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/sevla/avulso', 'Não foi possível consultar o pagamento.');
     }
   });
 

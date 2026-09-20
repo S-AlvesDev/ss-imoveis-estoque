@@ -1,5 +1,6 @@
 import { supabaseServer } from '../../lib/supabaseServer';
-import { mpConfigurado, criarPreapproval, buscarAssinatura, cancelarAssinatura as cancelarNoMp, buscarPagamentoAutorizado, procurarAssinaturasRecentes, siteUrlDoMp, type PreapprovalMp, type PagamentoAutorizadoMp, type AmbienteMp } from '../../server/mercadopago';
+import { mpConfigurado, criarPreapproval, buscarAssinatura, cancelarAssinatura as cancelarNoMp, buscarPagamentoAutorizado, procurarAssinaturasRecentes, siteUrlDoMp, criarPagamentoAvulso, buscarPagamento, dadosParaPagar, type PreapprovalMp, type PagamentoAutorizadoMp, type AmbienteMp, type PagadorAvulso, type PagamentoMp } from '../../server/mercadopago';
+import { PIX_VALIDADE_HORAS, BOLETO_VALIDADE_DIAS } from '../../shared/planos';
 import { DEFINICOES_ATENDE, NOME_DO_CICLO_ATENDE, PLANOS_ATENDE, ehCicloAtende, ehPlanoAtende, precoAtende, precoDoPeriodoAtende, type CicloAtende, type PlanoAtende } from '../shared/planos';
 import type { AssinaturaAtende, SessaoAtende } from '../shared/tipos';
 import { ATENDE } from '../shared/produto';
@@ -312,6 +313,12 @@ export async function aplicarPagamentoAutorizadoAtende(ap: PagamentoAutorizadoMp
 export async function tratarEventoDoAtende(tipo: string, id: string): Promise<ResultadoAtende | null> {
   if (tipo === 'subscription_preapproval') return aplicarPreapprovalAtende(await buscarAssinatura(id));
   if (tipo === 'subscription_authorized_payment') return aplicarPagamentoAutorizadoAtende(await buscarPagamentoAutorizado(id));
+  if (tipo === 'payment') {
+    // Pix e boleto do Atende chegam aqui, com a referência nossa; o resto é do Stok (ou de assinatura, já tratado).
+    const pay = await buscarPagamento(id);
+    if (String(pay.external_reference ?? '').startsWith(REF_AVULSO_ATENDE)) return aplicarPagamentoAvulsoAtende(pay);
+    return null;
+  }
   return null;
 }
 
@@ -332,4 +339,133 @@ export async function sincronizarAtende(empresaId: string, preapprovalId: string
   if (!candidata) return { casou: false, empresaId, organizationId: null, assinatura: null, motivo: `nenhuma das ${recentes.length} assinaturas recentes do Mercado Pago é desta empresa` };
   const r = await aplicarPreapprovalAtende(await buscarAssinatura(candidata.id), { empresaId });
   return r ?? { casou: false, empresaId, organizationId: null, assinatura: null, motivo: 'assinatura não reconhecida' };
+}
+
+// ---------------------------------------------------------------------------
+//  Pagamento avulso: Pix ou boleto do período inteiro (renovação manual)
+// ---------------------------------------------------------------------------
+
+export const REF_AVULSO_ATENDE = 'atende-avulso:';
+
+/** "Atende Aí — Profissional (mensal)": a descrição do Pix/boleto e do recibo. */
+export function descricaoDoAvulsoAtende(plano: PlanoAtende, ciclo: CicloAtende): string {
+  return motivoAtende(plano, ciclo);
+}
+
+export function traduzirStatusDePagamento(s: string | undefined): PagamentoAtende['status'] {
+  switch (s) {
+    case 'approved':
+    case 'authorized':
+      return 'aprovado';
+    case 'rejected':
+      return 'recusado';
+    case 'cancelled':
+      return 'cancelado';
+    case 'refunded':
+    case 'charged_back':
+      return 'reembolsado';
+    default:
+      return 'pendente';
+  }
+}
+
+function fimDoPeriodoAtende(de: Date, ciclo: CicloAtende): Date {
+  const d = new Date(de);
+  d.setMonth(d.getMonth() + (ciclo === 'anual' ? 12 : 1));
+  return d;
+}
+
+const PAG_COLUNAS = 'id, status, valor, moeda, detalhe, data, metodo, plano, ciclo, periodo_de, periodo_ate, mp_payment_id, nf_status, nf_numero, nf_url, recibo_enviado_em, vence_em, dados';
+
+export type PagamentoAvulsoAtende = PagamentoAtende & { vence_em: string | null; dados: Record<string, string | null> | null };
+
+/**
+ * Cria o pedido e pede o Pix/boleto ao MP — o mesmo desenho do Stok Aí, na
+ * tabela do Atende. Nasce pendente com o QR Code / boleto em `dados`; o
+ * webhook (ou a consulta da tela) aprova e aplica o período.
+ */
+export async function criarAvulsoAtende(args: { empresaId: string; plano: PlanoAtende; ciclo: CicloAtende; metodo: 'pix' | 'boleto'; pagador: PagadorAvulso; pedidoPor: number | null }): Promise<PagamentoAvulsoAtende> {
+  if (!mpConfigurado()) throw new ErroDePlano('Pagamento online não configurado neste servidor.', 503);
+  const valor = precoDoPeriodoAtende(args.plano, args.ciclo);
+  if (valor === null) throw new ErroDePlano('Este plano ainda não tem preço definido.', 409);
+  const agora = new Date();
+  const venceEm = args.metodo === 'pix' ? new Date(agora.getTime() + PIX_VALIDADE_HORAS * 3600_000) : new Date(agora.getTime() + BOLETO_VALIDADE_DIAS * 24 * 3600_000);
+  const descricao = descricaoDoAvulsoAtende(args.plano, args.ciclo);
+
+  // Um pedido pendente por vez (sem id do MP): o anterior sai.
+  await supabaseServer.from('atende_pagamentos').delete().eq('empresa_id', args.empresaId).eq('status', 'pendente').neq('metodo', 'cartao').is('mp_payment_id', null);
+
+  const { data: pedido, error } = await supabaseServer
+    .from('atende_pagamentos')
+    .insert({ empresa_id: args.empresaId, metodo: args.metodo, plano: args.plano, ciclo: args.ciclo, valor, status: 'pendente', descricao, vence_em: venceEm.toISOString(), pagador: args.pagador, data: agora.toISOString() })
+    .select('id')
+    .single();
+  if (error) throw error;
+
+  let pay: PagamentoMp;
+  try {
+    pay = await criarPagamentoAvulso({ metodo: args.metodo, valor, descricao, referencia: `${REF_AVULSO_ATENDE}${pedido.id}`, pagador: args.pagador, venceEm, idempotencia: pedido.id });
+  } catch (e) {
+    await supabaseServer.from('atende_pagamentos').delete().eq('id', pedido.id);
+    throw e;
+  }
+  const { data: atualizado, error: e2 } = await supabaseServer
+    .from('atende_pagamentos')
+    .update({ mp_payment_id: String(pay.id), status: traduzirStatusDePagamento(pay.status), detalhe: pay.status_detail ?? null, dados: dadosParaPagar(pay), vence_em: pay.date_of_expiration ?? venceEm.toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', pedido.id)
+    .select(PAG_COLUNAS)
+    .single();
+  if (e2) throw e2;
+  return atualizado as PagamentoAvulsoAtende;
+}
+
+/** O que o MP diz de um avulso do Atende: grava; na primeira aprovação, aplica o período (emendando se ainda está pago). Nulo se não é nosso. */
+export async function aplicarPagamentoAvulsoAtende(pay: PagamentoMp): Promise<ResultadoAtende | null> {
+  const ref = String(pay.external_reference ?? '');
+  let { data: pedido } = await supabaseServer.from('atende_pagamentos').select('*').eq('mp_payment_id', String(pay.id)).maybeSingle();
+  if (!pedido && ref.startsWith(REF_AVULSO_ATENDE)) pedido = (await supabaseServer.from('atende_pagamentos').select('*').eq('id', ref.slice(REF_AVULSO_ATENDE.length)).maybeSingle()).data;
+  if (!pedido) return null;
+  const agora = new Date();
+  const status = traduzirStatusDePagamento(pay.status);
+  const patch: Record<string, unknown> = { mp_payment_id: String(pay.id), status, detalhe: pay.status_detail ?? null, updated_at: agora.toISOString() };
+  if (status === 'aprovado' && !pedido.periodo_ate && ehPlanoAtende(pedido.plano) && ehCicloAtende(pedido.ciclo)) {
+    const { data: emp } = await supabaseServer.from('atende_empresas').select('plano, plano_ate, plano_desde').eq('id', pedido.empresa_id).maybeSingle();
+    const aindaPago = emp?.plano === pedido.plano && emp?.plano_ate && new Date(emp.plano_ate).getTime() > agora.getTime();
+    const de = aindaPago ? new Date(emp!.plano_ate as string) : agora;
+    const ate = fimDoPeriodoAtende(de, pedido.ciclo);
+    patch.periodo_de = de.toISOString();
+    patch.periodo_ate = ate.toISOString();
+    patch.data = pay.date_approved ?? agora.toISOString();
+    patch.nf_status = 'pendente';
+    await supabaseServer.from('atende_empresas').update({ plano: pedido.plano, plano_desde: emp?.plano_desde ?? agora.toISOString(), plano_ate: ate.toISOString(), cobranca: 'avulso' }).eq('id', pedido.empresa_id);
+    esquecerContaAtende(pedido.empresa_id);
+  }
+  const { data: atualizado, error } = await supabaseServer.from('atende_pagamentos').update(patch).eq('id', pedido.id).select(PAG_COLUNAS).single();
+  if (error) throw error;
+  if (status === 'aprovado') await cuidarDaCobranca(atualizado as PagamentoAtende, pedido.empresa_id);
+  return { casou: true, empresaId: pedido.empresa_id, organizationId: await organizacaoDaEmpresa(pedido.empresa_id), assinatura: null, motivo: status === 'aprovado' ? undefined : `pagamento ${pay.status}` };
+}
+
+/** Consulta o MP e aplica — para a tela que espera o Pix cair, sem depender do webhook. */
+export async function atualizarAvulsoAtende(pedido: PagamentoAvulsoAtende): Promise<PagamentoAvulsoAtende> {
+  if (!pedido.mp_payment_id || !mpConfigurado()) return pedido;
+  const pay = await buscarPagamento(pedido.mp_payment_id);
+  await aplicarPagamentoAvulsoAtende(pay);
+  const { data } = await supabaseServer.from('atende_pagamentos').select(PAG_COLUNAS).eq('id', pedido.id).maybeSingle();
+  return (data as PagamentoAvulsoAtende) ?? pedido;
+}
+
+/** O pedido avulso pendente da empresa (dentro da validade), para a tela retomar. */
+export async function avulsoPendenteAtende(empresaId: string): Promise<PagamentoAvulsoAtende | null> {
+  const { data } = await supabaseServer.from('atende_pagamentos').select(PAG_COLUNAS).eq('empresa_id', empresaId).eq('status', 'pendente').neq('metodo', 'cartao').not('mp_payment_id', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (!data) return null;
+  const p = data as PagamentoAvulsoAtende;
+  if (p.vence_em && new Date(p.vence_em).getTime() < Date.now()) return null;
+  return p;
+}
+
+/** Todos os avulsos pendentes dentro da validade — para o cron conferir no MP. */
+export async function avulsosPendentesAtende(limite = 100): Promise<PagamentoAvulsoAtende[]> {
+  const { data } = await supabaseServer.from('atende_pagamentos').select(PAG_COLUNAS).eq('status', 'pendente').neq('metodo', 'cartao').not('mp_payment_id', 'is', null).gte('vence_em', new Date(Date.now() - 2 * 24 * 3600_000).toISOString()).limit(limite);
+  return (data || []) as PagamentoAvulsoAtende[];
 }

@@ -4,6 +4,7 @@ import { SEVLA, PRODUTOS } from './produto';
 import { Botao, Container, MarcaDoProduto, MarcaSevla, Revelar, Eyebrow, cta } from './ui';
 import { NOME_DO_PRODUTO, SESSAO_DO_PRODUTO, type EmpresaNaMinhaSevla, type MinhaSevla as DadosDaMinhaSevla, type ProdutoNaMinhaSevla } from '@/shared/sevla';
 import { ErroDaSevlaNoNavegador, ativarAtendePelaSevla, entrarNaSevla, guardarSessaoDoProduto, lerSessaoSevla, minhaSevla, sairDaSevla, sessaoDoProduto } from '@/shared/sevlaNavegador';
+import { Assinaturas } from './Assinaturas';
 
 /**
  * Minha SEVLA — a conta central, em /cloud/conta. Uma pessoa, os produtos
@@ -222,6 +223,8 @@ function Painel({ dados, token, aoMudar }: { dados: DadosDaMinhaSevla; token: st
           </a>
         </Revelar>
       </div>
+
+      <Assinaturas token={token} />
     </>
   );
 }

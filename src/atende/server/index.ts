@@ -17,7 +17,7 @@ import { montarDashboard, PERIODOS } from './dashboard';
 import { situacao as situacaoDoPush, inscrever as inscreverPush, cancelar as cancelarPush, ErroDePush } from './push';
 import { carregarConta, negarLimiteAtende, negarRecursoAtende, situacaoDaAssinatura, pedirAssinatura, esquecerContaAtende, ErroDePlano, type RequisicaoComPlano } from './plano';
 import { emailDePedidoDePlano, emailDePedidoDePlanoParaEquipe } from './email';
-import { pagamentoOnlineAtende, iniciarAssinaturaAtende, cancelarAssinaturaAtende, sincronizarAtende } from './mercadopago';
+import { pagamentoOnlineAtende, iniciarAssinaturaAtende, cancelarAssinaturaAtende, sincronizarAtende, avulsosPendentesAtende, atualizarAvulsoAtende } from './mercadopago';
 import { ErroDoMercadoPago, mensagemParaOPagador } from '../../server/mercadopago';
 import { vigiarSlaSePassouUmMinuto, vigiarSlaDeTodas } from './sla';
 import { gerarFollowupsSePassouUmaHora, gerarFollowupsDeTodas } from './followup';
@@ -281,6 +281,15 @@ export function criarRouterAtende(): express.Router {
     try {
       const agora = new Date();
       const lembretes = await lembretesDoAtende(agora);
+      // Pix/boletos pendentes: confere no MP (o webhook pode ter falhado) e aplica o que foi pago.
+      let avulsos = 0;
+      for (const pg of await avulsosPendentesAtende()) {
+        try {
+          if ((await atualizarAvulsoAtende(pg)).status === 'aprovado') avulsos++;
+        } catch (e: any) {
+          console.warn(`[atende cron] avulso ${pg.id}:`, e.message);
+        }
+      }
       const cobrancas = await cobrancasPendentes();
       const conexoes = await vigiarConexoesDoAtende();
       const segunda = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Sao_Paulo' }).format(agora) === 'Mon';
@@ -288,7 +297,7 @@ export function criarRouterAtende(): express.Router {
       const sla = await vigiarSlaDeTodas(agora);
       const followups = await gerarFollowupsDeTodas(agora);
       console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}.`);
-      res.json({ lembretes, cobrancas, conexoes, resumos, sla, followups });
+      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, resumos, sla, followups });
     } catch (err: any) {
       console.error('[GET /api/atende/cron] erro:', err.message);
       res.status(500).json({ error: err.message });
