@@ -15,6 +15,9 @@ import { ativarNotificacoes, estadoDasNotificacoes, type EstadoDasNotificacoes }
 import { pode, NOME_DO_PAPEL, type Permissao } from '../shared/papeis';
 import { ATENDE } from '../shared/produto';
 import { NOME_DO_PLANO_ATENDE } from '../shared/planos';
+import { SeloSevla } from '@/shared/ui/SeloSevla';
+import { Jatoba } from '@/features/jatoba/Jatoba';
+import { planoAtendeLibera } from '../shared/planos';
 
 /**
  * A moldura do Atende Aí depois de entrar — a mesma lógica da barra do Stok
@@ -103,6 +106,7 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
   const limpar = useDadosAtende((s) => s.limpar);
   const limparCentral = useCentral((s) => s.limpar);
   const empresa = useDadosAtende((s) => s.empresa);
+  const contaDaEmpresa = useDadosAtende((s) => s.conta);
   const conversas = useCentral((s) => s.conversas);
   const ir = useRotaAtende((s) => s.ir);
   const grupos = gruposDoMenu(sessao.papel);
@@ -255,6 +259,7 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
           <LogOut size={18} className="text-[var(--sidebar-muted)]" />
           Sair
         </button>
+        <SeloSevla origem="atende" />
       </div>
     </aside>
   );
@@ -283,6 +288,8 @@ export function Shell({ tela, children }: { tela: Tela | null; children: ReactNo
         <FaixaDoPlano tela={tela} />
         <main className="min-w-0 p-4 sm:p-6">{children}</main>
       </div>
+      {/* O Jatobá dentro do Atende: a operação de agora, achar conversa, abrir tela, ensinar. Faz parte da IA do produto (mesmo plano da triagem). */}
+      {(!contaDaEmpresa || planoAtendeLibera(contaDaEmpresa.plano, 'triagem-ia')) && <Jatoba modo="painel" produto="atende" pedir={(caminho, corpo) => api.post(caminho, corpo)} onAbrir={(t, resto) => ir(t as Tela, resto)} />}
     </div>
   );
 }

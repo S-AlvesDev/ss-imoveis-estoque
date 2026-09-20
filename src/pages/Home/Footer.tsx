@@ -57,13 +57,29 @@ export function Footer({ onDemo }: { onDemo: () => void }) {
           <Link href={ROTAS.privacidade} className={link}>
             Privacidade
           </Link>
+          <p className="mt-2 font-mono text-[11px] uppercase tracking-wider text-slate-500">SEVLA INFINITY</p>
+          <a href="/cloud" className={link}>
+            A empresa e os produtos
+          </a>
+          <a href="/cloud/conta" className={link}>
+            Minha SEVLA
+          </a>
+          <a href="/atende" className={link}>
+            Atende Aí
+          </a>
         </nav>
       </Container>
       <Container className="mt-10 flex flex-col gap-2 border-t border-[var(--linha)] pt-6 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">
         <p>
           © {ano} {PRODUTO.nome}. {PRODUTO.slogan}
         </p>
-        <p className="font-mono">controle de estoque por depósito</p>
+        <p>
+          {PRODUTO.nome} é um produto da{' '}
+          <a href="/cloud" className="text-slate-400 hover:text-white">
+            SEVLA INFINITY
+          </a>
+          .
+        </p>
       </Container>
     </footer>
   );

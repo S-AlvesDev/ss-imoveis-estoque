@@ -60,7 +60,18 @@ function Moldura({ children, titulo, subtitulo }: { children: ReactNode; titulo:
           </motion.ul>
         </div>
         <p className="relative z-10 text-xs text-[#6f76a0]">
-          {ATENDE.nome} é da mesma casa do Stok Aí. <a href="/" className="underline decoration-[#6f76a0]/50 hover:text-white">Conhecer o Stok Aí</a>
+          {ATENDE.nome} é um produto da{' '}
+          <a href="/cloud" className="underline decoration-[#6f76a0]/50 hover:text-white">
+            SEVLA INFINITY
+          </a>
+          , a mesma casa do{' '}
+          <a href="/" className="underline decoration-[#6f76a0]/50 hover:text-white">
+            Stok Aí
+          </a>
+          . Uma conta para todos:{' '}
+          <a href="/cloud/conta" className="underline decoration-[#6f76a0]/50 hover:text-white">
+            Minha SEVLA
+          </a>
         </p>
       </div>
 

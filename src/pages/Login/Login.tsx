@@ -11,6 +11,7 @@ import { useAuth } from '@/store/auth';
 import { Link, ROTAS } from '@/app/router';
 import type { AuthUser } from '@/shared/types';
 import { entrarNaSevla, sessaoDoProduto, deveCairNoLoginAntigo } from '@/shared/sevlaNavegador';
+import { LinhaSevla } from '@/shared/ui/SeloSevla';
 import { CriarConta } from './CriarConta';
 import { EsqueciSenha } from './EsqueciSenha';
 import { RedefinirSenha } from './RedefinirSenha';
@@ -221,6 +222,7 @@ export function Login({ modo }: { modo: ModoDeAcesso }) {
                 <span className="font-mono">acesso restrito</span>
                 <span className="h-px flex-1 bg-[var(--border)]" />
               </div>
+              <LinhaSevla origem="login-stok" className="mt-4 text-center" />
             </>
           )}
         </motion.div>

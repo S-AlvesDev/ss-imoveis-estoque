@@ -43,6 +43,10 @@ interface JatobaProps {
   modo: ModoDoJatoba;
   /** Padrão: Stok Aí. No Atende Aí, a landing pergunta a /api/atende/jatoba/home com a paleta roxa. */
   produto?: ProdutoDoJatoba;
+  /** Quem fala com o servidor. O padrão é o cliente do Stok (token do Stok); o Atende passa o dele. */
+  pedir?: <T>(caminho: string, corpo: unknown) => Promise<T>;
+  /** No painel do Atende: abre a tela (e a conversa) que a IA pediu. */
+  onAbrir?: (tela: string, resto: string) => void;
   /** No painel: abre a tela que a IA pediu (chave de AppView). */
   onNavigate?: (view: string) => void;
   /** No painel: os dados mudaram (uma proposta foi confirmada) — recarregar. */
@@ -56,6 +60,8 @@ const SUGESTOES: Record<ModoDoJatoba, string[]> = {
   painel: ['O que está faltando?', 'Quanto tem de cimento?', 'Como cadastro um material?', 'Saiu 2 sacos de cimento do Central'],
 };
 const SUGESTOES_DO_ATENDE = ['Quanto custa?', 'Preciso trocar meu número?', 'A IA responde o cliente?', 'Como eu começo?'];
+const SUGESTOES_DO_PAINEL_DO_ATENDE = ['Quem está esperando resposta?', 'Quantas conversas na fila?', 'Como transfiro uma conversa?', 'Abre a supervisão'];
+const ABERTURA_DO_PAINEL_DO_ATENDE = 'Oi! Eu sou o Jatobá. Posso dizer como está a fila e quem espera resposta, achar uma conversa, abrir uma tela e explicar como fazer qualquer coisa por aqui.';
 
 const ABERTURA: Record<ModoDoJatoba, string> = {
   home: `Oi! Eu sou o Jatobá, do ${PRODUTO.nome}. Pergunte o que quiser sobre o sistema — preço, planos, como funciona no WhatsApp, se serve para a sua operação.`,
@@ -129,10 +135,12 @@ function Texto({ texto }: { texto: string }) {
   );
 }
 
-export function Jatoba({ modo, produto = 'stok', onNavigate, onDados }: JatobaProps) {
+export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onDados }: JatobaProps) {
   const p = POR_PRODUTO[produto];
+  const atendePainel = produto === 'atende' && modo === 'painel';
+  const post = pedir ?? (<T,>(caminho: string, corpo: unknown) => api.post<T>(caminho, corpo));
   const [aberto, setAberto] = useState(false);
-  const [mensagens, setMensagens] = useState<Mensagem[]>([{ id: 0, de: 'jatoba', texto: modo === 'home' ? p.abertura : ABERTURA.painel }]);
+  const [mensagens, setMensagens] = useState<Mensagem[]>([{ id: 0, de: 'jatoba', texto: modo === 'home' ? p.abertura : atendePainel ? ABERTURA_DO_PAINEL_DO_ATENDE : ABERTURA.painel }]);
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
   const [confirmando, setConfirmando] = useState<number | null>(null);
@@ -216,8 +224,12 @@ export function Jatoba({ modo, produto = 'stok', onNavigate, onDados }: JatobaPr
     const historico = mensagens.filter((m) => m.id !== 0 && !m.erro).map((m) => ({ role: m.de === 'pessoa' ? 'user' : 'assistant', content: m.texto }));
     try {
       if (home) {
-        const r = await api.post<{ texto: string }>(POR_PRODUTO[produto].endpoint, { pergunta: p, historico });
+        const r = await post<{ texto: string }>(POR_PRODUTO[produto].endpoint, { pergunta: p, historico });
         adicionar({ de: 'jatoba', texto: r.texto });
+      } else if (atendePainel) {
+        const r = await post<{ texto: string; abrir: { tela: string; resto: string } | null }>('/jatoba', { texto: p, historico });
+        adicionar({ de: 'jatoba', texto: r.texto });
+        if (r.abrir && onAbrir) onAbrir(r.abrir.tela, r.abrir.resto);
       } else {
         const r = await api.post<{ texto: string; propostas: PropostaAssinada[]; abrir: string | null }>('/api/jatoba', { texto: p, historico });
         adicionar({ de: 'jatoba', texto: r.texto, propostas: r.propostas?.length ? r.propostas : undefined });
@@ -368,7 +380,7 @@ export function Jatoba({ modo, produto = 'stok', onNavigate, onDados }: JatobaPr
 
               {mostrarSugestoes && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
-                  {(home ? p.sugestoes : SUGESTOES.painel).map((s) => (
+                  {(home ? p.sugestoes : atendePainel ? SUGESTOES_DO_PAINEL_DO_ATENDE : SUGESTOES.painel).map((s) => (
                     <button key={s} type="button" onClick={() => enviar(s)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${paleta.chip}`}>
                       {s}
                     </button>

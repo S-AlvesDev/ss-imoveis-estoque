@@ -25,7 +25,8 @@ import { lembretesDoAtende, cobrancasPendentes, validarFaturamento } from './cob
 import { resumosSemanaisDoAtende, vigiarConexoesDoAtende } from './rotinas';
 import { enviarFollowup, descartarFollowup, encerrarComAvaliacao } from './conversas';
 import { resumoDeAvaliacoes } from './avaliacao';
-import { sanearHistorico, responderNaHomeDoAtende, registrarJatobaDoAtende, perguntasHoje, LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM } from './jatoba';
+import { sanearHistorico, responderNaHomeDoAtende, responderNoPainelDoAtende, registrarJatobaDoAtende, perguntasHoje, LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM } from './jatoba';
+import { pode } from '../shared/papeis';
 import { claudeConfigurado } from '../../server/claude';
 import { destinatarioDemo, remetente } from '../../server/mail';
 import type { PeriodoDoDashboard } from '../shared/tipos';
@@ -907,6 +908,76 @@ export function criarRouterAtende(): express.Router {
       if (err instanceof ErroDePlano) return res.status(err.status).json({ error: err.message });
       if (err instanceof ErroDoMercadoPago) return res.status(502).json({ error: 'O Mercado Pago não respondeu como esperado. Tente de novo em instantes.' });
       tratar(res, err, 'POST /api/atende/assinatura/cancelar', 'Não foi possível cancelar a assinatura.');
+    }
+  });
+
+  /**
+   * O Jatobá dentro do painel: a operação de agora (fila, quem espera, minhas
+   * conversas, equipe), procurar conversas, abrir telas e ensinar a usar —
+   * sempre no alcance do papel de quem pergunta. Ele não age por ninguém.
+   * Faz parte da IA do produto: mesmo plano da triagem.
+   */
+  const jatobaPainelLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `u:${(req as RequisicaoAtende).sessao?.id ?? ipKeyGenerator(req.ip ?? '')}`, message: { error: 'O Jatobá já respondeu bastante nesta hora. Volte daqui a pouco.' } });
+  r.post('/jatoba', jatobaPainelLimiter, async (req: RequisicaoAtende, res) => {
+    try {
+      const negativa = negarRecursoAtende((req as RequisicaoComPlano).contaAtende!, 'triagem-ia');
+      if (negativa) return res.status(negativa.status).json(negativa.body);
+      const texto = String(req.body?.texto ?? '').trim().slice(0, TAMANHO_MAXIMO_DA_MENSAGEM);
+      if (!texto) return res.status(400).json({ error: 'Escreva a pergunta.' });
+      if (!claudeConfigurado()) return res.status(503).json({ error: 'O Jatobá está descansando neste servidor.' });
+      const s = req.sessao!;
+      const historico = sanearHistorico(req.body?.historico);
+      const r2 = await responderNoPainelDoAtende(
+        {
+          papel: s.papel,
+          usuarioId: s.id,
+          pode: (p) => pode(s.papel, p as any),
+          resumo: async () => {
+            const [abertas, times, equipe] = await Promise.all([listarConversas(req, { filtro: 'abertas', limite: 300 }), carregarTimes(req), carregarEquipe(req)]);
+            const agora = Date.now();
+            const nomeDoTime = (id: string | null) => (id ? (times.find((t) => t.id === id)?.nome ?? 'setor removido') : 'fila geral');
+            const nomeDaPessoa = (id: number | null) => (id ? (equipe.find((f) => f.id === id)?.nome ?? `#${id}`) : null);
+            const naFila = abertas.filter((c) => c.estado === 'na_fila' || c.estado === 'nova' || c.estado === 'em_triagem');
+            const porSetor: Record<string, number> = {};
+            for (const c of naFila) porSetor[nomeDoTime(c.time_id)] = (porSetor[nomeDoTime(c.time_id)] ?? 0) + 1;
+            const esperando = abertas
+              .filter((c) => c.ultima_mensagem_de === 'cliente' && c.ultima_mensagem_do_cliente_em)
+              .map((c) => ({ conversa_id: c.id, cliente: c.cliente.nome ?? c.cliente.nome_whatsapp ?? `+${c.cliente.telefone}`, espera_min: Math.round((agora - Date.parse(c.ultima_mensagem_do_cliente_em!)) / 60000), estado: c.estado, responsavel: nomeDaPessoa(c.atendente_id), setor: nomeDoTime(c.time_id) }))
+              .sort((a, b) => b.espera_min - a.espera_min)
+              .slice(0, 8);
+            const minhas = abertas.filter((c) => c.atendente_id === s.id).map((c) => ({ conversa_id: c.id, cliente: c.cliente.nome ?? c.cliente.nome_whatsapp ?? `+${c.cliente.telefone}`, estado: c.estado, ultima_mensagem: c.ultima_mensagem_texto }));
+            return {
+              na_fila: naFila.length,
+              na_fila_por_setor: porSetor,
+              em_atendimento: abertas.filter((c) => c.estado === 'em_atendimento').length,
+              aguardando_cliente: abertas.filter((c) => c.estado === 'aguardando_cliente').length,
+              esperando_resposta: esperando,
+              minhas_conversas: minhas,
+              equipe_online: equipe.filter((f) => f.ativo && f.presenca === 'online').map((f) => f.nome),
+              equipe_ausente: equipe.filter((f) => f.ativo && f.presenca === 'ausente').map((f) => f.nome),
+            };
+          },
+          procurar: async (busca) => {
+            const lista = await listarConversas(req, { filtro: 'todas', busca, limite: 8 });
+            const equipe = await carregarEquipe(req);
+            return lista.map((c) => ({ conversa_id: c.id, cliente: c.cliente.nome ?? c.cliente.nome_whatsapp ?? `+${c.cliente.telefone}`, telefone: c.cliente.telefone, estado: c.estado, responsavel: c.atendente_id ? (equipe.find((f) => f.id === c.atendente_id)?.nome ?? null) : null, assunto: c.assunto, ultima_mensagem: c.ultima_mensagem_texto, ultima_mensagem_em: c.ultima_mensagem_em, nota: c.avaliacao_nota }));
+          },
+          avaliacoes: async (periodo) => {
+            const p = (PERIODOS as readonly string[]).includes(periodo) ? (periodo as PeriodoDoDashboard) : '30d';
+            const r3 = await resumoDeAvaliacoes(req, p);
+            const equipe = await carregarEquipe(req);
+            return { ...r3, por_pessoa: r3.por_pessoa.map((x) => ({ ...x, nome: equipe.find((f) => f.id === x.usuario_id)?.nome ?? `#${x.usuario_id}` })), melhores: r3.melhores.map((m) => ({ ...m, atendente: m.atendente_id ? (equipe.find((f) => f.id === m.atendente_id)?.nome ?? null) : null })) };
+          },
+        },
+        historico,
+        texto,
+      );
+      const { data: emp } = await req.dbAtende!.from('atende_empresas').select('organization_id').eq('id', s.empresa_id).maybeSingle();
+      await registrarJatobaDoAtende({ canal: 'atende-painel', organizationId: emp?.organization_id ?? null, ip: req.ip ?? null, pergunta: texto, resposta: r2.texto, ferramentas: r2.ferramentas, uso: r2.uso });
+      res.json({ texto: r2.texto, abrir: r2.abrir });
+    } catch (err: any) {
+      console.error('[POST /api/atende/jatoba] erro:', err.message);
+      res.status(500).json({ error: 'O Jatobá não conseguiu responder agora. Tente de novo em instantes.' });
     }
   });
 

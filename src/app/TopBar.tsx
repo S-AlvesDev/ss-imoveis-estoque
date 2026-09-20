@@ -4,6 +4,7 @@ import { Bell, ChevronDown, LogOut, Menu, Moon, Search, Sun } from 'lucide-react
 import { useAuth } from '@/store/auth';
 import { useTheme } from '@/store/theme';
 import { Logo } from '@/shared/ui/Logo';
+import { SEVLA_LINKS } from '@/shared/ui/SeloSevla';
 import type { Material } from '@/shared/types';
 import type { AppView } from './Sidebar';
 import { CommandPalette, type DestinoDeNavegacao } from './CommandPalette';
@@ -164,6 +165,10 @@ export function TopBar({ onMenuClick, materials, destinos, telaDeMaterial, onNav
                     {theme === 'dark' ? <Sun size={16} className="text-[var(--brand)]" /> : <Moon size={16} className="text-[var(--brand)]" />}
                     {theme === 'dark' ? 'Tema claro' : 'Tema escuro'}
                   </button>
+                  <a role="menuitem" href={SEVLA_LINKS.conta} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[var(--text)] transition-colors hover:bg-[var(--bg-2)]">
+                    <img src={SEVLA_LINKS.simbolo} alt="" className="h-4 w-4 rounded object-contain" aria-hidden />
+                    Minha SEVLA
+                  </a>
                   <button
                     role="menuitem"
                     type="button"

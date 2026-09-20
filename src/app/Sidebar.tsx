@@ -7,6 +7,7 @@ import { useAuth } from '@/store/auth';
 import { useMarca } from '@/store/marca';
 import { PRODUTO } from '@/shared/produto';
 import { Logo, LogoProduto } from '@/shared/ui/Logo';
+import { SeloSevla } from '@/shared/ui/SeloSevla';
 import { ADMIN_ROLES } from '@/shared/constants';
 import type { Deposito, ModoEstoque, NivelAcesso, Unidade } from '@/shared/types';
 
@@ -355,6 +356,7 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
             <LogOut size={18} className="text-[var(--sidebar-muted)]" />
             Sair
           </button>
+          <SeloSevla origem="stok" />
         </div>
       </aside>
     </>
