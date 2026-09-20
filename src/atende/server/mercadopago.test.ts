@@ -74,7 +74,7 @@ vi.mock('../../lib/supabaseServer', () => {
   return { supabaseServer: { from: construtor } };
 });
 
-const mp = vi.hoisted(() => ({ preapprovals: {} as Record<string, any>, autorizados: {} as Record<string, any>, cancelados: [] as string[], criados: [] as any[] }));
+const mp = vi.hoisted(() => ({ preapprovals: {} as Record<string, any>, autorizados: {} as Record<string, any>, pagamentos: {} as Record<string, any>, cancelados: [] as string[], criados: [] as any[] }));
 
 vi.mock('../../server/mercadopago', () => ({
   mpConfigurado: () => true,
@@ -93,9 +93,17 @@ vi.mock('../../server/mercadopago', () => ({
   },
   buscarPagamentoAutorizado: async (id: string) => mp.autorizados[id],
   procurarAssinaturasRecentes: async () => Object.values(mp.preapprovals),
+  // Pagamentos (Pix/boleto): um pagamento do Stok (referência de outro produto) e o que o Atende gerar.
+  buscarPagamento: async (id: string) => mp.pagamentos[id] ?? { id, status: 'approved', external_reference: 'avulso:do-stok' },
+  criarPagamentoAvulso: async (args: any) => {
+    const pay = { id: 'pay-' + Object.keys(mp.pagamentos).length, status: 'pending', external_reference: args.referencia, transaction_amount: args.valor, date_of_expiration: args.venceEm.toISOString(), point_of_interaction: { transaction_data: { qr_code: 'PIXCOPIA', qr_code_base64: 'QUJD', ticket_url: 'https://mp.test/pix' } } };
+    mp.pagamentos[pay.id] = pay;
+    return pay;
+  },
+  dadosParaPagar: (p: any) => ({ qr_code: p.point_of_interaction?.transaction_data?.qr_code ?? null, qr_code_base64: p.point_of_interaction?.transaction_data?.qr_code_base64 ?? null, ticket_url: p.point_of_interaction?.transaction_data?.ticket_url ?? null, linha_digitavel: null }),
 }));
 
-import { referenciaDe, empresaDaReferencia, motivoAtende, planoDoMotivo, corpoDaAssinaturaAtende, traduzirStatus, planoAteDe, aplicarPreapprovalAtende, tratarEventoDoAtende, iniciarAssinaturaAtende, sincronizarAtende } from './mercadopago';
+import { referenciaDe, empresaDaReferencia, motivoAtende, planoDoMotivo, corpoDaAssinaturaAtende, traduzirStatus, planoAteDe, aplicarPreapprovalAtende, tratarEventoDoAtende, iniciarAssinaturaAtende, sincronizarAtende, criarAvulsoAtende, aplicarPagamentoAvulsoAtende } from './mercadopago';
 import { limparCacheDeContasAtende, contaDaEmpresa } from './plano';
 import { supabaseServer } from '../../lib/supabaseServer';
 
@@ -126,6 +134,7 @@ beforeEach(() => {
   };
   mp.preapprovals = {};
   mp.autorizados = {};
+  mp.pagamentos = {};
   mp.cancelados = [];
   mp.criados = [];
 });
@@ -253,5 +262,23 @@ describe('Atende Aí no Mercado Pago — o que o MP conta', () => {
     const r = await sincronizarAtende(EMPRESA, null);
     expect(r).toMatchObject({ casou: true, empresaId: EMPRESA });
     expect(banco.tabelas.atende_empresas[0].plano).toBe('profissional');
+  });
+});
+
+describe('Atende Aí no Mercado Pago — Pix e boleto', () => {
+  it('gera o pedido com a referência do Atende e o QR Code; aprovado, aplica o período e vira cobrança', async () => {
+    const pedido = await criarAvulsoAtende({ empresaId: EMPRESA, plano: 'essencial', ciclo: 'mensal', metodo: 'pix', pagador: { nome: 'Ana', email: 'ana@empresa.com', tipoDoc: 'CPF', doc: '12345678909' }, pedidoPor: 1 });
+    expect(pedido).toMatchObject({ status: 'pendente', metodo: 'pix', valor: 299.9, dados: { qr_code: 'PIXCOPIA' } });
+    const pay = mp.pagamentos[pedido.mp_payment_id!];
+    expect(pay.external_reference).toBe(`atende-avulso:${pedido.id}`);
+    // Um pagamento do Stok não é nosso: nulo, segue para o Stok.
+    expect(await tratarEventoDoAtende('payment', 'de-outro')).toBeNull();
+    // O nosso, aprovado: período de um mês a partir de agora, empresa com plano, cobrança marcada para nota.
+    const r = await aplicarPagamentoAvulsoAtende({ ...pay, status: 'approved', date_approved: '2026-09-20T12:00:00.000Z' });
+    expect(r).toMatchObject({ casou: true, empresaId: EMPRESA });
+    const emp = banco.tabelas.atende_empresas[0];
+    expect(emp).toMatchObject({ plano: 'essencial', cobranca: 'avulso' });
+    expect(new Date(emp.plano_ate).getTime()).toBeGreaterThan(Date.now() + 27 * 86_400_000);
+    expect(banco.tabelas.atende_pagamentos[0]).toMatchObject({ status: 'aprovado', nf_status: 'pendente', metodo: 'pix' });
   });
 });
