@@ -171,3 +171,44 @@
     animation: none;
   }
 }
+
+/* A órbita do hero: os produtos giram em volta do símbolo; o contragiro mantém cada cartão em pé. */
+@keyframes sevla-girar {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes sevla-contragirar {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+.sevla .gira {
+  animation: sevla-girar 30s linear infinite;
+  transform-origin: 50% 50%;
+}
+.sevla .contragira {
+  animation: sevla-contragirar 30s linear infinite;
+  transform-origin: 50% 50%;
+}
+/* A faixa que corre, devagar. */
+@keyframes sevla-correr {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.sevla .faixa {
+  animation: sevla-correr 60s linear infinite;
+}
+/* O infinito gigante do hero, em Sora. */
+.sevla .infinito {
+  font-family: var(--font-display);
+  letter-spacing: -0.06em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sevla .gira,
+  .sevla .contragira,
+  .sevla .faixa {
+    animation: none;
+  }
+}
