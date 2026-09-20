@@ -63,9 +63,11 @@ export function Botao({ href, variante = 'primario', className = '', alvo, child
 }
 
 const MENU = [
+  ['#sintomas', 'Por que'],
   ['#o-que-faz', 'O que faz'],
   ['#como-funciona', 'Como funciona'],
   [caminhoDe(TELAS.planos), 'Planos'],
+  ['#duvidas', 'Dúvidas'],
 ] as const;
 
 export function HeaderDaVitrine() {

@@ -25,6 +25,8 @@ import { lembretesDoAtende, cobrancasPendentes, validarFaturamento } from './cob
 import { resumosSemanaisDoAtende, vigiarConexoesDoAtende } from './rotinas';
 import { enviarFollowup, descartarFollowup, encerrarComAvaliacao } from './conversas';
 import { resumoDeAvaliacoes } from './avaliacao';
+import { sanearHistorico, responderNaHomeDoAtende, registrarJatobaDoAtende, perguntasHoje, LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM } from './jatoba';
+import { claudeConfigurado } from '../../server/claude';
 import { destinatarioDemo, remetente } from '../../server/mail';
 import type { PeriodoDoDashboard } from '../shared/tipos';
 import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '../shared/tipos';
@@ -246,6 +248,24 @@ export function criarRouterAtende(): express.Router {
     } catch (err: any) {
       console.error('[atende webhook] erro:', err.message);
       res.status(500).json({ error: 'Falha ao processar.' });
+    }
+  });
+
+  /** O Jatobá da landing: tira dúvidas de quem ainda não é cliente, com o conhecimento do Atende. Público, com teto por IP e por dia. */
+  const jatobaLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'O Jatobá já respondeu bastante por aqui. Fale com a equipe pelo WhatsApp ou volte em uma hora.' } });
+  r.post('/jatoba/home', jatobaLimiter, async (req, res) => {
+    try {
+      const pergunta = String(req.body?.pergunta ?? '').trim().slice(0, TAMANHO_MAXIMO_DA_MENSAGEM);
+      if (!pergunta) return res.status(400).json({ error: 'Escreva a pergunta.' });
+      if (!claudeConfigurado()) return res.status(503).json({ error: 'O Jatobá está descansando. Fale com a equipe pelo WhatsApp.' });
+      if ((await perguntasHoje()) >= LIMITE_HOME_DIA) return res.status(429).json({ error: 'O Jatobá atingiu o limite de hoje. Fale com a equipe pelo WhatsApp.' });
+      const historico = sanearHistorico(req.body?.historico);
+      const r2 = await responderNaHomeDoAtende(historico, pergunta);
+      await registrarJatobaDoAtende({ ip: req.ip ?? null, pergunta, resposta: r2.texto, uso: r2.uso });
+      res.json({ texto: r2.texto });
+    } catch (err: any) {
+      console.error('[POST /api/atende/jatoba/home] erro:', err.message);
+      res.status(500).json({ error: 'O Jatobá não conseguiu responder agora. Tente de novo em instantes.' });
     }
   });
 
