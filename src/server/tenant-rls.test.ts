@@ -41,7 +41,8 @@ describe('modo RLS — o token do PostgREST vence, o cliente não pode ficar par
     const primeiro = tenant.scopedDb(ORG, t0).raw;
     expect(tenant.scopedDb(ORG, t0 + 30 * 60_000).raw).toBe(primeiro); // 30 min: o mesmo
     const renovarEm = tenant.renovacaoDoCliente(ORG)!;
-    expect(renovarEm).toBe((Math.floor(t0 / 1000) - 120 + tenant.TOKEN_VALIDADE_S - tenant.TOKEN_FOLGA_S) * 1000);
+    // O token carimba o segundo em que foi assinado; se a chamada cruzou a virada do segundo, fica 1 s de diferença — não é erro.
+    expect(Math.abs(renovarEm - (Math.floor(t0 / 1000) - 120 + tenant.TOKEN_VALIDADE_S - tenant.TOKEN_FOLGA_S) * 1000)).toBeLessThanOrEqual(1000);
     expect(renovarEm).toBeLessThan(t0 + 60 * 60_000); // sempre antes de uma hora
     const depois = tenant.scopedDb(ORG, renovarEm + 1).raw;
     expect(depois).not.toBe(primeiro);
