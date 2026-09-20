@@ -1,6 +1,6 @@
 import { supabaseServer } from '../../lib/supabaseServer';
 import { conversar, claudeConfigurado, type MensagemDoChat } from '../../server/claude';
-import { enviarTextoComId } from '../../server/evolution';
+import { enviarTextoComId, variantesDoTelefone } from '../../server/evolution';
 import { previaDe, type MensagemDoWhatsApp } from './eventos';
 import { avisarSobreConversa } from './push';
 import { intervaloDoPeriodo, filtrarPelaVisao } from './dashboard';
@@ -111,15 +111,19 @@ export async function enviarComoIa(args: { empresaId: string; conversaId: string
  * recebe o agradecimento, quem atendeu recebe o push — e nada reabre: se o
  * comentário pedir algo, quem atende reabre. Falso quando não é avaliação.
  */
-export async function tratarRespostaDeAvaliacao(empresaId: string, clienteId: string, e: MensagemDoWhatsApp): Promise<boolean> {
+export async function tratarRespostaDeAvaliacao(empresaId: string, e: MensagemDoWhatsApp): Promise<boolean> {
   if (e.fromMe || e.tipo !== 'texto') return false;
   const lida = extrairNota(e.texto);
   if (!lida) return false;
+  // Todos os cadastros deste número (com e sem o nono dígito): o pedido de nota pode estar em qualquer um.
+  const { data: clientes } = await supabaseServer.from('atende_clientes').select('id').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone));
+  const ids = ((clientes || []) as Array<{ id: string }>).map((c) => c.id);
+  if (!ids.length) return false;
   const limite = new Date(Date.now() - VALIDADE_DIAS * 86_400_000).toISOString();
   const { data: c, error } = await supabaseServer
     .from('atende_conversas')
     .select('id, conexao_id, atendente_id, time_id, avaliacao_pedida_em, avaliacao_nota')
-    .eq('cliente_id', clienteId)
+    .in('cliente_id', ids)
     .eq('estado', 'encerrada')
     .not('avaliacao_pedida_em', 'is', null)
     .is('avaliacao_nota', null)

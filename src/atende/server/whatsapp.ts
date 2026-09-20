@@ -177,7 +177,10 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   const empresaId = conexao.empresa_id;
 
   // ---- Cliente (o mesmo número com e sem o nono dígito é a mesma pessoa)
-  let { data: cliente } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).limit(1).maybeSingle();
+  // Se houver dois cadastros (com e sem o 9 — de antes de reconhecermos as duas grafias), fica com a grafia
+  // exata; empatando, o de contato mais recente. Nunca "o primeiro que o banco devolver".
+  const { data: candidatos } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url, telefone, ultimo_contato_em').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).order('ultimo_contato_em', { ascending: false, nullsFirst: false }).limit(5);
+  let cliente = ((candidatos || []) as any[]).find((c) => c.telefone === e.telefone) ?? ((candidatos || []) as any[])[0] ?? null;
   if (!cliente) {
     const foto = await fotoDoContato(e.telefone, conexao.instancia);
     const { data: novo, error } = await supabaseServer.from('atende_clientes').insert({ empresa_id: empresaId, telefone: e.telefone, nome_whatsapp: e.nomeWhatsapp, foto_url: foto, primeiro_contato_em: agora, ultimo_contato_em: agora }).select('id, nome, nome_whatsapp, foto_url').single();
@@ -193,8 +196,9 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
     await supabaseServer.from('atende_clientes').update(patch).eq('id', cliente.id);
   }
 
-  // ---- É a nota do atendimento encerrado? Grava e agradece, sem reabrir (a menos que venha texto junto).
-  if (!e.fromMe && (await tratarRespostaDeAvaliacao(empresaId, cliente.id, e))) return true;
+  // ---- É a nota do atendimento encerrado? Grava e agradece, sem reabrir. Olha todas as grafias do número:
+  // o pedido pode ter saído por um cadastro e a resposta chegar por outro.
+  if (!e.fromMe && (await tratarRespostaDeAvaliacao(empresaId, e))) return true;
 
   // ---- Conversa aberta, reaberta, ou nova
   // Um contato, um fio: como no WhatsApp. "Encerrar" marca o fim; a próxima mensagem

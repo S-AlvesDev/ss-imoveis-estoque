@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { supabaseServer } from '../../lib/supabaseServer';
+import { variantesDoTelefone } from '../../server/evolution';
 import { escreverDespedida, enviarComoIa, mensagemDeEncerramento } from './avaliacao';
 import { enviarTextoComId, enviarMidia, enviarAudio, enviarLocalizacao, enviarContato, marcarLidas, type Enviada } from '../../server/evolution';
 import type { ScopedDb } from '../../server/tenant';
@@ -746,4 +747,60 @@ export async function descartarFollowup(req: RequisicaoAtende, conversaId: strin
   if (error || !atualizado) throw error ?? new Error('não descartou o follow-up');
   await registrarEvento(db, c.id, req.sessao!.id, 'followup_descartado');
   return montarLead(atualizado);
+}
+
+// ---------------------------------------------------------------------------
+//  Fundir contatos: dois cadastros da mesma pessoa viram um
+// ---------------------------------------------------------------------------
+
+/**
+ * Move tudo do contato `de` para o contato `em` (conversas e leads; as
+ * mensagens seguem as conversas), guarda o que `em` não tinha (nome,
+ * e-mail, observações, foto) e apaga `de`. Serve para o mesmo número com e
+ * sem o nono dígito, ou para um cliente que trocou de número. Irreversível
+ * — só administrador.
+ */
+export async function fundirClientes(req: RequisicaoAtende, deId: string, emId: string): Promise<Cliente> {
+  const db = req.dbAtende!;
+  if (deId === emId) throw new ErroDeConversa('Escolha dois contatos diferentes.');
+  const [{ data: de }, { data: em }] = await Promise.all([db.from('atende_clientes').select(CLIENTE_COLUNAS).eq('id', deId).maybeSingle(), db.from('atende_clientes').select(CLIENTE_COLUNAS).eq('id', emId).maybeSingle()]);
+  if (!de || !em) throw new ErroDeConversa('Contato não encontrado.', 404);
+
+  const { error: e1 } = await db.from('atende_conversas').update({ cliente_id: em.id }).eq('cliente_id', de.id);
+  if (e1) throw e1;
+  const { error: e2 } = await db.from('atende_leads').update({ cliente_id: em.id }).eq('cliente_id', de.id);
+  if (e2) throw e2;
+
+  // O que o contato que fica não tinha, herda do que sai; as datas de contato viram o intervalo dos dois.
+  const patch: Record<string, unknown> = {};
+  for (const campo of ['nome', 'nome_whatsapp', 'foto_url', 'email', 'observacoes'] as const) if (!em[campo] && de[campo]) patch[campo] = de[campo];
+  if (de.primeiro_contato_em < em.primeiro_contato_em) patch.primeiro_contato_em = de.primeiro_contato_em;
+  if (de.ultimo_contato_em > em.ultimo_contato_em) patch.ultimo_contato_em = de.ultimo_contato_em;
+  if (Object.keys(patch).length) await db.from('atende_clientes').update(patch).eq('id', em.id);
+
+  const { error: e3 } = await db.from('atende_clientes').delete().eq('id', de.id);
+  if (e3) throw e3;
+
+  // Fica no histórico das conversas que vieram: quem fundiu, de que número.
+  const { data: vindas } = await db.from('atende_conversas').select('id').eq('cliente_id', em.id).limit(50);
+  for (const c of (vindas || []) as Array<{ id: string }>) await registrarEvento(db, c.id, req.sessao!.id, 'contato_fundido', { de_telefone: de.telefone, em_telefone: em.telefone });
+
+  const { data: final } = await db.from('atende_clientes').select(CLIENTE_COLUNAS).eq('id', em.id).single();
+  return final as Cliente;
+}
+
+/** Contatos parecidos com este (mesmo número em outra grafia, mesmo nome): os candidatos a fundir. */
+export async function contatosParecidos(req: RequisicaoAtende, clienteId: string): Promise<Cliente[]> {
+  const db = req.dbAtende!;
+  const { data: c } = await db.from('atende_clientes').select(CLIENTE_COLUNAS).eq('id', clienteId).maybeSingle();
+  if (!c) throw new ErroDeConversa('Contato não encontrado.', 404);
+  const variantes = variantesDoTelefone(c.telefone).filter((t) => t !== c.telefone);
+  const nome = (c.nome ?? c.nome_whatsapp ?? '').trim();
+  let q = db.from('atende_clientes').select(CLIENTE_COLUNAS).neq('id', c.id).limit(10);
+  if (variantes.length && nome) q = q.or(`telefone.in.(${variantes.join(',')}),nome.ilike.${limparBusca(nome)},nome_whatsapp.ilike.${limparBusca(nome)}`);
+  else if (variantes.length) q = q.in('telefone', variantes);
+  else if (nome) q = q.or(`nome.ilike.${limparBusca(nome)},nome_whatsapp.ilike.${limparBusca(nome)}`);
+  else return [];
+  const { data } = await q;
+  return (data || []) as Cliente[];
 }

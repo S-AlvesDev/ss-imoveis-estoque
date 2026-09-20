@@ -23,7 +23,7 @@ import { vigiarSlaSePassouUmMinuto, vigiarSlaDeTodas } from './sla';
 import { gerarFollowupsSePassouUmaHora, gerarFollowupsDeTodas } from './followup';
 import { lembretesDoAtende, cobrancasPendentes, validarFaturamento } from './cobrancas';
 import { resumosSemanaisDoAtende, vigiarConexoesDoAtende } from './rotinas';
-import { enviarFollowup, descartarFollowup, encerrarComAvaliacao } from './conversas';
+import { enviarFollowup, descartarFollowup, encerrarComAvaliacao, fundirClientes, contatosParecidos } from './conversas';
 import { resumoDeAvaliacoes } from './avaliacao';
 import { sanearHistorico, responderNaHomeDoAtende, responderNoPainelDoAtende, registrarJatobaDoAtende, perguntasHoje, LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM } from './jatoba';
 import { pode } from '../shared/papeis';
@@ -800,6 +800,27 @@ export function criarRouterAtende(): express.Router {
       res.json({ url });
     } catch (err: any) {
       tratar(res, err, 'GET /api/atende/midias/:id', 'Não foi possível abrir o arquivo.');
+    }
+  });
+
+  /** Os candidatos a fundir com este contato (mesmo número em outra grafia, mesmo nome). */
+  r.get('/clientes/:id/parecidos', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ clientes: await contatosParecidos(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/clientes/:id/parecidos', 'Não foi possível procurar contatos parecidos.');
+    }
+  });
+  /** Funde o contato `de` (corpo) NESTE contato: conversas e leads vêm para cá; o outro é apagado. Só administrador. */
+  r.post('/clientes/:id/fundir', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      const de = String(req.body?.de ?? '');
+      if (!/^[0-9a-f-]{36}$/i.test(de)) return res.status(400).json({ error: 'Informe o contato a fundir.' });
+      const cliente = await fundirClientes(req, de, req.params.id);
+      console.info('[atende clientes] fundidos', { empresa: req.sessao!.empresa_id, de, em: req.params.id, por: req.sessao!.id });
+      res.json({ cliente });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/clientes/:id/fundir', 'Não foi possível fundir os contatos.');
     }
   });
 

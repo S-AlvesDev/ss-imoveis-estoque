@@ -5,6 +5,8 @@ import { Input, Textarea } from '@/shared/ui/Field';
 import { api, ErroDaApi } from '../../lib/api';
 import { useCentral } from '../../store/central';
 import { useDadosAtende } from '../../store/dados';
+import { useSessaoAtende } from '../../store/sessao';
+import { pode } from '../../../shared/papeis';
 import type { Cliente, Conversa } from '../../../shared/tipos';
 import { NOME_DO_ESTADO } from '../../../shared/tipos';
 import { iniciais, nomeDoCliente, quando, telefoneBonito, COR_DO_ESTADO } from './util';
@@ -17,6 +19,7 @@ import { Historico } from './Historico';
  */
 export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
   const c = conversa.cliente;
+  const sessao = useSessaoAtende((s) => s.sessao)!;
   const anteriores = useCentral((s) => s.anteriores);
   const etiquetas = useCentral((s) => s.etiquetas);
   const carregarEtiquetas = useCentral((s) => s.carregarEtiquetas);
@@ -148,6 +151,8 @@ export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
 
       <Historico conversa={conversa} />
 
+      {pode(sessao.papel, 'empresa.gerir') && <Fundir cliente={c} conversaId={conversa.id} />}
+
       {anteriores.length > 0 && (
         <section>
           <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Conversas anteriores ({anteriores.length})</p>
@@ -178,5 +183,65 @@ function Linha({ rotulo, children }: { rotulo: string; children: React.ReactNode
       <dt className="text-[var(--text-muted)]">{rotulo}</dt>
       <dd className="text-right font-semibold text-[var(--text)]">{children}</dd>
     </div>
+  );
+}
+
+/**
+ * Fundir contatos (administrador): o mesmo número com e sem o nono dígito,
+ * ou um cliente que trocou de número, aparece como dois cadastros. Aqui
+ * os parecidos são listados e um pode ser fundido NESTE contato — as
+ * conversas e os leads vêm para cá, o outro cadastro é apagado.
+ */
+function Fundir({ cliente, conversaId }: { cliente: Cliente; conversaId: string }) {
+  const abrir = useCentral((s) => s.abrir);
+  const [parecidos, setParecidos] = useState<Cliente[] | null>(null);
+  const [fundindo, setFundindo] = useState<string | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    setParecidos(null);
+    api
+      .get<{ clientes: Cliente[] }>(`/clientes/${cliente.id}/parecidos`)
+      .then((r) => vivo && setParecidos(r.clientes))
+      .catch(() => vivo && setParecidos([]));
+    return () => {
+      vivo = false;
+    };
+  }, [cliente.id]);
+
+  async function fundir(de: Cliente) {
+    if (!window.confirm(`Fundir ${nomeDoCliente(de)} (${telefoneBonito(de.telefone)}) neste contato? As conversas e os leads dele vêm para cá e o cadastro dele é apagado. Não dá para desfazer.`)) return;
+    setFundindo(de.id);
+    try {
+      await api.post(`/clientes/${cliente.id}/fundir`, { de: de.id });
+      toast.success('Contatos fundidos.');
+      setParecidos((lista) => (lista ?? []).filter((x) => x.id !== de.id));
+      void abrir(conversaId);
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível fundir.');
+    } finally {
+      setFundindo(null);
+    }
+  }
+
+  if (!parecidos || parecidos.length === 0) return null;
+  return (
+    <section className="rounded-xl border border-amber-400/40 bg-amber-500/10 p-3">
+      <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">Parece o mesmo contato</p>
+      <p className="mt-1 text-xs text-[var(--text-muted)]">Mesmo número em outra grafia ou mesmo nome. Fundir traz as conversas para cá e apaga o outro cadastro.</p>
+      <ul className="mt-2 space-y-1.5">
+        {parecidos.map((p) => (
+          <li key={p.id} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-2 text-xs">
+            <span className="min-w-0">
+              <span className="block truncate font-semibold text-[var(--text)]">{nomeDoCliente(p)}</span>
+              <span className="block text-[var(--text-muted)]">{telefoneBonito(p.telefone)}</span>
+            </span>
+            <button type="button" onClick={() => fundir(p)} disabled={fundindo !== null} className="shrink-0 rounded-lg bg-[var(--brand)] px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50">
+              {fundindo === p.id ? 'Fundindo…' : 'Fundir aqui'}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
