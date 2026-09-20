@@ -1,5 +1,6 @@
 import { PRODUTO as STOK, linkWhatsApp } from '@/shared/produto';
 import { ATENDE } from '@/atende/shared/produto';
+import { SEVLA_DESCRICAO, SEVLA_NOME, SEVLA_POSICIONAMENTO, SEVLA_SLOGAN } from '@/shared/sevla';
 
 /**
  * A SEVLA INFINITY — a empresa-mãe.
@@ -14,10 +15,10 @@ import { ATENDE } from '@/atende/shared/produto';
  * continuam para favicon, ícone do app e compartilhamento.
  */
 export const SEVLA = {
-  nome: 'SEVLA INFINITY',
-  slogan: 'Tecnologia que conecta possibilidades.',
-  posicionamento: 'Empresa de tecnologia que cria, desenvolve e conecta produtos digitais.',
-  descricao: 'Construímos produtos digitais que transformam operações, conectam pessoas e criam novas possibilidades para negócios.',
+  nome: SEVLA_NOME,
+  slogan: SEVLA_SLOGAN,
+  posicionamento: SEVLA_POSICIONAMENTO,
+  descricao: SEVLA_DESCRICAO,
   base: '/cloud',
   /** Minha SEVLA (a conta central), na Fase 2. */
   conta: '/cloud/conta',

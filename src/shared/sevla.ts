@@ -4,6 +4,12 @@
  * produto aqui: só o vocabulário do ecossistema.
  */
 
+/** Quem é a SEVLA, em texto — lido pela página (/cloud) e pelo Jatobá no servidor. */
+export const SEVLA_NOME = 'SEVLA INFINITY';
+export const SEVLA_SLOGAN = 'Tecnologia que conecta possibilidades.';
+export const SEVLA_POSICIONAMENTO = 'Empresa de tecnologia que cria, desenvolve e conecta produtos digitais.';
+export const SEVLA_DESCRICAO = 'Construímos produtos digitais que transformam operações, conectam pessoas e criam novas possibilidades para negócios.';
+
 /** Os produtos do ecossistema. Produto novo = uma linha aqui + a participação dele na view sevla_acessos. */
 export type ProdutoSevla = 'stok' | 'atende';
 export const PRODUTOS_SEVLA: readonly ProdutoSevla[] = ['stok', 'atende'];

@@ -5,6 +5,8 @@ import { Botao, Container, MarcaDoProduto, MarcaSevla, Revelar, Eyebrow, cta } f
 import { NOME_DO_PRODUTO, SESSAO_DO_PRODUTO, type EmpresaNaMinhaSevla, type MinhaSevla as DadosDaMinhaSevla, type ProdutoNaMinhaSevla } from '@/shared/sevla';
 import { ErroDaSevlaNoNavegador, ativarAtendePelaSevla, entrarNaSevla, guardarSessaoDoProduto, lerSessaoSevla, minhaSevla, sairDaSevla, sessaoDoProduto } from '@/shared/sevlaNavegador';
 import { Assinaturas } from './Assinaturas';
+import { Jatoba } from '@/features/jatoba/Jatoba';
+import { ApiError } from '@/lib/api';
 
 /**
  * Minha SEVLA — a conta central, em /cloud/conta. Uma pessoa, os produtos
@@ -197,8 +199,39 @@ function Indisponivel() {
 //  Painel: a pessoa e os produtos
 // ---------------------------------------------------------------------------
 
+/** O Jatobá fala com /api/sevla com o token da conta; erros do servidor chegam à tela com a mensagem dele. */
+async function pedirPeloJatoba<T>(token: string, caminho: string, corpo: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/sevla${caminho}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(corpo) });
+  } catch {
+    throw new ApiError('Sem conexão com o servidor.', 0);
+  }
+  const body = res.headers.get('content-type')?.includes('application/json') ? await res.json().catch(() => null) : null;
+  if (!res.ok) throw new ApiError(body?.error || `Erro ${res.status}.`, res.status, body);
+  return body as T;
+}
+
 function Painel({ dados, token, aoMudar }: { dados: DadosDaMinhaSevla; token: string; aoMudar: () => void }) {
   const primeiro = dados.conta.nome.trim().split(/\s+/)[0] || dados.conta.nome;
+
+  /** Para onde o Jatobá mandou: um produto (abre com a sessão da empresa) ou uma seção da página. */
+  async function abrirPeloJatoba(destino: string, organizationId: string) {
+    if (destino === 'stok' || destino === 'atende') {
+      try {
+        const emitida = await sessaoDoProduto(token, destino, organizationId || null);
+        guardarSessaoDoProduto(emitida);
+        cta(`conta-jatoba-abrir-${destino}`);
+        window.location.href = SESSAO_DO_PRODUTO[destino].inicio;
+      } catch {
+        /* o Jatobá já explicou; a pessoa usa o botão do cartão */
+      }
+      return;
+    }
+    const alvo = document.getElementById(destino === 'assinaturas' ? 'assinaturas' : 'produtos');
+    alvo?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   return (
     <>
       <Revelar>
@@ -207,7 +240,7 @@ function Painel({ dados, token, aoMudar }: { dados: DadosDaMinhaSevla; token: st
         <p className="mt-2 text-sm text-[var(--texto-suave)]">{dados.conta.email}</p>
       </Revelar>
 
-      <div className="mt-10 grid grid-cols-1 gap-5 lg:grid-cols-2">
+      <div id="produtos" className="mt-10 grid scroll-mt-24 grid-cols-1 gap-5 lg:grid-cols-2">
         {dados.produtos.map((prod, i) => (
           <Revelar key={prod.produto} delay={0.05 * i}>
             <CartaoDoProduto prod={prod} token={token} aoMudar={aoMudar} />
@@ -224,7 +257,11 @@ function Painel({ dados, token, aoMudar }: { dados: DadosDaMinhaSevla; token: st
         </Revelar>
       </div>
 
-      <Assinaturas token={token} />
+      <div id="assinaturas" className="scroll-mt-24">
+        <Assinaturas token={token} />
+      </div>
+      {/* O Jatobá da conta: as empresas, os produtos, as assinaturas — e o caminho para cada lugar. */}
+      <Jatoba modo="painel" produto="sevla" pedir={(caminho, corpo) => pedirPeloJatoba(token, caminho, corpo)} onAbrir={(destino, org) => void abrirPeloJatoba(destino, org)} />
     </>
   );
 }

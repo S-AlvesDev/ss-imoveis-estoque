@@ -1,9 +1,11 @@
 import express from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { entrar, lerSevla, contaPorId, sessaoDoProduto, ativarAtende, minhaSevla, ehProdutoSevla, ErroDaSevla } from './identidade';
 import type { ContaSevla } from '../../shared/sevla';
 import { assinaturasDaSevla, assinarPelaSevla, cancelarPelaSevla, conferirAvulsoPelaSevla } from './assinaturas';
 import { assinarCombo, conferirCombo } from './combos';
+import { claudeConfigurado } from '../claude';
+import { LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM, perguntasHojeNaSevla, registrarJatobaDaSevla, responderNaContaDaSevla, responderNaHomeDaSevla, sanearHistorico } from './jatoba';
 
 /**
  * As rotas da SEVLA Identity, montadas em /api/sevla pelo createApp().
@@ -52,6 +54,24 @@ export function criarRouterSevla(): express.Router {
     }
   });
 
+  /** O Jatobá da página da SEVLA: tira dúvidas de quem ainda não é cliente — a casa, os produtos, os planos, os combos. Público, com teto por IP e por dia. */
+  const jatobaHomeLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false, message: { error: 'O Jatobá já respondeu bastante por aqui. Fale com a equipe pelo WhatsApp ou volte em uma hora.' } });
+  r.post('/jatoba/home', jatobaHomeLimiter, async (req, res) => {
+    try {
+      const pergunta = String(req.body?.pergunta ?? '').trim().slice(0, TAMANHO_MAXIMO_DA_MENSAGEM);
+      if (!pergunta) return res.status(400).json({ error: 'Escreva a pergunta.' });
+      if (!claudeConfigurado()) return res.status(503).json({ error: 'O Jatobá está descansando. Fale com a equipe pelo WhatsApp.' });
+      if ((await perguntasHojeNaSevla()) >= LIMITE_HOME_DIA) return res.status(429).json({ error: 'O Jatobá atingiu o limite de hoje. Fale com a equipe pelo WhatsApp.' });
+      const historico = sanearHistorico(req.body?.historico);
+      const r2 = await responderNaHomeDaSevla(historico, pergunta);
+      await registrarJatobaDaSevla({ canal: 'sevla-home', ip: req.ip ?? null, pergunta, resposta: r2.texto, uso: r2.uso });
+      res.json({ texto: r2.texto });
+    } catch (err: any) {
+      console.error('[POST /api/sevla/jatoba/home] erro:', err.message);
+      res.status(500).json({ error: 'O Jatobá não conseguiu responder agora. Tente de novo em instantes.' });
+    }
+  });
+
   // Daqui para baixo, token SEVLA.
   r.use(async (req: RequisicaoSevla, res, next) => {
     const h = req.headers.authorization;
@@ -84,6 +104,24 @@ export function criarRouterSevla(): express.Router {
       res.json(await sessaoDoProduto(req.contaSevla!.id, produto, org));
     } catch (err: any) {
       tratar(res, err, 'POST /api/sevla/sessao', 'Não foi possível abrir o produto.');
+    }
+  });
+
+  /** O Jatobá da Minha SEVLA: a conta da pessoa — empresas, produtos, assinaturas — e o caminho para cada lugar. Ele não assina nem paga por ninguém. */
+  const jatobaContaLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 60, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `c:${(req as RequisicaoSevla).contaSevla?.id ?? ipKeyGenerator(req.ip ?? '')}`, message: { error: 'O Jatobá já respondeu bastante nesta hora. Volte daqui a pouco.' } });
+  r.post('/jatoba', jatobaContaLimiter, async (req: RequisicaoSevla, res) => {
+    try {
+      const texto = String(req.body?.texto ?? '').trim().slice(0, TAMANHO_MAXIMO_DA_MENSAGEM);
+      if (!texto) return res.status(400).json({ error: 'Escreva a pergunta.' });
+      if (!claudeConfigurado()) return res.status(503).json({ error: 'O Jatobá está descansando neste servidor.' });
+      const conta = req.contaSevla!;
+      const historico = sanearHistorico(req.body?.historico);
+      const r2 = await responderNaContaDaSevla({ conta, minha: await minhaSevla(conta) }, historico, texto);
+      await registrarJatobaDaSevla({ canal: 'sevla-conta', contaId: conta.id, ip: req.ip ?? null, pergunta: texto, resposta: r2.texto, ferramentas: r2.ferramentas, uso: r2.uso });
+      res.json({ texto: r2.texto, abrir: r2.abrir });
+    } catch (err: any) {
+      console.error('[POST /api/sevla/jatoba] erro:', err.message);
+      res.status(500).json({ error: 'O Jatobá não conseguiu responder agora. Tente de novo em instantes.' });
     }
   });
 

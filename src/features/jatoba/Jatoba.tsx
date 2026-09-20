@@ -19,8 +19,8 @@ import { PRODUTO } from '@/shared/produto';
  */
 
 export type ModoDoJatoba = 'home' | 'painel';
-/** De que produto da casa o Jatobá está falando. O mascote é o mesmo; muda a porta, o conhecimento e a cor. */
-export type ProdutoDoJatoba = 'stok' | 'atende';
+/** De que produto da casa o Jatobá está falando. O mascote é o mesmo — com a roupa de cada produto; muda a porta, o conhecimento e a cor. */
+export type ProdutoDoJatoba = 'stok' | 'atende' | 'sevla';
 
 interface PropostaAssinada {
   resumo: string;
@@ -41,11 +41,11 @@ interface Mensagem {
 
 interface JatobaProps {
   modo: ModoDoJatoba;
-  /** Padrão: Stok Aí. No Atende Aí, a landing pergunta a /api/atende/jatoba/home com a paleta roxa. */
+  /** Padrão: Stok Aí. No Atende Aí, a landing pergunta a /api/atende/jatoba/home com a paleta roxa; na SEVLA, a /api/sevla/jatoba/home em índigo. */
   produto?: ProdutoDoJatoba;
   /** Quem fala com o servidor. O padrão é o cliente do Stok (token do Stok); o Atende passa o dele. */
   pedir?: <T>(caminho: string, corpo: unknown) => Promise<T>;
-  /** No painel do Atende: abre a tela (e a conversa) que a IA pediu. */
+  /** No painel do Atende: abre a tela (e a conversa) que a IA pediu. Na Minha SEVLA: o destino (stok, atende, assinaturas, produtos) e a empresa. */
   onAbrir?: (tela: string, resto: string) => void;
   /** No painel: abre a tela que a IA pediu (chave de AppView). */
   onNavigate?: (view: string) => void;
@@ -68,11 +68,16 @@ const ABERTURA: Record<ModoDoJatoba, string> = {
   painel: 'Oi! Eu sou o Jatobá. Posso consultar saldo e pendências, preparar uma saída ou transferência para você confirmar, e explicar como fazer qualquer coisa por aqui.',
 };
 const ABERTURA_DO_ATENDE = 'Oi! Eu sou o Jatobá, da SEVLA. Pergunte o que quiser sobre o Atende Aí — preço, planos, como a IA tria, se serve para a sua equipe.';
+const ABERTURA_DA_SEVLA = 'Oi! Eu sou o Jatobá, da SEVLA INFINITY. Pergunte sobre a casa, o Stok Aí, o Atende Aí, os planos e os combos — e como uma conta só abre tudo.';
+const SUGESTOES_DA_SEVLA = ['O que é a SEVLA?', 'Quais são os produtos?', 'Como funciona o combo?', 'Uma conta serve para os dois?'];
+const ABERTURA_DA_CONTA_DA_SEVLA = 'Oi! Eu sou o Jatobá. Aqui na sua conta SEVLA eu vejo suas empresas, seus produtos e suas assinaturas — pergunte o que quiser, ou peça para abrir o Stok Aí ou o Atende Aí.';
+const SUGESTOES_DA_CONTA_DA_SEVLA = ['Quais empresas tenho?', 'Como estão minhas assinaturas?', 'Abre o Atende Aí', 'Como funciona o combo?'];
 
-/** O que muda por produto na Home: nome, símbolo de reserva, porta, abertura, sugestões e a cor de destaque. */
-const POR_PRODUTO: Record<ProdutoDoJatoba, { nome: string; simbolo: string; endpoint: string; abertura: string; sugestoes: string[]; acento: { pessoa: string; enviar: string; confirmar: string; botao: string; chipHover: string; campoFoco: string } }> = {
+/** O que muda por produto: nome, o desenho do mascote (a roupa), símbolo de reserva, porta, abertura, sugestões e a cor de destaque. */
+const POR_PRODUTO: Record<ProdutoDoJatoba, { nome: string; mascote: string; simbolo: string; endpoint: string; abertura: string; sugestoes: string[]; acento: { pessoa: string; enviar: string; confirmar: string; botao: string; chipHover: string; campoFoco: string } }> = {
   stok: {
     nome: PRODUTO.nome,
+    mascote: MASCOTE,
     simbolo: PRODUTO.simboloGrande,
     endpoint: '/api/jatoba/home',
     abertura: ABERTURA.home,
@@ -81,11 +86,21 @@ const POR_PRODUTO: Record<ProdutoDoJatoba, { nome: string; simbolo: string; endp
   },
   atende: {
     nome: 'Atende Aí',
+    mascote: '/atende/jatoba.png',
     simbolo: '/atende/favicon_atendeai.png',
     endpoint: '/api/atende/jatoba/home',
     abertura: ABERTURA_DO_ATENDE,
     sugestoes: SUGESTOES_DO_ATENDE,
     acento: { pessoa: 'bg-[#7c3aed] text-white', enviar: 'bg-[#7c3aed] text-white hover:brightness-110 disabled:opacity-40', confirmar: 'bg-[#7c3aed] text-white hover:brightness-110', botao: 'bg-[#7c3aed] ring-[#0b1020] shadow-[#7c3aed]/40', chipHover: 'hover:border-[#a78bfa]', campoFoco: 'focus:border-[#a78bfa]' },
+  },
+  sevla: {
+    nome: 'SEVLA INFINITY',
+    mascote: '/sevla/jatoba.png',
+    simbolo: '/sevla/simbolo.webp',
+    endpoint: '/api/sevla/jatoba/home',
+    abertura: ABERTURA_DA_SEVLA,
+    sugestoes: SUGESTOES_DA_SEVLA,
+    acento: { pessoa: 'bg-[#6366f1] text-white', enviar: 'bg-[#6366f1] text-white hover:brightness-110 disabled:opacity-40', confirmar: 'bg-[#6366f1] text-white hover:brightness-110', botao: 'bg-[#6366f1] ring-[#0b0f17] shadow-[#6366f1]/40', chipHover: 'hover:border-[#a5b4fc]', campoFoco: 'focus:border-[#a5b4fc]' },
   },
 };
 
@@ -95,12 +110,12 @@ const POR_PRODUTO: Record<ProdutoDoJatoba, { nome: string; simbolo: string; endp
  * ampliada e ancorada no alto). Sem o desenho em public/brand, entra o
  * símbolo do produto, sem recorte.
  */
-function Avatar({ tamanho, className = '', simbolo = PRODUTO.simboloGrande }: { tamanho: number; className?: string; simbolo?: string }) {
+function Avatar({ tamanho, className = '', simbolo = PRODUTO.simboloGrande, mascote = MASCOTE }: { tamanho: number; className?: string; simbolo?: string; mascote?: string }) {
   const [semDesenho, setSemDesenho] = useState(false);
   return (
     <span className={`relative block shrink-0 overflow-hidden rounded-full ${className}`} style={{ width: tamanho, height: tamanho }}>
       <img
-        src={semDesenho ? simbolo : MASCOTE}
+        src={semDesenho ? simbolo : mascote}
         alt="Jatobá"
         width={tamanho}
         height={tamanho}
@@ -138,9 +153,10 @@ function Texto({ texto }: { texto: string }) {
 export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onDados }: JatobaProps) {
   const p = POR_PRODUTO[produto];
   const atendePainel = produto === 'atende' && modo === 'painel';
+  const sevlaConta = produto === 'sevla' && modo === 'painel';
   const post = pedir ?? (<T,>(caminho: string, corpo: unknown) => api.post<T>(caminho, corpo));
   const [aberto, setAberto] = useState(false);
-  const [mensagens, setMensagens] = useState<Mensagem[]>([{ id: 0, de: 'jatoba', texto: modo === 'home' ? p.abertura : atendePainel ? ABERTURA_DO_PAINEL_DO_ATENDE : ABERTURA.painel }]);
+  const [mensagens, setMensagens] = useState<Mensagem[]>([{ id: 0, de: 'jatoba', texto: modo === 'home' ? p.abertura : atendePainel ? ABERTURA_DO_PAINEL_DO_ATENDE : sevlaConta ? ABERTURA_DA_CONTA_DA_SEVLA : ABERTURA.painel }]);
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
   const [confirmando, setConfirmando] = useState<number | null>(null);
@@ -150,7 +166,8 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
   const reduzido = useReducedMotion();
 
   const home = modo === 'home';
-  const paleta = home
+  // A Minha SEVLA é escura como a página da casa: o painel do Jatobá segue a paleta escura, com o índigo da SEVLA.
+  const paleta = home || sevlaConta
     ? {
         painel: 'border-white/10 bg-[#0b1426] text-white shadow-2xl shadow-black/50',
         cabecalho: 'border-white/10',
@@ -230,6 +247,10 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
         const r = await post<{ texto: string; abrir: { tela: string; resto: string } | null }>('/jatoba', { texto: p, historico });
         adicionar({ de: 'jatoba', texto: r.texto });
         if (r.abrir && onAbrir) onAbrir(r.abrir.tela, r.abrir.resto);
+      } else if (sevlaConta) {
+        const r = await post<{ texto: string; abrir: { destino: string; organization_id: string | null } | null }>('/jatoba', { texto: p, historico });
+        adicionar({ de: 'jatoba', texto: r.texto });
+        if (r.abrir && onAbrir) onAbrir(r.abrir.destino, r.abrir.organization_id ?? '');
       } else {
         const r = await api.post<{ texto: string; propostas: PropostaAssinada[]; abrir: string | null }>('/api/jatoba', { texto: p, historico });
         adicionar({ de: 'jatoba', texto: r.texto, propostas: r.propostas?.length ? r.propostas : undefined });
@@ -284,10 +305,10 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
             animate={{ scale: 1, opacity: 1 }}
             exit={reduzido ? undefined : { scale: 0.6, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-            aria-label={`Falar com o Jatobá, o assistente do ${p.nome}`}
+            aria-label={`Falar com o Jatobá, o assistente ${produto === 'sevla' ? 'da' : 'do'} ${p.nome}`}
             className={`fixed bottom-5 right-5 z-[90] flex h-14 w-14 items-center justify-center rounded-full shadow-lg ring-4 transition-transform hover:scale-105 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/60 ${paleta.botao}`}
           >
-            <Avatar tamanho={48} simbolo={p.simbolo} />
+            <Avatar tamanho={48} simbolo={p.simbolo} mascote={p.mascote} />
           </motion.button>
         )}
       </AnimatePresence>
@@ -297,7 +318,7 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
           <motion.section
             key="jatoba-painel"
             role="dialog"
-            aria-label={`Jatobá, assistente do ${p.nome}`}
+            aria-label={`Jatobá, assistente ${produto === 'sevla' ? 'da' : 'do'} ${p.nome}`}
             initial={reduzido ? false : { opacity: 0, y: 16, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={reduzido ? undefined : { opacity: 0, y: 16, scale: 0.98 }}
@@ -305,10 +326,10 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
             className={`fixed bottom-4 right-4 z-[90] flex max-h-[min(640px,calc(100dvh-2rem))] w-[min(380px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border ${paleta.painel}`}
           >
             <header className={`flex items-center gap-3 border-b px-4 py-3 ${paleta.cabecalho}`}>
-              <Avatar tamanho={40} simbolo={p.simbolo} />
+              <Avatar tamanho={40} simbolo={p.simbolo} mascote={p.mascote} />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-extrabold leading-tight">Jatobá</p>
-                <p className={`truncate text-[11px] ${paleta.sub}`}>{home ? `Tire suas dúvidas sobre o ${p.nome}` : 'Consulte, registre e aprenda — sem sair daqui'}</p>
+                <p className={`truncate text-[11px] ${paleta.sub}`}>{home ? `Tire suas dúvidas sobre ${produto === 'sevla' ? 'a' : 'o'} ${p.nome}` : sevlaConta ? 'Sua conta, seus produtos, suas assinaturas' : atendePainel ? 'A fila, as conversas e as telas — sem sair daqui' : 'Consulte, registre e aprenda — sem sair daqui'}</p>
               </div>
               <button type="button" onClick={() => setAberto(false)} aria-label="Fechar" className={`rounded-lg p-1.5 transition-colors ${paleta.fechar}`}>
                 <X size={16} />
@@ -380,7 +401,7 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
 
               {mostrarSugestoes && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
-                  {(home ? p.sugestoes : atendePainel ? SUGESTOES_DO_PAINEL_DO_ATENDE : SUGESTOES.painel).map((s) => (
+                  {(home ? p.sugestoes : atendePainel ? SUGESTOES_DO_PAINEL_DO_ATENDE : sevlaConta ? SUGESTOES_DA_CONTA_DA_SEVLA : SUGESTOES.painel).map((s) => (
                     <button key={s} type="button" onClick={() => enviar(s)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${paleta.chip}`}>
                       {s}
                     </button>

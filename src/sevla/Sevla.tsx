@@ -5,6 +5,7 @@ import { DashboardMockup } from '@/pages/Home/DashboardMockup';
 import { SEVLA, PRODUTOS, type ProdutoDoEcossistema } from './produto';
 import { Botao, Container, MarcaDoProduto, MarcaSevla, Revelar, SimboloSevla, Titulo, cta } from './ui';
 import { MockupDoAtende } from './MockupDoAtende';
+import { Jatoba } from '@/features/jatoba/Jatoba';
 
 /**
  * A página institucional da SEVLA INFINITY — o hub da empresa-mãe.
@@ -38,6 +39,8 @@ export function Sevla() {
         <ChamadaFinal />
       </main>
       <Footer />
+      {/* O Jatobá da casa: o ecossistema, os produtos, os planos e os combos, para quem está conhecendo. */}
+      <Jatoba modo="home" produto="sevla" />
     </div>
   );
 }
@@ -431,7 +434,7 @@ function OQueE() {
           {/* Evolui: a vaga do próximo, com o Jatobá */}
           <Revelar delay={0.3} className="md:col-span-6">
             <article className="cartao relative flex flex-col items-start gap-6 overflow-hidden rounded-3xl border-dashed p-6 sm:flex-row sm:items-center sm:p-8">
-              <img src="/brand/jatoba.png" alt="Jatobá, o mascote da SEVLA" width={96} height={96} className="h-24 w-24 shrink-0 object-contain drop-shadow-[0_10px_30px_rgba(99,102,241,0.5)]" decoding="async" />
+              <img src="/sevla/jatoba.png" alt="Jatobá, o mascote da SEVLA" width={96} height={96} className="h-24 w-24 shrink-0 object-contain drop-shadow-[0_10px_30px_rgba(99,102,241,0.5)]" decoding="async" />
               <div className="min-w-0 flex-1">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--primaria-clara)]">Evolui</p>
                 <h3 className="mt-2 text-xl font-bold text-white">O Jatobá é a cara da casa — e o próximo produto ganha o mesmo tratamento.</h3>
