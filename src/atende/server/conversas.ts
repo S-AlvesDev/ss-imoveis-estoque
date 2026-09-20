@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { supabaseServer } from '../../lib/supabaseServer';
 import { variantesDoTelefone } from '../../server/evolution';
 import { escreverDespedida, enviarComoIa, mensagemDeEncerramento } from './avaliacao';
+import { assinarRemetente } from '../shared/remetente';
 import { enviarTextoComId, enviarMidia, enviarAudio, enviarLocalizacao, enviarContato, marcarLidas, type Enviada } from '../../server/evolution';
 import type { ScopedDb } from '../../server/tenant';
 import { previaDe } from './eventos';
@@ -284,15 +285,17 @@ export async function enviarMensagem(req: RequisicaoAtende, conversaId: string, 
   if (c.estado === 'encerrada') await registrarEvento(db, c.id, s.id, 'reaberta', { ao_responder: true });
 
   // ---- Evolution
+  // No WhatsApp, a mensagem sai assinada por quem a escreveu ("Samuel Alves:" e o texto na linha de baixo).
+  // Só no que vai para o cliente: a linha gravada acima é o texto como foi escrito.
   let enviada: Enviada;
   try {
     const cit = envio.respondendo_a ? await chaveDaMensagem(db, envio.respondendo_a) : null;
-    if (envio.tipo === 'texto') enviada = await enviarTextoComId(c.cliente.telefone, texto!, instancia, cit ? { citando: cit } : {});
+    if (envio.tipo === 'texto') enviada = await enviarTextoComId(c.cliente.telefone, assinarRemetente(s.nome, texto!), instancia, cit ? { citando: cit } : {});
     else if (envio.tipo === 'audio' || envio.tipo === 'arquivo') {
       // A Evolution baixa o arquivo direto do bucket, por uma URL assinada de 10 min.
       const url = await urlAssinada(midia!.caminho as string);
       if (envio.tipo === 'audio') enviada = await enviarAudio(c.cliente.telefone, url, instancia);
-      else enviada = await enviarMidia(c.cliente.telefone, { tipo: tipo === 'imagem' ? 'image' : tipo === 'video' ? 'video' : 'document', conteudo: url, mimetype: midia!.mimetype as string, nomeArquivo: (midia!.nome as string | null) ?? undefined, legenda: texto ?? undefined }, instancia);
+      else enviada = await enviarMidia(c.cliente.telefone, { tipo: tipo === 'imagem' ? 'image' : tipo === 'video' ? 'video' : 'document', conteudo: url, mimetype: midia!.mimetype as string, nomeArquivo: (midia!.nome as string | null) ?? undefined, legenda: texto ? assinarRemetente(s.nome, texto) : undefined }, instancia);
     }
     else if (envio.tipo === 'localizacao') enviada = await enviarLocalizacao(c.cliente.telefone, { latitude: Number(envio.latitude), longitude: Number(envio.longitude), nome: texto ?? undefined }, instancia);
     else enviada = await enviarContato(c.cliente.telefone, midia!.contato as { nome: string; telefone: string }, instancia);

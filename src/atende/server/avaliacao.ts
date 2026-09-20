@@ -1,4 +1,5 @@
 import { supabaseServer } from '../../lib/supabaseServer';
+import { ASSISTENTE_VIRTUAL, assinarRemetente } from '../shared/remetente';
 import { conversar, claudeConfigurado, type MensagemDoChat } from '../../server/claude';
 import { enviarTextoComId, variantesDoTelefone } from '../../server/evolution';
 import { previaDe, type MensagemDoWhatsApp } from './eventos';
@@ -94,7 +95,8 @@ export async function enviarComoIa(args: { empresaId: string; conversaId: string
     if (args.conexaoId) instancia = (await supabaseServer.from('atende_conexoes').select('instancia').eq('id', args.conexaoId).maybeSingle()).data?.instancia ?? null;
     if (!instancia) instancia = (await supabaseServer.from('atende_conexoes').select('instancia').eq('empresa_id', args.empresaId).maybeSingle()).data?.instancia ?? null;
     if (!instancia) throw new Error('A empresa não tem WhatsApp conectado.');
-    const enviada = await enviarTextoComId(args.telefone, args.texto, instancia);
+    // Sai assinada como Assistente Virtual; a linha gravada é o texto puro.
+    const enviada = await enviarTextoComId(args.telefone, assinarRemetente(ASSISTENTE_VIRTUAL, args.texto), instancia);
     await supabaseServer.from('atende_mensagens').update({ status: 'enviada', wa_id: enviada.waId }).eq('id', linha.id);
     return true;
   } catch (e: any) {

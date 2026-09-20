@@ -1,4 +1,5 @@
 import { supabaseServer } from '../../lib/supabaseServer';
+import { ASSISTENTE_VIRTUAL, assinarRemetente } from '../shared/remetente';
 import { empresaTem } from './plano';
 import { conversar, systemComCache, claudeConfigurado, type Ferramenta, type Uso, type MensagemDoChat } from '../../server/claude';
 import { enviarTextoComId } from '../../server/evolution';
@@ -525,7 +526,8 @@ async function responderComoIa(conversa: ConversaParaTriar, empresaId: string, t
       instancia = data?.instancia ?? null;
     }
     if (!instancia) throw new Error('A empresa não tem WhatsApp conectado.');
-    const enviada = await enviarTextoComId(conversa.cliente.telefone, texto, instancia);
+    // No WhatsApp a IA se apresenta: "Assistente Virtual:" e o texto na linha de baixo. A linha gravada é o texto puro.
+    const enviada = await enviarTextoComId(conversa.cliente.telefone, assinarRemetente(ASSISTENTE_VIRTUAL, texto), instancia);
     await supabaseServer.from('atende_mensagens').update({ status: 'enviada', wa_id: enviada.waId }).eq('id', linha.id);
     return texto;
   } catch (e: any) {
