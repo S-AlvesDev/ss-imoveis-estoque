@@ -200,48 +200,53 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   // o pedido pode ter saído por um cadastro e a resposta chegar por outro.
   if (!e.fromMe && (await tratarRespostaDeAvaliacao(empresaId, e))) return true;
 
-  // ---- Conversa aberta, reaberta, ou nova
+  // ---- A conversa do contato: a de sempre, reaberta se estava encerrada, ou a primeira
   // Um contato, um fio: como no WhatsApp. "Encerrar" marca o fim; a próxima mensagem
-  // reabre a MESMA conversa (o histórico continua ali), em vez de criar outra.
+  // reabre a MESMA conversa (o histórico continua ali), em vez de criar outra. O banco
+  // garante um fio por contato (migração 043); antes dela, vale a de abertura mais recente,
+  // que é sempre a aberta quando há uma (reabrir move `aberta_em`).
   const COLUNAS = 'id, estado, nao_lidas, primeira_resposta_em, atendente_id, time_id';
-  let { data: conversa } = await supabaseServer.from('atende_conversas').select(COLUNAS).eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
+  const fioDoContato = async () => (await supabaseServer.from('atende_conversas').select(COLUNAS).eq('cliente_id', cliente.id).order('aberta_em', { ascending: false }).limit(1).maybeSingle()).data;
+  let conversa = await fioDoContato();
   let nova = false;
   let reaberta = false;
-  if (!conversa) {
-    // Cliente escreveu: 'nova' para a IA triar (ou direto na fila, se a empresa desligou a triagem).
-    // A empresa escreveu primeiro pelo celular: alguém já está atendendo por lá.
-    const estadoInicial = e.fromMe ? 'em_atendimento' : (await triagemAtiva(empresaId)) ? 'nova' : 'na_fila';
-    const { data: encerrada } = await supabaseServer.from('atende_conversas').select(`${COLUNAS}, encerrada_em`).eq('cliente_id', cliente.id).eq('estado', 'encerrada').order('encerrada_em', { ascending: false, nullsFirst: false }).limit(1).maybeSingle();
-    if (encerrada) {
-      // Reabre: novo atendimento (contadores do zero), mesmo fio. Quem atendia antes não é
-      // dono de novo automaticamente — a triagem/fila decide; pelo celular, fica sem dono como antes.
-      const { data: atualizada, error } = await supabaseServer
-        .from('atende_conversas')
-        .update({ estado: estadoInicial, aberta_em: agora, ultima_mensagem_em: agora, primeira_resposta_em: null, encerrada_em: null, encerrada_por: null, motivo_encerramento: null, atendente_id: null, time_id: null, nao_lidas: 0 })
-        .eq('id', encerrada.id)
-        .eq('estado', 'encerrada')
-        .select(COLUNAS)
-        .maybeSingle();
-      if (error) throw error;
-      if (atualizada) {
-        conversa = atualizada;
-        reaberta = true;
-      }
+  // Cliente escreveu: 'nova' para a IA triar (ou direto na fila, se a empresa desligou a triagem).
+  // A empresa escreveu primeiro pelo celular: alguém já está atendendo por lá.
+  const estadoInicial = async () => (e.fromMe ? 'em_atendimento' : (await triagemAtiva(empresaId)) ? 'nova' : 'na_fila');
+  if (conversa?.estado === 'encerrada') {
+    // Reabre: novo atendimento (contadores do zero), mesmo fio. Quem atendia antes não é
+    // dono de novo automaticamente — a triagem/fila decide; pelo celular, fica sem dono como antes.
+    // A conversa passa a andar pela conexão de agora (a empresa pode ter trocado de número).
+    const { data: atualizada, error } = await supabaseServer
+      .from('atende_conversas')
+      .update({ estado: await estadoInicial(), conexao_id: conexao.id, aberta_em: agora, ultima_mensagem_em: agora, primeira_resposta_em: null, encerrada_em: null, encerrada_por: null, motivo_encerramento: null, atendente_id: null, time_id: null, nao_lidas: 0 })
+      .eq('id', conversa.id)
+      .eq('estado', 'encerrada')
+      .select(COLUNAS)
+      .maybeSingle();
+    if (error) throw error;
+    if (atualizada) {
+      conversa = atualizada;
+      reaberta = true;
+    } else {
+      // Outra mensagem reabriu no mesmo instante.
+      conversa = await fioDoContato();
     }
-    if (!conversa) {
-      const { data: criada, error } = await supabaseServer
-        .from('atende_conversas')
-        .insert({ empresa_id: empresaId, cliente_id: cliente.id, conexao_id: conexao.id, estado: estadoInicial, aberta_em: agora, ultima_mensagem_em: agora })
-        .select(COLUNAS)
-        .single();
-      if (error || !criada) {
-        const { data: existente } = await supabaseServer.from('atende_conversas').select(COLUNAS).eq('cliente_id', cliente.id).neq('estado', 'encerrada').maybeSingle();
-        if (!existente) throw error ?? new Error('não criou a conversa');
-        conversa = existente;
-      } else {
-        conversa = criada;
-        nova = true;
-      }
+  }
+  if (!conversa) {
+    const { data: criada, error } = await supabaseServer
+      .from('atende_conversas')
+      .insert({ empresa_id: empresaId, cliente_id: cliente.id, conexao_id: conexao.id, estado: await estadoInicial(), aberta_em: agora, ultima_mensagem_em: agora })
+      .select(COLUNAS)
+      .single();
+    if (error || !criada) {
+      // Duas mensagens ao mesmo tempo de um contato novo: a segunda acha o fio que a primeira abriu.
+      const existente = await fioDoContato();
+      if (!existente) throw error ?? new Error('não criou a conversa');
+      conversa = existente;
+    } else {
+      conversa = criada;
+      nova = true;
     }
   }
 

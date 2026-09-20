@@ -76,6 +76,8 @@ export function Historico({ conversa }: { conversa: Conversa }) {
         return `${quem ?? 'Alguém'} encerrou${d.motivo ? ` — ${d.motivo}` : ''}`;
       case 'contato_fundido':
         return `${quem ?? 'Alguém'} fundiu o contato ${d.de_telefone ? `+${d.de_telefone}` : ''} neste (+${d.em_telefone ?? ''})`;
+      case 'fio_fundido':
+        return `Um atendimento anterior deste contato${d.aberta_em ? ` (${new Date(d.aberta_em).toLocaleDateString('pt-BR')})` : ''} passou a fazer parte desta conversa`;
       case 'avaliacao_pedida':
         return `${quem ?? 'Alguém'} encerrou com a despedida da IA e pediu a avaliação`;
       case 'avaliada':

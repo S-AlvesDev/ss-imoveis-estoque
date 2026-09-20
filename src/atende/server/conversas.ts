@@ -769,6 +769,21 @@ export async function fundirClientes(req: RequisicaoAtende, deId: string, emId: 
   const [{ data: de }, { data: em }] = await Promise.all([db.from('atende_clientes').select(CLIENTE_COLUNAS).eq('id', deId).maybeSingle(), db.from('atende_clientes').select(CLIENTE_COLUNAS).eq('id', emId).maybeSingle()]);
   if (!de || !em) throw new ErroDeConversa('Contato não encontrado.', 404);
 
+  // Um contato, um fio: se os dois já têm conversa, a do que sai entra na do que fica
+  // (mensagens, eventos, etiquetas e lead — função da migração 043). Só o que sobrar muda de dono.
+  const [{ data: fiosDe }, { data: fiosEm }] = await Promise.all([
+    db.from('atende_conversas').select('id, ultima_mensagem_em, aberta_em').eq('cliente_id', de.id).order('aberta_em', { ascending: false }),
+    db.from('atende_conversas').select('id, ultima_mensagem_em, aberta_em').eq('cliente_id', em.id).order('aberta_em', { ascending: false }),
+  ]);
+  const alvo = ((fiosEm || []) as Array<{ id: string }>)[0] ?? null;
+  if (alvo) {
+    for (const fio of (fiosDe || []) as Array<{ id: string }>) {
+      const { error: eF } = await supabaseServer.rpc('atende_fundir_conversas', { p_alvo: alvo.id, p_origem: fio.id });
+      // Sem a migração 043 ainda, a função não existe: os fios só mudam de dono, como antes.
+      if (eF && !/atende_fundir_conversas/.test(eF.message ?? '')) throw eF;
+      if (eF) break;
+    }
+  }
   const { error: e1 } = await db.from('atende_conversas').update({ cliente_id: em.id }).eq('cliente_id', de.id);
   if (e1) throw e1;
   const { error: e2 } = await db.from('atende_leads').update({ cliente_id: em.id }).eq('cliente_id', de.id);
