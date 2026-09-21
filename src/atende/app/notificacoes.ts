@@ -141,9 +141,11 @@ export function tocarAviso() {
 
 const TITULO_PADRAO = 'Atende Aí — Seu atendimento, no controle.';
 
-export function atualizarTitulo(naoLidas: number) {
+/** ATD-07: o título da aba acompanha a tela (a que a página manda via <Pagina titulo="…">), não fica fixo. */
+export function atualizarTitulo(naoLidas: number, tituloDaTela?: string | null) {
   if (typeof document === 'undefined') return;
-  document.title = naoLidas > 0 ? `(${naoLidas}) Atende Aí` : TITULO_PADRAO;
+  const base = tituloDaTela ? `${tituloDaTela} · Atende Aí` : TITULO_PADRAO;
+  document.title = naoLidas > 0 ? `(${naoLidas}) ${base}` : base;
 }
 
 /** Notificação do sistema direto da página — só quando a aba está escondida e o push NÃO está ativo (senão o service worker cuida). */

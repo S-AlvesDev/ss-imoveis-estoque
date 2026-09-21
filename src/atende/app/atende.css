@@ -197,6 +197,14 @@
   }
 }
 
+/* ATD-03: no desktop, com uma conversa aberta na central, o botão do Jatobá sobe
+ * acima da barra do compositor (senão cobre o botão de gravar áudio). */
+@media (min-width: 1024px) {
+  .atende.compositor-aberto button[aria-label^='Falar com o Jatobá'] {
+    bottom: 5.5rem;
+  }
+}
+
 /* O Safari do iPhone dá zoom na página ao focar um campo com fonte menor que
  * 16px — e a página fica assim, maior que a tela. Em telas de toque os
  * campos usam 16px; o desenho (altura, borda, cor) continua o mesmo. */

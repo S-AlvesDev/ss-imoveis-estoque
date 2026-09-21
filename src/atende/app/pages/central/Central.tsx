@@ -92,6 +92,13 @@ export function Central({ conversaId }: { conversaId: string | null }) {
     };
   }, [abertaId]);
 
+  // ATD-03: com uma conversa aberta (em qualquer largura), o Jatobá sobe para não cobrir o compositor
+  // (no desktop ele cobria o botão de gravar áudio). Independe do breakpoint acima, que só esconde no celular.
+  useEffect(() => {
+    document.body.classList.toggle('compositor-aberto', Boolean(abertaId));
+    return () => document.body.classList.remove('compositor-aberto');
+  }, [abertaId]);
+
   // As contagens dos filtros, no que está carregado (as abertas chegam pelo sync; encerradas e todas só ao abrir o filtro).
   const contagens = useMemo(() => {
     const c: Partial<Record<Filtro, number>> = { abertas: 0, minhas: 0, fila: 0, aguardando: 0 };
@@ -310,7 +317,7 @@ function Cabecalho({ conversa, onVoltar, onFicha, fichaAberta }: { conversa: Con
         <Avatar nome={nomeDoCliente(conversa.cliente)} foto={conversa.cliente.foto_url} tamanho={36} marca />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
-            <span className="min-w-0 truncate text-sm font-semibold text-[var(--text)]">{nomeDoCliente(conversa.cliente)}</span>
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--text)]">{nomeDoCliente(conversa.cliente)}</span>
             <span className="hidden shrink-0 sm:inline-flex">
               <Etiqueta tom={TOM_DO_ESTADO[conversa.estado]} ponto pulsa={conversa.estado === 'em_triagem'}>
                 {NOME_DO_ESTADO[conversa.estado]}

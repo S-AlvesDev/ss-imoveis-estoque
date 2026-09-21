@@ -121,6 +121,14 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
   // O relógio do sync mora aqui: em qualquer tela a pessoa continua presente e as contagens da barra continuam certas.
   useSincronizacao({ carregarLista: false });
 
+  // ATD-05: o estado do WhatsApp na barra lateral e na central vem do que o webhook gravou — que pode ficar
+  // desatualizado se o evento se perder. Uma conferência ao vivo por sessão (o que a tela de WhatsApp já faz
+  // sozinha) corrige o banco; o próximo /sync traz o valor certo para a barra e para a central.
+  useEffect(() => {
+    if (pode(sessao.papel, 'whatsapp.gerir')) void api.get('/whatsapp').catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // As contagens da barra: não lidas nas minhas conversas e na fila (Atendimentos); quantas na fila (Supervisão).
   const { naoLidas, naFila } = useMemo(() => {
     let naoLidas = 0;
@@ -311,7 +319,18 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
                   <span className={`h-2 w-2 rounded-full ${estadoDaPresenca === 'online' ? 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]' : estadoDaPresenca === 'ausente' ? 'bg-amber-400' : 'bg-slate-300'}`} />
                   {estadoDaPresenca === 'online' ? 'Online' : estadoDaPresenca === 'ausente' ? 'Ausente' : 'Conectando…'}
                 </button>
-                <button type="button" onClick={() => (notificacoes === 'inativas' ? ativarNotificacoesDaBarra() : navegar({ id: 'conta', tela: TELAS.conta, nome: 'Minha conta', icone: null }))} disabled={ativandoNotificacoes} data-dica={notificacoes === 'inativas' ? 'Ativar notificações neste aparelho' : 'Notificações'} className="relative flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-60" aria-label="Notificações">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (notificacoes === 'inativas') return void ativarNotificacoesDaBarra();
+                    if (naoLidas > 0) return navegar(itens.find((i) => i.id === 'central') ?? { id: 'central', tela: TELAS.central, nome: 'Atendimentos', icone: null });
+                    navegar({ id: 'conta', tela: TELAS.conta, nome: 'Minha conta', icone: null });
+                  }}
+                  disabled={ativandoNotificacoes}
+                  data-dica={notificacoes === 'inativas' ? 'Ativar notificações neste aparelho' : naoLidas > 0 ? 'Ver o que está pendente' : 'Notificações'}
+                  className="relative flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)] disabled:opacity-60"
+                  aria-label="Notificações"
+                >
                   {notificacoes === 'ativas' ? <BellRing size={18} /> : <Bell size={18} />}
                   {notificacoes === 'inativas' && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[var(--brand)] ring-2 ring-[var(--surface)]" />}
                   {naoLidas > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--brand)] px-1 text-[10px] font-bold text-white ring-2 ring-[var(--surface)]">{naoLidas > 99 ? '99+' : naoLidas}</span>}
@@ -328,7 +347,7 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
           </header>
         )}
         {!escondeMoldura && <FaixaDoPlano tela={tela} />}
-        <main className={`min-w-0 flex-1 ${tela === TELAS.central ? '' : `p-4 pb-[calc(1rem+var(--nav-inferior)+env(safe-area-inset-bottom))] sm:p-6 lg:pb-8`}`}>{children}</main>
+        <main className={`min-w-0 flex-1 ${tela === TELAS.central ? '' : `p-4 pb-[calc(1rem+var(--nav-inferior)+3.5rem+env(safe-area-inset-bottom))] sm:p-6 lg:pb-8`}`}>{children}</main>
       </div>
 
       {/* A navegação inferior do celular: as principais e "Mais". */}

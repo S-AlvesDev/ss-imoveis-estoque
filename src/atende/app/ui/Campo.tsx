@@ -99,7 +99,7 @@ export function Interruptor({ ligado, onChange, titulo, descricao, desabilitado,
   return (
     <div className={`flex items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5 ${className}`}>
       <button type="button" role="switch" aria-checked={ligado} disabled={desabilitado} onClick={() => onChange(!ligado)} className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${ligado ? 'bg-[var(--brand)]' : 'bg-[var(--border-strong)]'}`}>
-        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${ligado ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+        <span className={`absolute left-0 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${ligado ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
       </button>
       <button type="button" onClick={() => !desabilitado && onChange(!ligado)} className="min-w-0 flex-1 text-left">
         <span className="block text-sm font-semibold text-[var(--text)]">{titulo}</span>

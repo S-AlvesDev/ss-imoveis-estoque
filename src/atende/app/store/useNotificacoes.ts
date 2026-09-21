@@ -5,6 +5,7 @@ import { useDadosAtende } from './dados';
 import { useSessaoAtende } from './sessao';
 import { lerCaminho, TELAS, useRotaAtende } from '../router';
 import { registrarServiceWorker, tocarAviso, atualizarTitulo, notificarDaPagina } from '../notificacoes';
+import { useCabecalho } from './cabecalho';
 import type { Conversa } from '../../shared/tipos';
 
 /**
@@ -25,15 +26,16 @@ export function useNotificacoes(naoLidas: number) {
   const sessao = useSessaoAtende((s) => s.sessao)!;
   const times = useDadosAtende((s) => s.times);
   const ir = useRotaAtende((s) => s.ir);
+  const tituloDaTela = useCabecalho((s) => s.titulo);
 
   useEffect(() => {
     void registrarServiceWorker();
   }, []);
 
   useEffect(() => {
-    atualizarTitulo(naoLidas);
-    return () => atualizarTitulo(0);
-  }, [naoLidas]);
+    atualizarTitulo(naoLidas, tituloDaTela);
+    return () => atualizarTitulo(0, tituloDaTela);
+  }, [naoLidas, tituloDaTela]);
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
