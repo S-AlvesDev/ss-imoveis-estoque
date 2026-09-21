@@ -245,7 +245,7 @@ function InventoryApp({ role }: { role: string }) {
         </main>
       </div>
       {/* O Jatobá acompanha todas as telas: consulta, prepara movimentações e leva até a tela certa. */}
-      {temJatoba && <Jatoba modo="painel" onNavigate={(v) => setView(v as AppView)} onDados={() => refetch()} />}
+      {temJatoba && <Jatoba modo="painel" onNavigate={(v) => setView(v as AppView)} onDados={() => refetch()} materialDeExemplo={materials[0]?.nome} />}
     </div>
   );
 }
@@ -279,7 +279,7 @@ export default function App() {
 
   return (
     <>
-      <Toaster position="top-right" richColors closeButton />
+      <Toaster position="top-center" richColors closeButton />
       {tela}
     </>
   );

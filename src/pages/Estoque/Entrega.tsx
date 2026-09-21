@@ -295,6 +295,7 @@ export function Entrega({ deposito, materials, emprestimos, staff, refetch, pode
         doc.text(`Assinatura — ${p.nome}`, 14, y + 21);
       }
       doc.save(`termo-${p.nome.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.pdf`);
+      toast.success(`Termo de ${p.nome} gerado.`);
     } catch (err: any) {
       toast.error(err.message || 'Não foi possível gerar o termo.');
     }

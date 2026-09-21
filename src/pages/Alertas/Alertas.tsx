@@ -389,6 +389,11 @@ export function Alertas({ materials, depositos, emprestimos, lotes, categorias, 
               </div>
             );
           })}
+          {openGroup !== 'TODOS' && grouped[openGroup].length === 0 && (
+            <Card>
+              <EmptyState icon={<AlertTriangle size={20} />} title="Nada neste grupo" subtitle="Escolha outro filtro ou volte para Todos os grupos." />
+            </Card>
+          )}
         </>
       )}
 

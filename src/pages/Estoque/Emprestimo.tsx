@@ -65,6 +65,7 @@ export function Emprestimo({ deposito, materials, emprestimos, staff, refetch, p
   // pendentes
   const [busca, setBusca] = useState(buscaInicial);
   const [devolvendo, setDevolvendo] = useState<string | null>(null);
+  const [confirmandoDevolucao, setConfirmandoDevolucao] = useState<string | null>(null);
 
   // histórico
   const [historicoAberto, setHistoricoAberto] = useState(false);
@@ -257,9 +258,27 @@ export function Emprestimo({ deposito, materials, emprestimos, staff, refetch, p
                     <p className={`text-[11px] font-semibold ${prazo.atrasado ? 'text-[var(--vermelho)]' : 'text-[var(--text-muted)]'}`}>{prazo.texto}</p>
                   </div>
                   {podeOperar && (
-                    <Button size="sm" variant={prazo.atrasado ? 'danger' : 'outline'} loading={devolvendo === e.id} onClick={() => devolver(e)} icon={devolvendo === e.id ? undefined : <Check size={14} />}>
-                      Devolver
-                    </Button>
+                    confirmandoDevolucao === e.id ? (
+                      <span className="flex shrink-0 items-center gap-1.5 text-xs font-bold">
+                        <button
+                          onClick={() => {
+                            setConfirmandoDevolucao(null);
+                            devolver(e);
+                          }}
+                          className="text-rose-500 hover:underline"
+                        >
+                          Confirmar
+                        </button>
+                        <span className="text-[var(--text-muted)]">/</span>
+                        <button onClick={() => setConfirmandoDevolucao(null)} className="text-[var(--text-muted)] hover:underline">
+                          Cancelar
+                        </button>
+                      </span>
+                    ) : (
+                      <Button size="sm" variant={prazo.atrasado ? 'danger' : 'outline'} loading={devolvendo === e.id} onClick={() => setConfirmandoDevolucao(e.id)} icon={devolvendo === e.id ? undefined : <Check size={14} />}>
+                        Devolver
+                      </Button>
+                    )
                   )}
                 </li>
               );

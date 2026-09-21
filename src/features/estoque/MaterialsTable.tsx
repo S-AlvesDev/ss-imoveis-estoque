@@ -173,6 +173,11 @@ export function MaterialsTable({
                           </button>
                           {deletingId === m.id ? (
                             <span className="flex items-center gap-1.5 px-2 text-xs font-bold">
+                              {stockTotal(m) > 0 && (
+                                <span className="font-normal text-[var(--text-muted)]">
+                                  Saldo {formatNumber(stockTotal(m))} {m.unidade_medida} —
+                                </span>
+                              )}
                               <button
                                 onClick={() => {
                                   onDelete?.(m.id);

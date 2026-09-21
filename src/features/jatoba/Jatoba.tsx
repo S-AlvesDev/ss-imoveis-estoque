@@ -51,14 +51,22 @@ interface JatobaProps {
   onNavigate?: (view: string) => void;
   /** No painel: os dados mudaram (uma proposta foi confirmada) — recarregar. */
   onDados?: () => void;
+  /** No painel do Stok: o nome de um material real da empresa, para as sugestões não falarem de "cimento" numa empresa que não tem. */
+  materialDeExemplo?: string;
 }
 
 export const MASCOTE = '/brand/jatoba.png';
 
 const SUGESTOES: Record<ModoDoJatoba, string[]> = {
   home: ['Quanto custa?', 'Funciona no WhatsApp?', 'Serve para EPI e ferramentas?', 'Como eu começo?'],
-  painel: ['O que está faltando?', 'Quanto tem de cimento?', 'Como cadastro um material?', 'Saiu 2 sacos de cimento do Central'],
+  painel: ['O que está faltando?', 'Como cadastro um material?', 'Quais alertas eu tenho?', 'Prepare uma saída para mim'],
 };
+
+/** Com um material real da empresa, troca as sugestões genéricas por umas que falam dele. */
+function sugestoesDoPainel(materialDeExemplo?: string): string[] {
+  if (!materialDeExemplo) return SUGESTOES.painel;
+  return ['O que está faltando?', `Quanto tem de ${materialDeExemplo}?`, 'Como cadastro um material?', `Saiu 1 de ${materialDeExemplo}`];
+}
 const SUGESTOES_DO_ATENDE = ['Quanto custa?', 'Preciso trocar meu número?', 'A IA responde o cliente?', 'Como eu começo?'];
 const SUGESTOES_DO_PAINEL_DO_ATENDE = ['Quem está esperando resposta?', 'Quantas conversas na fila?', 'Como transfiro uma conversa?', 'Abre a supervisão'];
 const ABERTURA_DO_PAINEL_DO_ATENDE = 'Oi! Eu sou o Jatobá. Posso dizer como está a fila e quem espera resposta, achar uma conversa, abrir uma tela e explicar como fazer qualquer coisa por aqui.';
@@ -150,7 +158,7 @@ function Texto({ texto }: { texto: string }) {
   );
 }
 
-export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onDados }: JatobaProps) {
+export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onDados, materialDeExemplo }: JatobaProps) {
   const p = POR_PRODUTO[produto];
   const atendePainel = produto === 'atende' && modo === 'painel';
   const sevlaConta = produto === 'sevla' && modo === 'painel';
@@ -401,7 +409,7 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
 
               {mostrarSugestoes && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
-                  {(home ? p.sugestoes : atendePainel ? SUGESTOES_DO_PAINEL_DO_ATENDE : sevlaConta ? SUGESTOES_DA_CONTA_DA_SEVLA : SUGESTOES.painel).map((s) => (
+                  {(home ? p.sugestoes : atendePainel ? SUGESTOES_DO_PAINEL_DO_ATENDE : sevlaConta ? SUGESTOES_DA_CONTA_DA_SEVLA : sugestoesDoPainel(materialDeExemplo)).map((s) => (
                     <button key={s} type="button" onClick={() => enviar(s)} className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${paleta.chip}`}>
                       {s}
                     </button>
