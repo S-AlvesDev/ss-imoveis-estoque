@@ -99,7 +99,7 @@ function AvisoCard({ icone, tom, titulo, linhas }: { icone: React.ReactNode; tom
             {linhas.slice(0, 40).map((l) => (
               <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
                 <span className="min-w-0 truncate">{l.quem}</span>
-                <span className="shrink-0 text-[var(--text-muted)]">{l.onde}</span>
+                <span className="min-w-0 text-[var(--text-muted)]">{l.onde}</span>
               </li>
             ))}
           </ul>
@@ -239,7 +239,7 @@ export function Alertas({ materials, depositos, emprestimos, lotes, categorias, 
         <AvisoCard
           icone={<Timer size={18} />}
           tom="vermelho"
-          titulo={`${atrasados.length} retirada${atrasados.length > 1 ? 's' : ''} passou${atrasados.length > 1 ? 'aram' : ''} do prazo de devolução`}
+          titulo={`${atrasados.length} retirada${atrasados.length > 1 ? 's' : ''} ${atrasados.length > 1 ? 'passaram' : 'passou'} do prazo de devolução`}
           linhas={atrasados.map((e) => ({
             id: e.id,
             quem: (

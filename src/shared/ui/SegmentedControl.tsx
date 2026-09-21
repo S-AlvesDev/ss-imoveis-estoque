@@ -16,12 +16,12 @@ export function SegmentedControl<T extends string>({
   activeClassName = 'text-[var(--brand)]',
 }: SegmentedControlProps<T>) {
   return (
-    <div className="flex rounded-lg bg-[var(--bg-2)] p-1 text-xs font-bold">
+    <div className="flex max-w-full overflow-x-auto rounded-lg bg-[var(--bg-2)] p-1 text-xs font-bold">
       {options.map((opt) => (
         <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
-          className={`relative rounded-md px-3 py-1.5 transition-colors ${value === opt.value ? opt.activeClassName || activeClassName : 'text-[var(--text-muted)]'}`}
+          className={`relative shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 transition-colors ${value === opt.value ? opt.activeClassName || activeClassName : 'text-[var(--text-muted)]'}`}
         >
           {value === opt.value && (
             <motion.div

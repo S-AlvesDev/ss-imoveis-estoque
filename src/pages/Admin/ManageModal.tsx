@@ -81,6 +81,7 @@ export function ManageModal({ material, categorias, depositos, onClose, onUpdate
         <form onSubmit={handleSaveEdit} className="space-y-4">
           <Input label="Nome" required value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} />
           <Select label="Categoria" value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}>
+            {!categorias.includes(form.categoria) && form.categoria && <option value={form.categoria}>{form.categoria}</option>}
             {categorias.map((c) => (
               <option key={c} value={c}>
                 {c}

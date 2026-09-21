@@ -160,7 +160,7 @@ export function Recontagem({ open, onClose, deposito, categorias, materials, ref
           </button>
           <div>
             <p className="font-display text-base font-bold text-[var(--text)]">
-              Recontagem Rápida — {location === 'CENTRAL' ? 'Central' : 'Obra'}
+              Recontagem Rápida — {deposito.nome}
             </p>
             <p className="font-mono text-[11px] text-[var(--text-muted)]">
               {countedInView}/{filtered.length} conferidos nesta visão

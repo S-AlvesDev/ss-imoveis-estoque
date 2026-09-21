@@ -12,7 +12,7 @@ import { usePlano } from '@/features/planos/usePlano';
 import { Cadeado } from '@/features/planos/Cadeado';
 import { formatDateTime } from '@/features/estoque/utils';
 import type { Deposito, Material, Unidade } from '@/shared/types';
-import { formatarMoeda, type Cotacao, type Fornecedor } from '@/shared/cotacoes';
+import { compararCotacao, formatarMoeda, type Cotacao, type Fornecedor } from '@/shared/cotacoes';
 import { Fornecedores } from './Fornecedores';
 import { NovaCotacao } from './NovaCotacao';
 import { CotacaoDetalhe } from './CotacaoDetalhe';
@@ -132,7 +132,9 @@ export function Compras({ catalogo, unidade, depositos }: Props) {
                 <tbody>
                   {cotacoes.map((c) => {
                     const responderam = c.fornecedores.filter((f) => f.status === 'respondida' || f.status === 'pedido');
-                    const melhor = responderam.filter((f) => f.total !== null).sort((a, b) => (a.total ?? 0) - (b.total ?? 0))[0];
+                    const comparacao = compararCotacao(c.itens, c.fornecedores.map((f) => ({ fornecedor_id: f.fornecedor_id, precos: f.precos })));
+                    const melhor = comparacao.melhorTotal ? c.fornecedores.find((f) => f.fornecedor_id === comparacao.melhorTotal) : undefined;
+                    const melhorInfo = comparacao.melhorTotal ? comparacao.totais[comparacao.melhorTotal] : null;
                     const doPedido = c.pedido ? c.fornecedores.find((f) => f.fornecedor_id === c.pedido!.fornecedor_id) : null;
                     return (
                       <tr key={c.id} onClick={() => setAberta(c.id)} className="cursor-pointer border-b border-[var(--border)] transition-colors hover:bg-[var(--brand)]/5">
@@ -145,9 +147,13 @@ export function Compras({ catalogo, unidade, depositos }: Props) {
                           {responderam.length} de {c.fornecedores.length} responderam
                         </td>
                         <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-[var(--text)]">
-                          {melhor ? (
+                          {melhor && melhorInfo ? (
                             <>
-                              {formatarMoeda(melhor.total)} <span className="font-sans text-[11px] text-[var(--text-muted)]">{melhor.fornecedor.nome}</span>
+                              {formatarMoeda(melhorInfo.total)}{' '}
+                              <span className="font-sans text-[11px] text-[var(--text-muted)]">
+                                {melhor.fornecedor.nome}
+                                {!melhorInfo.completo ? ` · ${melhorInfo.itensCotados} de ${c.itens.length} itens` : ''}
+                              </span>
                             </>
                           ) : (
                             '—'

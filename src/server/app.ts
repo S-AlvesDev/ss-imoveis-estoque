@@ -1552,6 +1552,17 @@ export function createApp() {
 
       if (fetchError || !material) return res.status(404).json({ error: 'Material não encontrado.' });
 
+      const [{ count: emprestimos }, { count: patrimonios }] = await Promise.all([
+        req.db!.from('loans').select('*', { count: 'exact', head: true }).eq('material_id', id),
+        req.db!.from('assets').select('*', { count: 'exact', head: true }).eq('material_id', id),
+      ]);
+      if ((emprestimos ?? 0) > 0 || (patrimonios ?? 0) > 0) {
+        const partes: string[] = [];
+        if (emprestimos) partes.push(`${emprestimos} ${emprestimos === 1 ? 'empréstimo registrado' : 'empréstimos registrados'}`);
+        if (patrimonios) partes.push(`${patrimonios} ${patrimonios === 1 ? 'item de patrimônio' : 'itens de patrimônio'}`);
+        return res.status(409).json({ error: `Este material tem ${partes.join(' e ')} e não pode ser excluído.` });
+      }
+
       const { data: relatedMovements } = await req.db!
         .from('material_movements')
         .select('id, justificativa')

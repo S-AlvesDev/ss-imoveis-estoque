@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X } from 'lucide-react';
 import { Stripes } from './Stripes';
@@ -14,6 +14,22 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, subtitle, children, footer, maxWidth = 'max-w-lg' }: ModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const anterior = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      anterior?.focus?.();
+    };
+  }, [open, onClose]);
+
   return (
     <AnimatePresence>
       {open && (
@@ -25,21 +41,27 @@ export function Modal({ open, onClose, title, subtitle, children, footer, maxWid
           onClick={onClose}
         >
           <motion.div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-titulo"
+            tabIndex={-1}
             initial={{ opacity: 0, scale: 0.96, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 6 }}
             transition={{ type: 'spring', stiffness: 380, damping: 32 }}
             onClick={(e) => e.stopPropagation()}
-            className={`relative w-full ${maxWidth} max-h-[90vh] flex flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_60px_-12px_rgba(2,6,23,0.45)]`}
+            className={`relative w-full ${maxWidth} max-h-[90vh] flex flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_60px_-12px_rgba(2,6,23,0.45)] outline-none`}
           >
             <Stripes className="absolute inset-x-0 top-0 h-1" color="rgba(255,138,36,0.9)" dense />
             <div className="flex items-start justify-between gap-4 px-6 pb-5 pt-6 border-b border-[var(--border)]">
               <div>
-                <h3 className="font-display text-lg font-bold text-[var(--text)]">{title}</h3>
+                <h3 id="modal-titulo" className="font-display text-lg font-bold text-[var(--text)]">{title}</h3>
                 {subtitle && <p className="mt-0.5 text-xs text-[var(--text-muted)]">{subtitle}</p>}
               </div>
               <button
                 onClick={onClose}
+                aria-label="Fechar"
                 className="rounded-full p-1.5 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)]"
               >
                 <X size={18} />

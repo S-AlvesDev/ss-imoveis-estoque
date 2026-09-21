@@ -61,6 +61,9 @@ const emptyForm = {
   validade_troca_dias: '',
 };
 
+/** Valor do filtro para "sem categoria nomeada" — nunca colide com uma categoria de verdade. */
+const OUTROS_CATEGORIA = '__outros__';
+
 export function Admin({ materials, materialMovements, staff, categorias, depositos, refetch }: AdminProps) {
   const planoAtual = usePlano();
   const [form, setForm] = useState({ ...emptyForm, categoria: categorias[0] ?? '' });
@@ -92,27 +95,31 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
     return materials.filter((m) => m.nome.toLowerCase().includes(q));
   }, [materials, form.nome]);
 
+  /** Não é nenhuma categoria nomeada pela empresa — o mesmo "Outros" que o painel já mostra no gráfico. */
+  const naoClassificado = (m: Material) => !categorias.includes(m.categoria);
+
   const visibleMaterials = useMemo(() => {
     let list = materials;
-    if (categoria !== 'TODAS') list = list.filter((m) => m.categoria === categoria);
+    if (categoria === OUTROS_CATEGORIA) list = list.filter(naoClassificado);
+    else if (categoria !== 'TODAS') list = list.filter((m) => m.categoria === categoria);
     list = list.filter((m) => matchesStatusFilter(m, filter, depositos));
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((m) => m.nome.toLowerCase().includes(q) || m.categoria.toLowerCase().includes(q));
     }
     return list;
-  }, [materials, filter, categoria, search]);
+  }, [materials, filter, categoria, search, categorias]);
 
   /** Contagem por situação, respeitando a categoria escolhida mas não o filtro atual. */
   const statusCounts = useMemo(() => {
-    const base = categoria === 'TODAS' ? materials : materials.filter((m) => m.categoria === categoria);
+    const base = categoria === OUTROS_CATEGORIA ? materials.filter(naoClassificado) : categoria === 'TODAS' ? materials : materials.filter((m) => m.categoria === categoria);
     return {
       TODOS: base.length,
       RUPTURA: base.filter((m) => stockStatus(m, 'empresa') === 'RUPTURA').length,
       ABAIXO: base.filter((m) => stockStatus(m, 'empresa') === 'ABAIXO').length,
       TRANSFERIR: base.filter((m) => depositos.some((d) => stockStatus(m, d.id) === 'TRANSFERIR')).length,
     } satisfies Record<StatusFilter, number>;
-  }, [materials, categoria]);
+  }, [materials, categoria, categorias]);
 
   const saldoCalculado = (Number(form.qtd_volumes) || 0) * (Number(form.fator_multiplicador) || 0);
 
@@ -368,6 +375,7 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
                   {c}
                 </option>
               ))}
+              {materials.some(naoClassificado) && <option value={OUTROS_CATEGORIA}>Outros</option>}
             </select>
           </div>
 

@@ -152,8 +152,12 @@ export function variacao(atual: number, anterior: number): number | null {
 
 export interface SaldoComHistorico {
   atual: number;
-  /** Variação contra 30 dias atrás, reconstruída a partir das movimentações. */
+  /** Variação contra 30 dias atrás, reconstruída a partir das movimentações. Nula sem base para calcular %
+   * (30 dias atrás era 0) — nesse caso, `mudancaEm30Dias` ainda diz se houve movimentação real. */
   tendencia: number | null;
+  /** A mudança em unidades nos últimos 30 dias (não %). BUG-02: um depósito novo (base zero) tinha
+   * `tendencia` nula mesmo com movimentação — o card dizia "sem movimentação recente" com entrada no dia. */
+  mudancaEm30Dias: number;
   /** O saldo ao fim de cada um dos últimos 14 dias, para a sparkline. */
   serie: number[];
 }
@@ -194,12 +198,14 @@ export function saldoComHistorico(
 
   const ha30Dias = atual - mudancaEm30Dias;
   const tendencia = mudancaEm30Dias === 0 ? null : variacao(atual, ha30Dias);
-  return { atual, tendencia, serie };
+  return { atual, tendencia, mudancaEm30Dias, serie };
 }
 
 export interface CatalogoComHistorico {
   total: number;
   tendencia: number | null;
+  /** Quantos entraram no catálogo nos últimos 30 dias — usado quando `tendencia` é nula (catálogo novo). */
+  criadosEm30: number;
   serie: number[];
 }
 
@@ -222,7 +228,7 @@ export function catalogoComHistorico(materials: Material[], agora: Date = new Da
     serie.unshift(total);
     total -= criadosPorDia.get(chaveDoDia(d)) ?? 0;
   }
-  return { total: materials.length, tendencia: criadosEm30 === 0 ? null : variacao(materials.length, materials.length - criadosEm30), serie };
+  return { total: materials.length, tendencia: criadosEm30 === 0 ? null : variacao(materials.length, materials.length - criadosEm30), criadosEm30, serie };
 }
 
 export interface TopMaterial {

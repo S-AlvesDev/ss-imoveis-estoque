@@ -85,6 +85,13 @@ describe('saldoComHistorico', () => {
     const r = saldoComHistorico(42, [], 'o1', AGORA);
     expect(new Set(r.serie).size).toBe(1);
     expect(r.tendencia).toBeNull();
+    expect(r.mudancaEm30Dias).toBe(0);
+  });
+
+  it('BUG-02: depósito novo (base 30 dias atrás é zero) com movimentação real — tendência nula, mas mudancaEm30Dias não', () => {
+    const r = saldoComHistorico(8, [mov({ tipo_operacao: 'ENTRADA_CENTRAL', quantidade: 8, created_at: dia(1) })], 'c1', AGORA, LEGADO);
+    expect(r.tendencia).toBeNull(); // 30 dias atrás era 0: não dá para calcular %
+    expect(r.mudancaEm30Dias).toBe(8); // mas a mudança de verdade não é nula
   });
 });
 
@@ -95,6 +102,12 @@ describe('catalogoComHistorico', () => {
     expect(r.tendencia).toBe(200); // de 1 para 3
     expect(r.serie[13]).toBe(3);
     expect(r.serie[9]).toBe(1);
+  });
+
+  it('BUG-02: catálogo novo (tudo criado nos últimos 30 dias) — tendência nula, mas criadosEm30 diz o que houve', () => {
+    const r = catalogoComHistorico([mat({ id: 1, created_at: dia(2) }), mat({ id: 2, created_at: dia(1) })], AGORA);
+    expect(r.tendencia).toBeNull(); // 2 - 2 = 0 de base: não dá para calcular %
+    expect(r.criadosEm30).toBe(2);
   });
 });
 

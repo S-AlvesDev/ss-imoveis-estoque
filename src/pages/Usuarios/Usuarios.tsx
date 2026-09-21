@@ -5,6 +5,7 @@ import { Card } from '@/shared/ui/Card';
 import { Badge } from '@/shared/ui/Badge';
 import { Button } from '@/shared/ui/Button';
 import { EmptyState } from '@/shared/ui/EmptyState';
+import { Modal } from '@/shared/ui/Modal';
 import { api } from '@/lib/api';
 import { useAuth } from '@/store/auth';
 import type { ManagedUser } from '@/shared/types';
@@ -42,6 +43,7 @@ export function Usuarios() {
   }, [load]);
 
   const inseguros = useMemo(() => users.filter((u) => u.senha_em_texto_puro).length, [users]);
+  const deletingUser = useMemo(() => users.find((u) => u.id === deletingId) || null, [users, deletingId]);
 
   async function handleDelete(id: number) {
     try {
@@ -149,16 +151,6 @@ export function Usuarios() {
                             <span className="p-1.5 text-[11px] text-[var(--text-muted)]" title="O CEO não pode ser excluído; transfira a titularidade em Plano e assinatura">
                               —
                             </span>
-                          ) : deletingId === u.id ? (
-                            <span className="flex items-center gap-1.5 px-1 text-[11px] font-bold">
-                              <button onClick={() => handleDelete(u.id)} className="text-rose-500 hover:underline">
-                                Excluir
-                              </button>
-                              <span className="text-[var(--text-muted)]">/</span>
-                              <button onClick={() => setDeletingId(null)} className="text-[var(--text-muted)] hover:underline">
-                                Não
-                              </button>
-                            </span>
                           ) : (
                             <button
                               onClick={() => setDeletingId(u.id)}
@@ -195,6 +187,30 @@ export function Usuarios() {
         }}
         onSaved={load}
       />
+
+      <Modal
+        open={!!deletingUser}
+        onClose={() => setDeletingId(null)}
+        title="Excluir usuário"
+        footer={
+          deletingUser && (
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDeletingId(null)}>
+                Cancelar
+              </Button>
+              <Button variant="danger" onClick={() => handleDelete(deletingUser.id)}>
+                Excluir
+              </Button>
+            </div>
+          )
+        }
+      >
+        {deletingUser && (
+          <p className="text-sm text-[var(--text)]">
+            Excluir <strong>{deletingUser.nome}</strong>? Essa ação não pode ser desfeita.
+          </p>
+        )}
+      </Modal>
     </div>
   );
 }

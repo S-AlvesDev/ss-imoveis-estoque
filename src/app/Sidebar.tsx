@@ -345,19 +345,21 @@ export function Sidebar({ active, onChange, mobileOpen, onMobileClose, unidades,
               </div>
             </div>
           ))}
-        </nav>
 
-        <div className="relative shrink-0 space-y-3 p-4">
-          <CartaoSaude alertas={alertas} total={totalMateriais} onClick={podeVerAlertas ? () => handleSelect('alertas') : undefined} />
-          <button
-            onClick={logout}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-[var(--sidebar-text)] transition-colors hover:bg-white/[0.06] hover:text-white"
-          >
-            <LogOut size={18} className="text-[var(--sidebar-muted)]" />
-            Sair
-          </button>
-          <SeloSevla origem="stok" />
-        </div>
+          {/* Rola junto com a navegação — antes ficava fixo no rodapé e sobrava pouco espaço
+              para os itens do menu em telas baixas (BUG-05 da auditoria). */}
+          <div className="relative space-y-3 border-t border-[var(--sidebar-border)] pt-4">
+            <CartaoSaude alertas={alertas} total={totalMateriais} onClick={podeVerAlertas ? () => handleSelect('alertas') : undefined} />
+            <button
+              onClick={logout}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium text-[var(--sidebar-text)] transition-colors hover:bg-white/[0.06] hover:text-white"
+            >
+              <LogOut size={18} className="text-[var(--sidebar-muted)]" />
+              Sair
+            </button>
+            <SeloSevla origem="stok" />
+          </div>
+        </nav>
       </aside>
     </>
   );

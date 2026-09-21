@@ -236,12 +236,12 @@ export function Dashboard({ materials, materialMovements, unidade, depositos, un
             icon={<Boxes size={20} />}
             accent="brand"
             trend={{ value: catalogo.tendencia, label: 'em 30 dias' }}
-            sublabel="no catálogo desta unidade"
+            sublabel={catalogo.tendencia === null && catalogo.criadosEm30 > 0 ? `+${catalogo.criadosEm30} em 30 dias` : 'no catálogo desta unidade'}
             serie={catalogo.serie}
             onClick={() => onNavigate('materiais')}
           />
         </RevealItem>
-        {estoques.map(({ deposito, atual, tendencia, serie }, i) => (
+        {estoques.map(({ deposito, atual, tendencia, mudancaEm30Dias, serie }, i) => (
           <RevealItem key={deposito.id}>
             <StatCard
               label={deposito.nome}
@@ -249,7 +249,7 @@ export function Dashboard({ materials, materialMovements, unidade, depositos, un
               icon={deposito.modo === 'emprestimo' ? <PackageOpen size={20} /> : <Warehouse size={20} />}
               accent={(['blue', 'green', 'violet', 'amber'] as const)[i % 4]}
               trend={{ value: tendencia, label: 'em 30 dias' }}
-              sublabel="sem movimentação recente"
+              sublabel={tendencia === null && mudancaEm30Dias !== 0 ? `${mudancaEm30Dias > 0 ? '+' : ''}${mudancaEm30Dias} em 30 dias` : 'sem movimentação recente'}
               serie={serie}
               onClick={() => onNavigate(viewDoEstoque(deposito.id))}
             />
