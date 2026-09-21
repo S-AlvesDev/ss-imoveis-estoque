@@ -1,4 +1,4 @@
-import type { Material, MaterialMovement, StaffUser } from '@/shared/types';
+import type { Deposito, Emprestimo, Lote, Material, MaterialMovement, StaffUser } from '@/shared/types';
 
 /**
  * Onde o saldo está sendo avaliado: a unidade inteira ('empresa' — o nome
@@ -57,8 +57,11 @@ export function stockStatus(m: StockFields, scope: StockScope = 'empresa'): Stoc
 
   // Visto de um estoque: vazio aqui mas disponível em outro estoque da MESMA
   // unidade -> basta transferir. Outra unidade não conta: é outro estoque,
-  // e o que falta aqui se resolve comprando aqui.
-  if (scope !== 'empresa') {
+  // e o que falta aqui se resolve comprando aqui. Só conta quando o material
+  // é esperado aqui (tem linha de saldo neste estoque) — senão todo material
+  // que só existe num depósito da unidade "precisaria transferir" para os
+  // outros, mesmo os que nunca trabalham com ele.
+  if (scope !== 'empresa' && scope in m.saldos_unidade) {
     const aqui = saldoEm(m, scope);
     if (aqui <= 0 && total - aqui > 0) return 'TRANSFERIR';
   }
@@ -182,4 +185,34 @@ export function formatNumber(n: number): string {
 
 export function formatDateTime(dateStr: string): string {
   return new Date(dateStr).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+/**
+ * O mesmo total que a tela de Alertas mostra, usado pelo sino do topo — os dois
+ * precisam contar a mesma coisa, senão o sino diz "sem alertas" com a tela
+ * cheia de pendências. Materiais entram uma vez só, mesmo cabendo em mais de
+ * um grupo (falta + precisa transferir).
+ */
+export function contarPendencias(materials: Material[], depositos: Deposito[], emprestimos: Emprestimo[], lotes: Lote[]): number {
+  const materiaisComAlerta = new Set<number>();
+  for (const m of materials) {
+    const empresa = stockStatus(m, 'empresa');
+    if (empresa === 'RUPTURA' || empresa === 'ABAIXO') materiaisComAlerta.add(m.id);
+    else if (depositos.some((d) => stockStatus(m, d.id) === 'TRANSFERIR')) materiaisComAlerta.add(m.id);
+  }
+
+  const agora = Date.now();
+  const atrasados = emprestimos.filter((e) => (e.tipo === 'emprestimo' || e.tipo === 'entrega') && e.prazo_em && new Date(e.prazo_em).getTime() < agora).length;
+
+  const hoje = new Date();
+  const inicioHoje = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).getTime();
+  const lotesComAlerta = lotes.filter((l) => {
+    if (!l.validade) return false;
+    const dep = depositos.find((d) => d.id === l.warehouse_id);
+    if (!dep) return false;
+    const fim = new Date(`${l.validade}T00:00:00`).getTime();
+    return fim < inicioHoje || fim <= inicioHoje + (dep.dias_aviso_validade ?? 30) * 24 * 60 * 60 * 1000;
+  }).length;
+
+  return materiaisComAlerta.size + atrasados + lotesComAlerta;
 }

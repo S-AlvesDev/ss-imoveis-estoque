@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  contarPendencias,
   movementDirection,
   needsPurchase,
   needsTransfer,
@@ -57,6 +58,16 @@ describe('stockStatus — com mais de uma unidade', () => {
   it('remessa só vale dentro da mesma unidade', () => {
     // Obra de Nova Cruz vazia, Central de Nova Cruz com 20: remessa.
     expect(stockStatus(material(20, 0, 10), 'obra')).toBe('TRANSFERIR');
+  });
+
+  it('BUG-11: não marca TRANSFERIR para um depósito que nem trabalha com o material', () => {
+    // Material só existe em 'central' (nunca teve linha em 'farmacia') — não é
+    // "zerado esperando transferência" lá, é um depósito que não trabalha com ele.
+    const m = { saldo_unidade: 20, saldos_unidade: { central: 20 }, estoque_minimo: 10 };
+    expect(stockStatus(m, 'farmacia')).toBe('OK');
+    // Mas para o estoque onde o material É esperado e está zerado, continua valendo.
+    const m2 = { saldo_unidade: 20, saldos_unidade: { central: 20, obra: 0 }, estoque_minimo: 10 };
+    expect(stockStatus(m2, 'obra')).toBe('TRANSFERIR');
   });
 });
 
@@ -232,5 +243,27 @@ describe('signedQuantity', () => {
   it('não assina transferência nem ajuste', () => {
     expect(signedQuantity({ tipo_operacao: 'REMESSA_OBRA', quantidade: 8 })).toBe('8');
     expect(signedQuantity({ tipo_operacao: 'AJUSTE_OBRA', quantidade: 8 })).toBe('8');
+  });
+});
+
+describe('contarPendencias — BUG-13: o sino conta o mesmo que a tela de Alertas', () => {
+  const deposito = (id: string) => ({ id, unit_id: 'u1', nome: id, tipo: 'CENTRAL' as const, ativo: true, dias_aviso_validade: 30 }) as any;
+
+  it('não fica em zero quando só há empréstimo atrasado (sem falta de material)', () => {
+    const materials = [{ id: 1, saldo_unidade: 20, saldos_unidade: { central: 20 }, estoque_minimo: 5 }] as any;
+    const emprestimos = [{ tipo: 'emprestimo', prazo_em: '2000-01-01T00:00:00Z' }] as any;
+    expect(contarPendencias(materials, [deposito('central')], emprestimos, [])).toBe(1);
+  });
+
+  it('conta cada material uma vez só, mesmo em mais de um grupo', () => {
+    // Zerado em 'central' (esperado lá) mas com saldo em 'obra': RUPTURA na empresa? Não —
+    // abaixo do mínimo E precisa transferir ao mesmo tempo, ainda conta 1.
+    const materials = [{ id: 1, saldo_unidade: 3, saldos_unidade: { central: 0, obra: 3 }, estoque_minimo: 10 }] as any;
+    expect(contarPendencias(materials, [deposito('central'), deposito('obra')], [], [])).toBe(1);
+  });
+
+  it('sem nenhuma pendência, o total é zero', () => {
+    const materials = [{ id: 1, saldo_unidade: 20, saldos_unidade: { central: 20 }, estoque_minimo: 5 }] as any;
+    expect(contarPendencias(materials, [deposito('central')], [], [])).toBe(0);
   });
 });

@@ -190,26 +190,27 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
               return (
                 <div key={m.id} className="group rounded-lg px-3 py-2.5 hover:bg-[var(--bg-2)]">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-[var(--text)]">{m.nome}</p>
-                      <p className="text-[11px] text-[var(--text-muted)]">{m.categoria}</p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <StockStatusBadge status={status} scope={olhandoDeposito.id} ondeTem={status === 'TRANSFERIR' ? ondeTem(m, depositosDaUnidade, olhandoDeposito.id) : undefined} />
-                      <span className={`text-sm font-bold tabular-nums ${status === 'RUPTURA' ? 'text-[var(--vermelho)]' : 'text-[var(--text)]'}`}>
-                        {formatNumber(saldo)} <span className="text-[10px] font-medium text-[var(--text-muted)]">{m.unidade_medida}</span>
-                      </span>
-                      <button
-                        onClick={() => setHistoryMaterial(m)}
-                        className="rounded-full p-1.5 text-[var(--text-muted)] opacity-0 transition-opacity hover:bg-[var(--bg-2)] hover:text-[var(--text)] group-hover:opacity-100"
-                        title="Histórico"
-                      >
-                        <Clock size={15} />
-                      </button>
-                    </div>
+                    <p className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--text)]">{m.nome}</p>
+                    <span className={`shrink-0 text-sm font-bold tabular-nums ${status === 'RUPTURA' ? 'text-[var(--vermelho)]' : 'text-[var(--text)]'}`}>
+                      {formatNumber(saldo)} <span className="text-[10px] font-medium text-[var(--text-muted)]">{m.unidade_medida}</span>
+                    </span>
                   </div>
-                  {/* O mínimo é da unidade, então a barra mede o total dela, não só este estoque. */}
-                  <StockBar saldo={m.saldo_unidade} minimo={m.estoque_minimo} className="mt-1.5" />
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="truncate text-[11px] text-[var(--text-muted)]">{m.categoria}</p>
+                      <StockStatusBadge status={status} scope={olhandoDeposito.id} ondeTem={status === 'TRANSFERIR' ? ondeTem(m, depositosDaUnidade, olhandoDeposito.id) : undefined} />
+                    </div>
+                    <button
+                      onClick={() => setHistoryMaterial(m)}
+                      className="shrink-0 rounded-full p-1.5 text-[var(--text-muted)] opacity-0 transition-opacity hover:bg-[var(--bg-2)] hover:text-[var(--text)] group-hover:opacity-100"
+                      title="Histórico"
+                    >
+                      <Clock size={15} />
+                    </button>
+                  </div>
+                  {/* O mínimo é da unidade, então a barra mede o total dela, não só este estoque —
+                      o marcador mostra onde o saldo local cai nessa mesma escala (BUG-12). */}
+                  <StockBar saldo={m.saldo_unidade} minimo={m.estoque_minimo} marker={saldo} className="mt-1.5" />
                 </div>
               );
             })}

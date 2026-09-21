@@ -44,8 +44,8 @@ const GROUPS: { key: Group; title: string; hint: string; icon: React.ReactNode; 
 function AlertCard({ material, group, depositos }: { material: Material; group: Group; depositos: Deposito[] }) {
   const total = stockTotal(material);
   const pct = percentOfMinimum(material);
-  // Para transferência: onde está zerado e onde tem.
-  const zerados = depositos.filter((d) => saldoEm(material, d.id) <= 0).map((d) => d.nome);
+  // Para transferência: onde está zerado (e é esperado) e onde tem.
+  const zerados = depositos.filter((d) => d.id in material.saldos_unidade && saldoEm(material, d.id) <= 0).map((d) => d.nome);
   const temEm = ondeTem(material, depositos);
 
   return (

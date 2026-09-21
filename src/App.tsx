@@ -36,7 +36,7 @@ import { Stripes } from '@/shared/ui/Stripes';
 import { Logo } from '@/shared/ui/Logo';
 import { ADMIN_ROLES } from '@/shared/constants';
 import { PRODUTO } from '@/shared/produto';
-import { needsPurchase } from '@/features/estoque/utils';
+import { contarPendencias, needsPurchase } from '@/features/estoque/utils';
 
 function LoadingScreen() {
   return (
@@ -102,12 +102,21 @@ function InventoryApp({ role }: { role: string }) {
   // Onde um material "abre" pela busca: Materiais para quem administra, o primeiro estoque da pessoa para quem opera.
   const telaDeMaterial: AppView | null = isAdmin ? 'materiais' : (itens.find((i) => estoqueDaView(i.view))?.view ?? null);
   const estoqueAtual = estoqueDaView(viewAtual) ? depositosDaUnidade.find((d) => d.id === estoqueDaView(viewAtual)) ?? null : null;
-  const alertas = materials.filter(needsPurchase).length;
+  // O sino conta tudo que a tela de Alertas mostra (falta, transferência, atraso, validade);
+  // a "Saúde do estoque" da sidebar é só sobre o que falta comprar (percentual acima do mínimo).
+  const alertas = contarPendencias(materials, depositosDaUnidade, emprestimos, lotes);
+  const alertasDeCompra = materials.filter(needsPurchase).length;
 
   // O título da tela saiu da barra do topo e foi para a aba do navegador.
   useEffect(() => {
     document.title = loading ? PRODUTO.nome : `${estoqueAtual?.nome ?? VIEW_TITLES[viewAtual] ?? PRODUTO.nome} · ${PRODUTO.nome}`;
   }, [loading, viewAtual, estoqueAtual]);
+
+  // Ao trocar de tela, volta ao topo — sem isso, a posição de rolagem da tela
+  // anterior ficava valendo e o título da nova tela abria fora da vista.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [viewAtual]);
 
   if (loading) return <LoadingScreen />;
 
@@ -159,7 +168,7 @@ function InventoryApp({ role }: { role: string }) {
         onChangeUnidade={setUnidade}
         onNovaUnidade={isAdmin ? () => setView('configuracoes') : undefined}
         estoques={estoquesVisiveis}
-        alertas={alertas}
+        alertas={alertasDeCompra}
         totalMateriais={materials.length}
       />
       <div className="min-w-0 flex-1">
