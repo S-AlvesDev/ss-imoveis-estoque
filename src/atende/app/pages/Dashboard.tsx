@@ -242,9 +242,14 @@ export function Dashboard() {
                       <Linha rotulo="Corrigidas pela equipe">{dados.ia.corrigidas}{dados.ia.taxa_de_correcao !== null ? ` (${dados.ia.taxa_de_correcao}%)` : ''}</Linha>
                       <Linha rotulo="Confiança média">{dados.ia.confianca_media === null ? '—' : `${Math.round(dados.ia.confianca_media * 100)}%`}</Linha>
                       <Linha rotulo="Perguntas ao cliente">{dados.ia.esclarecimentos}</Linha>
-                      <Linha rotulo="Tokens de entrada">{numero(dados.ia.tokens.entrada)}{dados.ia.tokens.cache ? ` (+${numero(dados.ia.tokens.cache)} do cache)` : ''}</Linha>
-                      <Linha rotulo="Tokens de saída">{numero(dados.ia.tokens.saida)}</Linha>
-                      <Linha rotulo="Modelo">{dados.ia.modelos.map((m) => (m === 'palavras-chave' ? 'palavras-chave (sem IA)' : m)).join(', ') || '—'}</Linha>
+                      <Linha rotulo="Como a triagem decidiu">{dados.ia.modelos.map((m) => (m === 'palavras-chave' ? 'Palavras-chave (sem IA)' : `IA (${m})`)).join(', ') || '—'}</Linha>
+                      <details className="pt-1">
+                        <summary className="cursor-pointer text-[var(--text-muted)]">Detalhes técnicos</summary>
+                        <div className="mt-1.5 space-y-1.5">
+                          <Linha rotulo="Tokens de entrada">{numero(dados.ia.tokens.entrada)}{dados.ia.tokens.cache ? ` (+${numero(dados.ia.tokens.cache)} do cache)` : ''}</Linha>
+                          <Linha rotulo="Tokens de saída">{numero(dados.ia.tokens.saida)}</Linha>
+                        </div>
+                      </details>
                     </dl>
                   </div>
                 )}

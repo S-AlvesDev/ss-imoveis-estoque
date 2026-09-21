@@ -33,6 +33,10 @@ export function Composer({ conversa }: { conversa: Conversa }) {
   const aplicarConversa = useCentral((s) => s.aplicarConversa);
 
   useEffect(() => {
+    setModoNota(false);
+  }, [conversa.time_id, conversa.atendente_id]);
+
+  useEffect(() => {
     if (!ehCelular()) campo.current?.focus();
     setTexto('');
     setAnexo(null);

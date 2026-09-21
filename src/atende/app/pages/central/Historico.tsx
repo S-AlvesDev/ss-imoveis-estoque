@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, History } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useDadosAtende } from '../../store/dados';
-import type { Conversa } from '../../../shared/tipos';
+import { NOME_DO_ESTADO_DO_LEAD, type Conversa, type EstadoDoLead } from '../../../shared/tipos';
 import { Rotulo } from '../../ui/Cartao';
 import { Esqueleto } from '../../ui/Estados';
 
@@ -70,8 +70,10 @@ export function Historico({ conversa }: { conversa: Conversa }) {
         return `${quem ?? 'Alguém'} corrigiu o setor: ${time(d.de) ?? 'nenhum'} → ${time(d.para)}${d.motivo ? ` — ${d.motivo}` : ''}`;
       case 'orientacao':
         return `${quem ?? 'Supervisor'} orientou ${nome(d.para) ?? 'o atendente'} (nota interna)`;
-      case 'lead_alterado':
-        return `${quem ?? 'Alguém'} moveu o lead: ${d.de ?? 'novo'} → ${d.para}`;
+      case 'lead_alterado': {
+        const nome = (v: string) => NOME_DO_ESTADO_DO_LEAD[v as EstadoDoLead] ?? v;
+        return `${quem ?? 'Alguém'} moveu o lead: ${nome(d.de ?? 'novo')} → ${nome(d.para)}`;
+      }
       case 'encerrada':
         return `${quem ?? 'Alguém'} encerrou${d.motivo ? ` — ${d.motivo}` : ''}`;
       case 'contato_fundido':

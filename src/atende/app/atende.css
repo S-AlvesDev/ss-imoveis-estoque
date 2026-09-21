@@ -66,6 +66,12 @@
   }
 }
 
+/* ATD-14: o cabeçalho é sticky por cima do conteúdo; sem isto, quando o navegador rola até um campo
+ * inválido (Salvar fora do <form>, validação nativa do HTML5), o campo fica atrás do cabeçalho — "some". */
+.atende {
+  scroll-padding-top: calc(var(--topo) + 0.75rem);
+}
+
 .atende .bg-gradiente {
   background: var(--gradiente);
 }

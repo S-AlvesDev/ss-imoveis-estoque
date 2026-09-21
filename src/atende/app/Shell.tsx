@@ -114,7 +114,9 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
   const telaCheia = useCabecalho((s) => s.telaCheia);
   const grupos = useMemo(() => gruposDoMenu(sessao.papel), [sessao.papel]);
   // Onde as ações da tela entram (por portal, via <Pagina>). Estável: o React só chama na montagem e na desmontagem.
-  const registrarAlvoDasAcoes = useCallback((el: HTMLDivElement | null) => useCabecalho.setState({ alvoDasAcoes: el }), []);
+  const registrarAlvoDasAcoes = useCallback((el: HTMLDivElement | null) => {
+    queueMicrotask(() => useCabecalho.setState({ alvoDasAcoes: el }));
+  }, []);
   const itens = useMemo(() => grupos.flatMap((g) => g.itens), [grupos]);
   const ativo = itemAtivo(itens, tela, resto, filtro);
 
@@ -311,7 +313,11 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
               </button>
               <div className="min-w-0 flex-1 leading-tight">
                 <h1 className="truncate text-[17px] font-semibold tracking-tight text-[var(--text)] lg:text-lg">{titulo ?? ativo?.nome ?? ''}</h1>
-                {descricao && <p className="hidden truncate text-xs text-[var(--text-muted)] sm:block">{descricao}</p>}
+                {descricao && (
+                  <p className="hidden truncate text-xs text-[var(--text-muted)] sm:block" title={descricao}>
+                    {descricao}
+                  </p>
+                )}
               </div>
               <div ref={registrarAlvoDasAcoes} className="order-last flex w-full flex-wrap items-center gap-2 empty:hidden lg:order-none lg:w-auto" />
               <div className="flex shrink-0 items-center gap-1">

@@ -84,7 +84,7 @@ export default function App() {
   return (
     <>
       <Dentro tela={tela} resto={resto} />
-      <Toaster position="top-right" richColors toastOptions={{ style: { borderRadius: 14 } }} mobileOffset={{ top: 'calc(16px + env(safe-area-inset-top, 0px))' }} />
+      <Toaster position="top-center" richColors toastOptions={{ style: { borderRadius: 14 } }} mobileOffset={{ top: 'calc(16px + env(safe-area-inset-top, 0px))' }} />
     </>
   );
 }

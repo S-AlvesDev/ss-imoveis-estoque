@@ -112,7 +112,7 @@ export function Whatsapp() {
                 <div>
                   <p className="text-sm font-semibold text-[var(--text)]">{c.numero ? `+${c.numero}` : 'Número conectado'}</p>
                   <p className="text-xs text-[var(--text-muted)]">
-                    {c.conectado_em ? `Conectado em ${new Date(c.conectado_em).toLocaleString('pt-BR')}` : 'Conectado'} · instância {c.instancia}
+                    {c.conectado_em ? `Conectado em ${new Date(c.conectado_em).toLocaleString('pt-BR')}` : 'Conectado'}
                   </p>
                 </div>
               </div>

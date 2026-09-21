@@ -345,6 +345,16 @@ export async function assumir(req: RequisicaoAtende, conversaId: string): Promis
   return (await conversaPorId(req, c.id))!;
 }
 
+/** ATD-21: nome que veio do WhatsApp TUDO EM MAIÚSCULAS fica estranho na despedida ("TESTE!"); nomes com
+ * maiúscula e minúscula misturadas (a maioria) não mudam — só o que já era só-caixa-alta é normalizado. */
+function primeiroNomeApresentavel(nome: string | null | undefined): string | null {
+  const primeiro = (nome ?? '').trim().split(/\s+/)[0];
+  if (!primeiro) return null;
+  const temMinuscula = /\p{Ll}/u.test(primeiro);
+  if (temMinuscula) return primeiro;
+  return primeiro.charAt(0).toLocaleUpperCase('pt-BR') + primeiro.slice(1).toLocaleLowerCase('pt-BR');
+}
+
 /**
  * Encerra pedindo a nota: a IA escreve a despedida (no tom da conversa), a
  * mensagem sai com a pergunta de 0 a 10, e a conversa fica marcada como
@@ -359,7 +369,7 @@ export async function encerrarComAvaliacao(req: RequisicaoAtende, conversaId: st
     db.from('atende_empresas').select('nome, segmento, regras_atendimento').eq('id', s.empresa_id).maybeSingle(),
     db.from('atende_mensagens').select('direcao, texto, tipo').eq('conversa_id', c.id).neq('direcao', 'sistema').order('criado_em', { ascending: false }).limit(8),
   ]);
-  const cliente = (c.cliente.nome ?? c.cliente.nome_whatsapp ?? '').trim().split(/\s+/)[0] || null;
+  const cliente = primeiroNomeApresentavel(c.cliente.nome ?? c.cliente.nome_whatsapp);
   const { texto: despedida, modelo } = await escreverDespedida({ empresa: { nome: emp?.nome ?? '', segmento: emp?.segmento ?? null, regras_atendimento: emp?.regras_atendimento ?? null }, cliente, atendente: s.nome, assunto: c.assunto, resumo: c.resumo, mensagens: ((msgs || []) as any[]).reverse() });
   const enviou = await enviarComoIa({ empresaId: s.empresa_id, conversaId: c.id, conexaoId: c.conexao_id, telefone: c.cliente.telefone, texto: mensagemDeEncerramento(despedida) });
   if (!enviou) throw new ErroDeConversa('Não foi possível enviar a mensagem de encerramento pelo WhatsApp. Confira a conexão e tente de novo, ou encerre sem mensagem.', 502);
