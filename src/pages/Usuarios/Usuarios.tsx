@@ -174,8 +174,8 @@ export function Usuarios() {
 
       <p className="flex items-start gap-2 text-[11px] text-[var(--text-muted)]">
         <KeyRound size={13} className="mt-0.5 shrink-0" />
-        Este gerenciador só enxerga perfis do estoque. Usuários do CRM (clientes e corretores) ficam de fora e não podem
-        ser alterados por aqui, mesmo compartilhando a mesma tabela.
+        Este gerenciador só enxerga perfis do estoque. Usuários de outros produtos da mesma organização ficam de fora
+        e não podem ser alterados por aqui, mesmo compartilhando a mesma tabela.
       </p>
 
       <UserModal

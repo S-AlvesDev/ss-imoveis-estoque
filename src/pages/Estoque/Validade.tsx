@@ -354,7 +354,9 @@ export function Validade({ deposito, materials, lotes, outrosEstoques, refetch, 
           {totalVencidos > 0 && podeOperar && (
             <p className="mt-3 flex items-start gap-2 rounded-lg bg-[var(--vermelho)]/10 px-3 py-2 text-xs text-[var(--text)]">
               <Check size={14} className="mt-0.5 shrink-0 text-[var(--vermelho)]" />
-              Lote vencido não sai sozinho da lista: dê baixa com um <strong>Ajuste</strong> negativo apontando o lote (ou registre o descarte como Consumo).
+              <span>
+                Lote vencido não sai sozinho da lista: dê baixa com um <strong>Ajuste</strong> negativo apontando o lote (ou registre o descarte como Consumo).
+              </span>
             </p>
           )}
         </Card>

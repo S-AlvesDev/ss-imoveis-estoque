@@ -30,9 +30,11 @@ export function AnimatedNumber({ value, formatter, className }: AnimatedNumberPr
     return unsub;
   }, [spring, formatter, isInteger]);
 
+  // Antes de entrar na tela (ou antes do JS montar), mostra o valor real, não
+  // "0" — impressão e leitor de tela não esperam a rolagem para animar.
   return (
     <span ref={ref} className={className}>
-      0
+      {formatter ? formatter(value) : Math.round(value).toString()}
     </span>
   );
 }

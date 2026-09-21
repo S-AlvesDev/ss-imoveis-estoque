@@ -149,10 +149,16 @@ export function Emprestimo({ deposito, materials, emprestimos, staff, refetch, p
   }
 
   function preencherTomador(valor: string) {
-    // Sugestão escolhida no formato "Nome — referência".
-    const [nome, ref] = valor.split(' — ');
-    setTomadorNome(nome);
-    if (ref !== undefined) setTomadorRef(ref);
+    // Só divide quando o valor digitado bate com uma sugestão inteira da lista
+    // ("Nome — referência") — senão, qualquer " — " digitado por quem usa o
+    // campo ia parar na Referência sem querer.
+    if (sugestoes.includes(valor)) {
+      const [nome, ref] = valor.split(' — ');
+      setTomadorNome(nome);
+      if (ref !== undefined) setTomadorRef(ref);
+      return;
+    }
+    setTomadorNome(valor);
   }
 
   return (

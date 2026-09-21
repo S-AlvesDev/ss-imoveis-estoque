@@ -85,7 +85,7 @@ export function Compras({ catalogo, unidade, depositos }: Props) {
           <p className="text-sm text-[var(--text-muted)]">Cotação pelo WhatsApp: o sistema pergunta aos fornecedores, lê as respostas e mostra onde está mais barato.</p>
         </div>
         <div className="flex items-center gap-3">
-          <SegmentedControl value={aba} onChange={setAba} layoutId="compras-aba" options={[{ value: 'cotacoes', label: 'Cotações' }, { value: 'fornecedores', label: `Fornecedores (${ativos.length})` }]} />
+          <SegmentedControl value={aba} onChange={setAba} layoutId="compras-aba" options={[{ value: 'cotacoes', label: 'Cotações' }, { value: 'fornecedores', label: `Fornecedores (${fornecedores.length})` }]} />
           {aba === 'cotacoes' && (
             <Button icon={<Plus size={15} />} onClick={() => setCriando(true)} disabled={!liberado || ativos.length === 0} title={ativos.length === 0 ? 'Cadastre um fornecedor primeiro' : undefined}>
               Nova cotação
