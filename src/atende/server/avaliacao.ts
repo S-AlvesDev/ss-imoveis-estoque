@@ -138,6 +138,8 @@ export async function tratarRespostaDeAvaliacao(empresaId: string, e: MensagemDo
   const agora = e.em.toISOString();
   const { data: gravada } = await supabaseServer.from('atende_conversas').update({ avaliacao_nota: lida.nota, avaliacao_em: agora, avaliacao_comentario: lida.comentario }).eq('id', c.id).is('avaliacao_nota', null).select('id').maybeSingle();
   if (!gravada) return false;
+  // ATD-01: fecha a linha do atendimento (a que ainda não tem resposta) com a nota e a autoria de quando foi pedida.
+  await supabaseServer.from('atende_avaliacoes').update({ nota: lida.nota, comentario: lida.comentario, respondida_em: agora }).eq('conversa_id', c.id).is('respondida_em', null);
 
   // A resposta fica na conversa encerrada (a linha do tempo conta a história), sem reabrir.
   await supabaseServer.from('atende_mensagens').insert({ empresa_id: empresaId, conversa_id: c.id, direcao: 'entrada', autor_tipo: 'cliente', tipo: 'texto', texto: e.texto, wa_id: e.chave.id, conexao_id: c.conexao_id, status: 'entregue', criado_em: agora });
@@ -197,9 +199,43 @@ export function agregarAvaliacoes(linhas: ConversaAvaliada[]): ResumoDeAvaliacoe
   };
 }
 
-/** As avaliações pedidas no período, no alcance de quem pergunta (admin: tudo; supervisor: os times dele). */
+/**
+ * As avaliações pedidas no período — uma linha por atendimento (ATD-01: a
+ * conversa é um fio só, mas cada encerramento com pedido de nota conta à
+ * parte, com o atendente de quando foi pedida). Sem a migração 044 ainda,
+ * cai para as colunas antigas de atende_conversas (uma nota "atual" por
+ * fio, que uma reabertura sobrescreve — o problema que a 044 resolve).
+ */
 export async function resumoDeAvaliacoes(req: RequisicaoAtende, periodo: PeriodoDoDashboard, agora = new Date()): Promise<ResumoDeAvaliacoes> {
   const de = intervaloDoPeriodo(periodo, agora).de.toISOString();
+  const { data, error } = await req.dbAtende!
+    .from('atende_avaliacoes')
+    .select('conversa_id, atendente_id, time_id, nota, pedida_em, respondida_em, comentario, assunto, cliente:atende_clientes(nome, nome_whatsapp, telefone)')
+    .gte('pedida_em', de)
+    .order('pedida_em', { ascending: false })
+    .limit(2000);
+  if (error) {
+    if (/atende_avaliacoes/.test(error.message)) return resumoDeAvaliacoesLegado(req, de); // sem a migração 044 ainda
+    throw error;
+  }
+  const brutas = (data || []) as unknown as Array<{ conversa_id: string; atendente_id: number | string | null; time_id: string | null; nota: number | null; pedida_em: string; respondida_em: string | null; comentario: string | null; assunto: string | null; cliente: ConversaAvaliada['cliente'] }>;
+  const linhas: ConversaAvaliada[] = brutas.map((r) => ({
+    id: r.conversa_id,
+    atendente_id: r.atendente_id === null ? null : Number(r.atendente_id),
+    time_id: r.time_id,
+    avaliacao_nota: r.nota,
+    avaliacao_pedida_em: r.pedida_em,
+    avaliacao_em: r.respondida_em,
+    avaliacao_comentario: r.comentario,
+    assunto: r.assunto,
+    cliente: r.cliente,
+  }));
+  const visao = await visaoDe(req);
+  return agregarAvaliacoes(filtrarPelaVisao(linhas, visao));
+}
+
+/** Antes da migração 044: uma nota por fio (o problema do ATD-01), lida das colunas antigas. */
+async function resumoDeAvaliacoesLegado(req: RequisicaoAtende, de: string): Promise<ResumoDeAvaliacoes> {
   const { data, error } = await req.dbAtende!
     .from('atende_conversas')
     .select('id, atendente_id, time_id, avaliacao_nota, avaliacao_pedida_em, avaliacao_em, avaliacao_comentario, assunto, cliente:atende_clientes(nome, nome_whatsapp, telefone)')

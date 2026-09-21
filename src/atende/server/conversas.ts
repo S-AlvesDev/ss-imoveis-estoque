@@ -366,6 +366,11 @@ export async function encerrarComAvaliacao(req: RequisicaoAtende, conversaId: st
   const agora = new Date().toISOString();
   const { error } = await db.from('atende_conversas').update({ avaliacao_pedida_em: agora, avaliacao_nota: null, avaliacao_em: null, avaliacao_comentario: null }).eq('id', c.id);
   if (error) throw error;
+  // ATD-01: uma linha por atendimento, com quem atendia AGORA — não muda se o fio for reaberto depois.
+  const { error: erroAvaliacao } = await db
+    .from('atende_avaliacoes')
+    .insert({ empresa_id: s.empresa_id, conversa_id: c.id, cliente_id: c.cliente.id, atendente_id: c.atendente_id, time_id: c.time_id, assunto: c.assunto, modelo, pedida_em: agora });
+  if (erroAvaliacao && !/atende_avaliacoes/.test(erroAvaliacao.message)) throw erroAvaliacao; // sem a migração 044, segue só com a coluna antiga
   await registrarEvento(db, c.id, s.id, 'avaliacao_pedida', { modelo });
   return encerrar(req, conversaId, motivo);
 }
