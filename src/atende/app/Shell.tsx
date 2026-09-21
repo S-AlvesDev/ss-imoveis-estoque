@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { BarChart3, Bell, BellRing, Bot, ChevronDown, ChevronRight, CreditCard, Eye, LogOut, Menu, MessageSquare, MessagesSquare, MoreHorizontal, Settings, Smartphone, Star, UserCircle, Users, UsersRound, Wifi, WifiOff, X } from 'lucide-react';
+import { BarChart3, Bell, BellRing, Bot, ChevronDown, ChevronRight, CreditCard, Eye, LogOut, Megaphone, Menu, MessageSquare, MessagesSquare, MoreHorizontal, Package, Settings, Smartphone, Star, UserCircle, Users, UsersRound, Wifi, WifiOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { MarcaAtende } from './Marca';
 import { TELAS, useRotaAtende, type Tela } from './router';
@@ -56,6 +56,7 @@ function gruposDoMenu(papel: string): Grupo[] {
         { id: 'central', tela: TELAS.central, nome: 'Atendimentos', icone: <MessageSquare size={18} />, permissao: 'conversas.atender' },
         { id: 'conversas', tela: TELAS.central, filtro: 'todas', nome: 'Conversas', icone: <MessagesSquare size={18} />, permissao: 'conversas.atender' },
         { id: 'supervisao', tela: TELAS.supervisao, nome: 'Supervisão', icone: <Eye size={18} />, permissao: 'conversas.supervisionar' },
+        { id: 'campanhas', tela: TELAS.campanhas, nome: 'Campanhas', icone: <Megaphone size={18} />, permissao: 'conversas.atender' },
       ]),
     },
     {
@@ -71,6 +72,8 @@ function gruposDoMenu(papel: string): Grupo[] {
         { id: 'equipe', tela: TELAS.equipe, nome: 'Equipe', icone: <Users size={18} />, permissao: 'equipe.ver' },
         { id: 'times', tela: TELAS.times, nome: 'Times', icone: <UsersRound size={18} />, permissao: 'times.gerir' },
         { id: 'ia', tela: TELAS.empresa, resto: 'ia', nome: 'IA', icone: <Bot size={18} />, permissao: 'empresa.gerir' },
+        { id: 'inventario', tela: TELAS.inventario, nome: 'Inventário', icone: <Package size={18} />, permissao: 'conversas.atender' },
+        { id: 'modelos', tela: TELAS.modelos, nome: 'Modelos de mensagem', icone: <MessageSquare size={18} />, permissao: 'modelos.gerir' },
         { id: 'whatsapp', tela: TELAS.whatsapp, nome: 'WhatsApp', icone: <Smartphone size={18} />, permissao: 'whatsapp.gerir' },
         { id: 'empresa', tela: TELAS.empresa, nome: 'Configurações', icone: <Settings size={18} />, permissao: 'empresa.gerir' },
         { id: 'plano', tela: TELAS.plano, nome: 'Plano', icone: <CreditCard size={18} />, permissao: 'empresa.gerir' },

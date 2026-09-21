@@ -27,6 +27,9 @@ import { resumosSemanaisDoAtende, vigiarConexoesDoAtende } from './rotinas';
 import { enviarFollowup, descartarFollowup, encerrarComAvaliacao, fundirClientes, contatosParecidos } from './conversas';
 import { resumoDeAvaliacoes } from './avaliacao';
 import { sanearHistorico, responderNaHomeDoAtende, responderNoPainelDoAtende, registrarJatobaDoAtende, perguntasHoje, LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM } from './jatoba';
+import { listarClientesPorEtiqueta, listarLotes, statusDoLote, criarLote, processarLote, cancelarLote, processarLotesAbandonados } from './disparos';
+import { listarInventario, criarItem, atualizarItem, desativarItem, consultarInventario } from './inventario';
+import { listarModelos, criarModelo, atualizarModelo, desativarModelo } from './modelos';
 import { pode } from '../shared/papeis';
 import { claudeConfigurado } from '../../server/claude';
 import { destinatarioDemo, remetente } from '../../server/mail';
@@ -299,8 +302,10 @@ export function criarRouterAtende(): express.Router {
       const followups = await gerarFollowupsDeTodas(agora);
       // Os combos da SEVLA (Stok + Atende com desconto): quem ficou sozinho volta ao preço cheio.
       const combos = await acertarCombos().catch((e: any) => (console.warn('[atende cron] combos:', e.message), { empresas: 0, desfeitos: 0 }));
-      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}, combos ${combos.desfeitos}/${combos.empresas}.`);
-      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, resumos, sla, followups, combos });
+      // Rede de segurança: disparos em massa com a aba fechada no meio (o normal é a própria tela processar).
+      const disparos = await processarLotesAbandonados().catch((e: any) => (console.warn('[atende cron] disparos:', e.message), { lotes: 0, enviados: 0, erros: 0 }));
+      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}, combos ${combos.desfeitos}/${combos.empresas}, disparos abandonados ${disparos.lotes}.`);
+      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, resumos, sla, followups, combos, disparos });
     } catch (err: any) {
       console.error('[GET /api/atende/cron] erro:', err.message);
       res.status(500).json({ error: err.message });
@@ -858,6 +863,110 @@ export function criarRouterAtende(): express.Router {
       tratar(res, err, 'POST /api/atende/etiquetas', 'Não foi possível criar a etiqueta.');
     }
   });
+  r.get('/etiquetas/:id/clientes', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ clientes: await listarClientesPorEtiqueta(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/etiquetas/:id/clientes', 'Erro ao listar os clientes da etiqueta.');
+    }
+  });
+
+  // ---- Disparo em massa (por etiqueta ou seleção manual)
+  r.get('/disparos', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ lotes: await listarLotes(req) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/disparos', 'Erro ao listar os disparos.');
+    }
+  });
+  r.get('/disparos/:id', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ lote: await statusDoLote(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/disparos/:id', 'Erro ao consultar o disparo.');
+    }
+  });
+  r.post('/disparos', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.status(201).json({ lote: await criarLote(req, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/disparos', 'Não foi possível criar o disparo.');
+    }
+  });
+  r.post('/disparos/:id/processar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ lote: await processarLote(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/disparos/:id/processar', 'Erro ao processar o disparo.');
+    }
+  });
+  r.post('/disparos/:id/cancelar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ lote: await cancelarLote(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/disparos/:id/cancelar', 'Não foi possível cancelar o disparo.');
+    }
+  });
+
+  // ---- Inventário
+  r.get('/inventario', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ itens: await listarInventario(req, { incluirInativos: pode(req.sessao!.papel, 'inventario.gerir') }) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/inventario', 'Erro ao listar o inventário.');
+    }
+  });
+  r.post('/inventario', exigir('inventario.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.status(201).json({ itens: await criarItem(req, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/inventario', 'Não foi possível criar o item.');
+    }
+  });
+  r.put('/inventario/:id', exigir('inventario.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ itens: await atualizarItem(req, req.params.id, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'PUT /api/atende/inventario/:id', 'Não foi possível salvar o item.');
+    }
+  });
+  r.delete('/inventario/:id', exigir('inventario.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ itens: await desativarItem(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'DELETE /api/atende/inventario/:id', 'Não foi possível desativar o item.');
+    }
+  });
+
+  // ---- Modelos de mensagem
+  r.get('/modelos', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ modelos: await listarModelos(req, { incluirInativos: pode(req.sessao!.papel, 'modelos.gerir') }) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/modelos', 'Erro ao listar os modelos.');
+    }
+  });
+  r.post('/modelos', exigir('modelos.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.status(201).json({ modelos: await criarModelo(req, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/modelos', 'Não foi possível criar o modelo.');
+    }
+  });
+  r.put('/modelos/:id', exigir('modelos.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ modelos: await atualizarModelo(req, req.params.id, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'PUT /api/atende/modelos/:id', 'Não foi possível salvar o modelo.');
+    }
+  });
+  r.delete('/modelos/:id', exigir('modelos.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ modelos: await desativarModelo(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'DELETE /api/atende/modelos/:id', 'Não foi possível desativar o modelo.');
+    }
+  });
 
   /** A própria pessoa troca a própria senha (qualquer papel). */
   // ---- Plano e contratação (Fase 3 da SEVLA): ver a situação e pedir um plano. Sem cobrança ainda.
@@ -1001,6 +1110,7 @@ export function criarRouterAtende(): express.Router {
             const equipe = await carregarEquipe(req);
             return { ...r3, por_pessoa: r3.por_pessoa.map((x) => ({ ...x, nome: equipe.find((f) => f.id === x.usuario_id)?.nome ?? `#${x.usuario_id}` })), melhores: r3.melhores.map((m) => ({ ...m, atendente: m.atendente_id ? (equipe.find((f) => f.id === m.atendente_id)?.nome ?? null) : null })) };
           },
+          inventario: async (busca, categoria) => await consultarInventario(req, busca || undefined, categoria || undefined),
         },
         historico,
         texto,

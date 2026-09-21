@@ -22,6 +22,12 @@ export const TELAS = {
   dashboard: 'dashboard',
   /** As avaliações do atendimento (0 a 10), por período — supervisor e admin. */
   avaliacoes: 'avaliacoes',
+  /** Disparo em massa por etiqueta. */
+  campanhas: 'campanhas',
+  /** O catálogo de itens da empresa — que o Jatobá também consulta. */
+  inventario: 'inventario',
+  /** Textos prontos para responder de um clique. */
+  modelos: 'modelos',
   empresa: 'empresa',
   times: 'times',
   equipe: 'equipe',

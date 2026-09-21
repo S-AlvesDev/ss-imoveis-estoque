@@ -14,6 +14,9 @@ import { Central } from './pages/central/Central';
 import { Supervisao } from './pages/Supervisao';
 import { Dashboard } from './pages/Dashboard';
 import { Avaliacoes } from './pages/Avaliacoes';
+import { Campanhas } from './pages/Campanhas';
+import { Inventario } from './pages/Inventario';
+import { Modelos } from './pages/Modelos';
 import { Plano } from './pages/Plano';
 import { Bloqueada, SemRecurso } from './pages/SemPlano';
 import { planoAtendeLibera } from '../shared/planos';
@@ -138,6 +141,9 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
           {tela === TELAS.supervisao && pode(sessao.papel, 'conversas.supervisionar') && (libera('supervisao') ? <Supervisao /> : <SemRecurso recurso="supervisao" />)}
           {tela === TELAS.dashboard && pode(sessao.papel, 'dashboard.ver') && (libera('dashboard') ? <Dashboard /> : <SemRecurso recurso="dashboard" />)}
           {tela === TELAS.avaliacoes && pode(sessao.papel, 'conversas.supervisionar') && (libera('supervisao') ? <Avaliacoes /> : <SemRecurso recurso="supervisao" />)}
+          {tela === TELAS.campanhas && pode(sessao.papel, 'conversas.atender') && <Campanhas />}
+          {tela === TELAS.inventario && pode(sessao.papel, 'conversas.atender') && <Inventario />}
+          {tela === TELAS.modelos && pode(sessao.papel, 'modelos.gerir') && <Modelos />}
           {tela === TELAS.empresa && pode(sessao.papel, 'empresa.gerir') && <Empresa aba={resto === 'ia' ? 'ia' : 'empresa'} />}
           {tela === TELAS.times && pode(sessao.papel, 'times.gerir') && <Times />}
           {tela === TELAS.equipe && <Equipe />}

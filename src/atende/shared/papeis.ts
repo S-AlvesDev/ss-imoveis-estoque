@@ -40,11 +40,15 @@ export type Permissao =
   /** Ver conversas de outros atendentes (dos times que supervisiona, ou todas se admin). */
   | 'conversas.supervisionar'
   /** Ver o painel gerencial. */
-  | 'dashboard.ver';
+  | 'dashboard.ver'
+  /** Criar, editar e desativar itens do inventário (ver e consultar é 'conversas.atender'). */
+  | 'inventario.gerir'
+  /** Criar, editar e desativar modelos de mensagem (usar ao responder é 'conversas.atender'). */
+  | 'modelos.gerir';
 
 const PERMISSOES: Record<Papel, readonly Permissao[]> = {
-  admin: ['empresa.gerir', 'times.gerir', 'equipe.gerir', 'equipe.ver', 'whatsapp.gerir', 'conversas.atender', 'conversas.supervisionar', 'dashboard.ver'],
-  supervisor: ['equipe.ver', 'conversas.atender', 'conversas.supervisionar', 'dashboard.ver'],
+  admin: ['empresa.gerir', 'times.gerir', 'equipe.gerir', 'equipe.ver', 'whatsapp.gerir', 'conversas.atender', 'conversas.supervisionar', 'dashboard.ver', 'inventario.gerir', 'modelos.gerir'],
+  supervisor: ['equipe.ver', 'conversas.atender', 'conversas.supervisionar', 'dashboard.ver', 'inventario.gerir', 'modelos.gerir'],
   atendente: ['equipe.ver', 'conversas.atender'],
 };
 

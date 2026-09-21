@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { toast } from 'sonner';
-import { Mic, Paperclip, Send, Square, StickyNote, X } from 'lucide-react';
+import { Mic, MessageSquareText, Paperclip, Send, Square, StickyNote, X } from 'lucide-react';
 import { api, ErroDaApi } from '../../lib/api';
 import { useCentral } from '../../store/central';
 import type { Conversa, Mensagem } from '../../../shared/tipos';
-import { tamanhoBonito } from './util';
+import { nomeDoCliente, tamanhoBonito } from './util';
+import { ModelosDoComposer } from './ModelosDoComposer';
 
 /**
  * A caixa de resposta: texto (Enter envia, Shift+Enter quebra linha), anexo
@@ -20,6 +21,7 @@ const ehCelular = () => typeof window !== 'undefined' && window.matchMedia('(max
 export function Composer({ conversa }: { conversa: Conversa }) {
   const [texto, setTexto] = useState('');
   const [modoNota, setModoNota] = useState(false);
+  const [mostrarModelos, setMostrarModelos] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [anexo, setAnexo] = useState<File | null>(null);
   const [gravando, setGravando] = useState(false);
@@ -100,6 +102,13 @@ export function Composer({ conversa }: { conversa: Conversa }) {
     await depoisDeEnviar(r.mensagem);
   }
 
+  function inserirModelo(textoDoModelo: string) {
+    const primeiroNome = nomeDoCliente(conversa.cliente).split(/\s+/)[0];
+    setTexto(textoDoModelo.replace(/\{nome\}/gi, primeiroNome));
+    setMostrarModelos(false);
+    campo.current?.focus();
+  }
+
   function aoTeclar(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey && !ehCelular()) {
       e.preventDefault();
@@ -177,6 +186,12 @@ export function Composer({ conversa }: { conversa: Conversa }) {
               <button type="button" onClick={() => arquivo.current?.click()} disabled={gravando} data-dica="Anexar arquivo" aria-label="Anexar arquivo" className={botaoDeIcone}>
                 <Paperclip size={18} />
               </button>
+              <div className="relative">
+                <button type="button" onClick={() => setMostrarModelos((v) => !v)} disabled={gravando} data-dica="Modelos de mensagem" aria-label="Modelos de mensagem" className={botaoDeIcone}>
+                  <MessageSquareText size={18} />
+                </button>
+                {mostrarModelos && <ModelosDoComposer onEscolher={inserirModelo} onFechar={() => setMostrarModelos(false)} />}
+              </div>
             </>
           )}
           {gravando ? (

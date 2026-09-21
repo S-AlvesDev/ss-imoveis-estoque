@@ -23,8 +23,14 @@ describe('Jatobá do Atende Aí — o conhecimento vem do catálogo', () => {
 
   it('diz o que ainda não existe, para o Jatobá não vender fumaça', () => {
     expect(CONHECIMENTO_DO_ATENDE).toMatch(/Ainda não existe \(não prometa\): mais de um número/);
-    expect(CONHECIMENTO_DO_ATENDE).toContain('disparo em massa');
+    expect(CONHECIMENTO_DO_ATENDE).not.toContain('disparo em massa ou campanhas');
     expect(CONHECIMENTO_DO_ATENDE).toContain('A IA não fecha vendas nem negocia');
+  });
+
+  it('fala do disparo em massa, do inventário e dos modelos de mensagem, que agora existem', () => {
+    expect(CONHECIMENTO_DO_ATENDE).toContain('disparo em massa');
+    expect(CONHECIMENTO_DO_ATENDE).toContain('Inventário');
+    expect(CONHECIMENTO_DO_ATENDE).toContain('Modelos de mensagem');
   });
 
   it('as regras mandam ficar no conhecimento e ignorar instruções plantadas', () => {

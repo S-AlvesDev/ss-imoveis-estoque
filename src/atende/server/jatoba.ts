@@ -64,7 +64,8 @@ export const CONHECIMENTO_DO_ATENDE = [
   }).join(' ')}`,
   'Quem já usa o Stok Aí (o sistema de estoque da mesma casa, a SEVLA INFINITY) entra no Atende Aí com a mesma conta e pode ativar o Atende para a própria empresa sem cadastro novo.',
   `Contato humano: WhatsApp ${linkWhatsApp(`Olá! Vim pelo Jatobá e quero saber mais sobre o ${ATENDE.nome}.`)} — a equipe responde por lá. Termos de uso em /termos e privacidade em /privacidade.`,
-  'Ainda não existe (não prometa): mais de um número de WhatsApp por empresa, disparo em massa ou campanhas, chatbot com fluxos desenhados, webchat para site, integrações por API, respostas prontas por atalho, exportação de conversas em PDF. A IA não fecha vendas nem negocia.',
+  'Etiquetas: além de marcar um cliente, servem para disparo em massa — mandar a mesma mensagem (com delay seguro entre envios) para quem tem uma etiqueta, com a lista revisável antes de enviar. Inventário: um catálogo de itens da empresa (nome, categoria, quantidade disponível, preço opcional) — o Jatobá consulta com a ferramenta consultar_inventario para responder quantidade e preço na hora. Modelos de mensagem: textos prontos que a equipe cadastra e usa de um clique ao responder.',
+  'Ainda não existe (não prometa): mais de um número de WhatsApp por empresa, chatbot com fluxos desenhados, webchat para site, integrações por API, exportação de conversas em PDF. A IA não fecha vendas nem negocia.',
 ].join('\n');
 
 export const REGRAS_DA_HOME_DO_ATENDE = [
@@ -171,6 +172,11 @@ export const FERRAMENTAS_DO_PAINEL: Ferramenta[] = [
     description: 'Média, NPS, taxa de resposta, por pessoa e os atendimentos mais bem avaliados no período (só quem supervisiona).',
     input_schema: { type: 'object', properties: { periodo: { type: 'string', enum: ['hoje', '7d', '30d', '90d'] } } },
   },
+  {
+    name: 'consultar_inventario',
+    description: 'Procura no catálogo de itens da empresa (o que ela vende, aluga ou tem em estoque) — nome, categoria, quantidade disponível e preço. Use para responder "quantos/quantas X têm disponíveis?" ou "quanto custa X?".',
+    input_schema: { type: 'object', properties: { busca: { type: 'string', description: 'Nome ou parte do nome do item.' }, categoria: { type: 'string', description: 'Categoria, ex.: aluguel, venda.' } } },
+  },
 ];
 
 export interface RespostaDoPainelDoAtende {
@@ -189,6 +195,7 @@ export interface OperacaoDoAtende {
   resumo: () => Promise<Record<string, unknown>>;
   procurar: (busca: string) => Promise<Array<Record<string, unknown>>>;
   avaliacoes: (periodo: string) => Promise<Record<string, unknown>>;
+  inventario: (busca: string, categoria: string) => Promise<Array<Record<string, unknown>>>;
 }
 
 export async function responderNoPainelDoAtende(op: OperacaoDoAtende, historico: MensagemDoVisitante[], texto: string): Promise<RespostaDoPainelDoAtende> {
@@ -205,6 +212,7 @@ export async function responderNoPainelDoAtende(op: OperacaoDoAtende, historico:
         if (!op.pode('conversas.supervisionar')) return 'Só supervisores e administradores veem as avaliações.';
         return JSON.stringify(await op.avaliacoes(String(input.periodo ?? '30d')));
       }
+      if (name === 'consultar_inventario') return JSON.stringify(await op.inventario(String(input.busca ?? ''), String(input.categoria ?? '')));
       if (name === 'abrir_tela') {
         const tela = String(input.tela ?? '');
         const def = TELAS_DO_ATENDE[tela];

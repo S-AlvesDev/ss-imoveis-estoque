@@ -28,6 +28,7 @@ const op = (papel: 'admin' | 'atendente') => ({
   resumo: async () => ({ na_fila: 3, esperando_resposta: [{ cliente: 'Ana', espera_min: 12 }] }),
   procurar: async (busca: string) => [{ conversa_id: '11111111-1111-4111-8111-111111111111', cliente: `Cliente ${busca}` }],
   avaliacoes: async () => ({ media: 9.5 }),
+  inventario: async (busca: string) => [{ nome: `Casa ${busca}`, categoria: 'aluguel', quantidade: 3, preco: 1200 }],
 });
 
 describe('Jatobá no painel do Atende Aí', () => {
@@ -62,5 +63,12 @@ describe('Jatobá no painel do Atende Aí', () => {
 
   it('o guia fala das telas pelo nome que a IA pode abrir', () => {
     for (const tela of Object.keys(TELAS_DO_ATENDE)) expect(GUIA_DO_ATENDE).toContain(`"${tela}"`);
+  });
+
+  it('consulta o inventário pela ferramenta, disponível para qualquer papel', async () => {
+    roteiro.chamadas = [{ name: 'consultar_inventario', input: { busca: 'aluguel' } }];
+    const r = await responderNoPainelDoAtende(op('atendente'), [], 'quantas casas de aluguel tem disponível?');
+    expect(r.texto).toContain('"quantidade":3');
+    expect(r.ferramentas).toEqual(['consultar_inventario']);
   });
 });

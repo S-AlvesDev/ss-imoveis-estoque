@@ -347,7 +347,7 @@ export async function assumir(req: RequisicaoAtende, conversaId: string): Promis
 
 /** ATD-21: nome que veio do WhatsApp TUDO EM MAIÚSCULAS fica estranho na despedida ("TESTE!"); nomes com
  * maiúscula e minúscula misturadas (a maioria) não mudam — só o que já era só-caixa-alta é normalizado. */
-function primeiroNomeApresentavel(nome: string | null | undefined): string | null {
+export function primeiroNomeApresentavel(nome: string | null | undefined): string | null {
   const primeiro = (nome ?? '').trim().split(/\s+/)[0];
   if (!primeiro) return null;
   const temMinuscula = /\p{Ll}/u.test(primeiro);
@@ -460,10 +460,19 @@ export async function definirEtiquetas(req: RequisicaoAtende, conversaId: string
   const ids = Array.isArray(etiquetas) ? [...new Set(etiquetas.map(String))] : [];
   const db = req.dbAtende!;
   await db.from('atende_conversa_etiquetas').delete().eq('conversa_id', c.id);
+  let ok: string[] = [];
   if (ids.length) {
     const { data: validas } = await db.from('atende_etiquetas').select('id').in('id', ids);
-    const ok = ((validas || []) as any[]).map((e) => e.id);
+    ok = ((validas || []) as any[]).map((e) => e.id);
     if (ok.length) await db.from('atende_conversa_etiquetas').insert(ok.map((etiqueta_id: string) => ({ conversa_id: c.id, etiqueta_id })));
+  }
+  // Espelha no cliente — é dali que um disparo em massa por etiqueta lê,
+  // porque uma etiqueta é de quem a pessoa É, não da conversa de hoje.
+  const { error: erroClienteEt } = await db.from('atende_cliente_etiquetas').delete().eq('cliente_id', c.cliente_id);
+  if (erroClienteEt && !/atende_cliente_etiquetas/.test(erroClienteEt.message)) throw erroClienteEt; // sem a migração 045 ainda
+  if (!erroClienteEt && ok.length) {
+    const { error: erroInsereEt } = await db.from('atende_cliente_etiquetas').insert(ok.map((etiqueta_id: string) => ({ cliente_id: c.cliente_id, etiqueta_id })));
+    if (erroInsereEt && !/atende_cliente_etiquetas/.test(erroInsereEt.message)) throw erroInsereEt;
   }
   await db.from('atende_conversas').update({ atualizado_em: new Date().toISOString() }).eq('id', c.id);
   return (await conversaPorId(req, c.id))!;
