@@ -11,7 +11,7 @@ import { Alerta, Erro, Esqueleto, Vazio } from '../ui/Estados';
 import { Tabela, type Coluna } from '../ui/Tabela';
 import { api, ErroDaApi } from '../lib/api';
 import { useDadosAtende } from '../store/dados';
-import { BASE_DE_TODO_PLANO, DEFINICOES_ATENDE, NOME_DO_CICLO_ATENDE, NOME_DO_PLANO_ATENDE, PLANOS_ATENDE, definicaoAtende, ehCicloAtende, ehPlanoAtende, precoFormatado, type CicloAtende, type PlanoAtende } from '../../shared/planos';
+import { BASE_DE_TODO_PLANO, DEFINICOES_ATENDE, NOME_DO_CICLO_ATENDE, NOME_DO_PLANO_ATENDE, PLANOS_ATENDE, definicaoAtende, ehCicloAtende, ehPlanoAtende, type CicloAtende, type PlanoAtende } from '../../shared/planos';
 import { ATENDE } from '../../shared/produto';
 import { linkWhatsApp } from '@/shared/produto';
 import type { FaturamentoAtende, PagamentoAtende, SituacaoDaAssinatura } from '../../shared/tipos';
@@ -188,7 +188,7 @@ export function Plano() {
             </div>
           </div>
           {pendente && !online && (
-            <Alerta tom="ia" icone={<Mail size={16} />} className="mt-4" titulo={`Pedido registrado: plano ${NOME_DO_PLANO_ATENDE[pendente.plano]}, ${NOME_DO_CICLO_ATENDE[pendente.ciclo].toLowerCase()} · ${brl(pendente.valor)}/mês`}>
+            <Alerta tom="ia" icone={<Mail size={16} />} className="mt-4" titulo={`Pedido registrado: plano ${NOME_DO_PLANO_ATENDE[pendente.plano]}, ${NOME_DO_CICLO_ATENDE[pendente.ciclo].toLowerCase()}`}>
               Feito em {dataCurta(pendente.created_at)}. A equipe da SEVLA INFINITY combina o pagamento por e-mail ({pendente.payer_email}) e ativa o plano. Quer mudar? Escolha outro abaixo — o pedido anterior é substituído.
             </Alerta>
           )}
@@ -212,7 +212,7 @@ export function Plano() {
                 <p className="flex flex-wrap items-center gap-2 font-semibold text-[var(--text)]">
                   Assinatura {emVigor.status === 'pausada' ? 'pausada' : 'ativa'} no Mercado Pago
                   <Etiqueta tom={emVigor.status === 'pausada' ? 'ambar' : 'verde'} ponto>
-                    {brl(emVigor.valor)}/mês · {NOME_DO_CICLO_ATENDE[emVigor.ciclo].toLowerCase()}
+                    {NOME_DO_CICLO_ATENDE[emVigor.ciclo].toLowerCase()}
                   </Etiqueta>
                   {emVigor.combo && <Etiqueta tom="roxo">combo SEVLA</Etiqueta>}
                 </p>
@@ -231,7 +231,7 @@ export function Plano() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-base font-semibold tracking-tight text-[var(--text)]">Os planos</h2>
-            <p className="text-xs text-[var(--text-muted)]">No anual, dois meses de desconto. Preços por mês.</p>
+            <p className="text-xs text-[var(--text-muted)]">O que cada plano inclui.</p>
           </div>
           <Segmentado valor={ciclo} onChange={setCiclo} opcoes={(['mensal', 'anual'] as const).map((c) => ({ valor: c, rotulo: NOME_DO_CICLO_ATENDE[c] }))} aria-label="Ciclo" />
         </div>
@@ -251,10 +251,6 @@ export function Plano() {
                   {atual && <Etiqueta tom="verde" ponto>Seu plano</Etiqueta>}
                 </div>
                 <p className="mt-0.5 text-xs text-[var(--text-muted)]">{p.publico}</p>
-                <p className="mt-4 text-3xl font-semibold tracking-tight text-[var(--text)]">
-                  {precoFormatado(id, ciclo)}
-                  <span className="text-sm font-medium text-[var(--text-muted)]">/mês</span>
-                </p>
                 <ul className="mt-4 flex-1 space-y-2">
                   {p.destaques.map((d) => (
                     <li key={d} className="flex gap-2 text-sm leading-5 text-[var(--text)]">
