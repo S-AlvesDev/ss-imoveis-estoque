@@ -5,13 +5,13 @@ import bcrypt from 'bcryptjs';
 import { supabaseServer } from '../../lib/supabaseServer';
 import { getTransporter } from '../../server/mail';
 import { gerarToken, hashDoToken, tokenPlausivel, tokenValido, VALIDADE_DO_TOKEN_MS } from '../../server/senha';
-import { assinarSessao, autenticar, exigir, esquecerUsuario, type RequisicaoAtende } from './auth';
+import { assinarSessao, autenticar, exigir, exigirQualquer, esquecerUsuario, type RequisicaoAtende } from './auth';
 import { emailDeBoasVindasAtende, emailDeConviteAtende, emailDeRecuperacaoAtende, linkDeRedefinicaoAtende, remetenteAtende } from './email';
 import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, validarEdicaoDeFuncionario, validarEmail, validarSenha } from '../shared/validacao';
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
 import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa } from './whatsapp';
-import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
+import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, buscarClientes, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular } from './triagem';
 import { montarDashboard, PERIODOS } from './dashboard';
 import { situacao as situacaoDoPush, inscrever as inscreverPush, cancelar as cancelarPush, ErroDePush } from './push';
@@ -28,8 +28,11 @@ import { enviarFollowup, descartarFollowup, encerrarComAvaliacao, fundirClientes
 import { resumoDeAvaliacoes } from './avaliacao';
 import { sanearHistorico, responderNaHomeDoAtende, responderNoPainelDoAtende, registrarJatobaDoAtende, perguntasHoje, LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM } from './jatoba';
 import { listarClientesPorEtiqueta, listarLotes, statusDoLote, criarLote, processarLote, cancelarLote, processarLotesAbandonados } from './disparos';
-import { listarInventario, criarItem, atualizarItem, desativarItem, consultarInventario } from './inventario';
+import { listarInventario, criarItem, atualizarItem, desativarItem, consultarInventario, listarPorProprietario } from './inventario';
 import { listarModelos, criarModelo, atualizarModelo, desativarModelo } from './modelos';
+import { listarPipelineMcmv, atualizarMcmv } from './mcmv';
+import { listarDocumentos, prepararUploadDeDocumento, registrarDocumento, urlDoDocumento, excluirDocumento } from './documentos';
+import { criarLeadManual, iniciarMcmv } from './conversas';
 import { pode } from '../shared/papeis';
 import { claudeConfigurado } from '../../server/claude';
 import { destinatarioDemo, remetente } from '../../server/mail';
@@ -841,6 +844,21 @@ export function criarRouterAtende(): express.Router {
     }
   });
 
+  r.get('/clientes', exigirQualquer('conversas.atender', 'inventario.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ clientes: await buscarClientes(req, typeof req.query.busca === 'string' ? req.query.busca : '') });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/clientes', 'Erro ao buscar clientes.');
+    }
+  });
+  r.get('/clientes/:id/imoveis', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ itens: await listarPorProprietario(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/clientes/:id/imoveis', 'Erro ao listar os imóveis.');
+    }
+  });
+
   r.patch('/clientes/:id', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
     try {
       res.json({ cliente: await atualizarCliente(req, req.params.id, req.body ?? {}) });
@@ -965,6 +983,78 @@ export function criarRouterAtende(): express.Router {
       res.json({ modelos: await desativarModelo(req, req.params.id) });
     } catch (err: any) {
       tratar(res, err, 'DELETE /api/atende/modelos/:id', 'Não foi possível desativar o modelo.');
+    }
+  });
+
+  // ---- MCMV (o analista não abre conversa: só o pipeline e os documentos)
+  r.get('/mcmv', exigir('mcmv.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ itens: await listarPipelineMcmv(req) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/mcmv', 'Erro ao listar o pipeline de MCMV.');
+    }
+  });
+  r.put('/mcmv/:leadId', exigir('mcmv.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ item: await atualizarMcmv(req, req.params.leadId, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'PUT /api/atende/mcmv/:leadId', 'Não foi possível mudar a etapa.');
+    }
+  });
+  r.post('/conversas/:id/mcmv/iniciar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.status(201).json({ lead: await iniciarMcmv(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/mcmv/iniciar', 'Não foi possível encaminhar para o MCMV.');
+    }
+  });
+
+  // ---- Lead manual (Instagram, indicação… quem não veio pelo WhatsApp)
+  r.post('/leads', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {
+    try {
+      const r2 = await criarLeadManual(req, req.body ?? {});
+      res.status(201).json(r2);
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/leads', 'Não foi possível criar o lead.');
+    }
+  });
+
+  // ---- Documentos do cliente (RG, CPF, comprovante… para a análise de MCMV)
+  // Quem atende (dono do cliente) e quem analisa MCMV mexem nos documentos; nenhum dos dois exige o outro.
+  r.get('/clientes/:id/documentos', exigirQualquer('conversas.atender', 'documentos.clientes'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ documentos: await listarDocumentos(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/clientes/:id/documentos', 'Erro ao listar os documentos.');
+    }
+  });
+  r.post('/clientes/:id/documentos/url', exigirQualquer('conversas.atender', 'documentos.clientes'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await prepararUploadDeDocumento(req, req.params.id, req.body ?? {}));
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/clientes/:id/documentos/url', 'Não foi possível preparar o envio.');
+    }
+  });
+  r.post('/clientes/:id/documentos', exigirQualquer('conversas.atender', 'documentos.clientes'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.status(201).json({ documentos: await registrarDocumento(req, req.params.id, req.body ?? {}) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/clientes/:id/documentos', 'Não foi possível salvar o documento.');
+    }
+  });
+  r.get('/documentos/:id/url', exigirQualquer('conversas.atender', 'documentos.clientes'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ url: await urlDoDocumento(req, req.params.id) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/documentos/:id/url', 'Não foi possível abrir o documento.');
+    }
+  });
+  r.delete('/documentos/:id', exigirQualquer('conversas.atender', 'documentos.clientes'), async (req: RequisicaoAtende, res) => {
+    try {
+      await excluirDocumento(req, req.params.id);
+      res.json({ ok: true });
+    } catch (err: any) {
+      tratar(res, err, 'DELETE /api/atende/documentos/:id', 'Não foi possível excluir o documento.');
     }
   });
 

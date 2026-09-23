@@ -9,19 +9,21 @@
  * (time, atendente) e é conferido conversa a conversa no servidor.
  */
 
-export type Papel = 'admin' | 'supervisor' | 'atendente';
-export const PAPEIS: readonly Papel[] = ['admin', 'supervisor', 'atendente'];
+export type Papel = 'admin' | 'supervisor' | 'atendente' | 'analista';
+export const PAPEIS: readonly Papel[] = ['admin', 'supervisor', 'atendente', 'analista'];
 
 export const NOME_DO_PAPEL: Record<Papel, string> = {
   admin: 'Administrador',
   supervisor: 'Supervisor',
   atendente: 'Atendente',
+  analista: 'Analista',
 };
 
 export const DESCRICAO_DO_PAPEL: Record<Papel, string> = {
   admin: 'Cuida da empresa: cadastro, times, equipe, WhatsApp. Vê e faz tudo.',
   supervisor: 'Acompanha os atendimentos dos seus times: orienta, assume, transfere, corrige a triagem, vê o painel.',
   atendente: 'Atende as próprias conversas e a fila dos seus times.',
+  analista: 'Cuida da análise de crédito (MCMV): documentos e etapa de quem está no pipeline. Não abre conversas de WhatsApp.',
 };
 
 export type Permissao =
@@ -44,12 +46,17 @@ export type Permissao =
   /** Criar, editar e desativar itens do inventário (ver e consultar é 'conversas.atender'). */
   | 'inventario.gerir'
   /** Criar, editar e desativar modelos de mensagem (usar ao responder é 'conversas.atender'). */
-  | 'modelos.gerir';
+  | 'modelos.gerir'
+  /** Ver e mexer no pipeline de análise de MCMV (etapa, nota) — não abre conversa de WhatsApp. */
+  | 'mcmv.gerir'
+  /** Ver e anexar documentos de um cliente (RG, CPF, comprovante…). */
+  | 'documentos.clientes';
 
 const PERMISSOES: Record<Papel, readonly Permissao[]> = {
-  admin: ['empresa.gerir', 'times.gerir', 'equipe.gerir', 'equipe.ver', 'whatsapp.gerir', 'conversas.atender', 'conversas.supervisionar', 'dashboard.ver', 'inventario.gerir', 'modelos.gerir'],
-  supervisor: ['equipe.ver', 'conversas.atender', 'conversas.supervisionar', 'dashboard.ver', 'inventario.gerir', 'modelos.gerir'],
+  admin: ['empresa.gerir', 'times.gerir', 'equipe.gerir', 'equipe.ver', 'whatsapp.gerir', 'conversas.atender', 'conversas.supervisionar', 'dashboard.ver', 'inventario.gerir', 'modelos.gerir', 'mcmv.gerir', 'documentos.clientes'],
+  supervisor: ['equipe.ver', 'conversas.atender', 'conversas.supervisionar', 'dashboard.ver', 'inventario.gerir', 'modelos.gerir', 'mcmv.gerir', 'documentos.clientes'],
   atendente: ['equipe.ver', 'conversas.atender'],
+  analista: ['mcmv.gerir', 'documentos.clientes'],
 };
 
 export function ehPapel(s: unknown): s is Papel {
@@ -61,4 +68,4 @@ export function pode(papel: string, permissao: Permissao): boolean {
 }
 
 /** Papéis que alguém pode atribuir a outra pessoa. Só o admin gere equipe, e ele pode criar outro admin. */
-export const PAPEIS_ATRIBUIVEIS: readonly Papel[] = ['admin', 'supervisor', 'atendente'];
+export const PAPEIS_ATRIBUIVEIS: readonly Papel[] = ['admin', 'supervisor', 'atendente', 'analista'];

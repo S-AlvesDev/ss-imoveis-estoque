@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { BarChart3, Bell, BellRing, Bot, ChevronDown, ChevronRight, CreditCard, Eye, LogOut, Megaphone, Menu, MessageSquare, MessagesSquare, MoreHorizontal, Package, Settings, Smartphone, Star, UserCircle, Users, UsersRound, Wifi, WifiOff, X } from 'lucide-react';
+import { BarChart3, Bell, BellRing, Bot, ChevronDown, ChevronRight, CreditCard, Eye, FileCheck2, LogOut, Megaphone, Menu, MessageSquare, MessagesSquare, MoreHorizontal, Package, Settings, Smartphone, Star, UserCircle, Users, UsersRound, Wifi, WifiOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { MarcaAtende } from './Marca';
 import { TELAS, useRotaAtende, type Tela } from './router';
@@ -64,6 +64,7 @@ function gruposDoMenu(papel: string): Grupo[] {
       itens: so([
         { id: 'dashboard', tela: TELAS.dashboard, nome: 'Dashboard', icone: <BarChart3 size={18} />, permissao: 'dashboard.ver' },
         { id: 'avaliacoes', tela: TELAS.avaliacoes, nome: 'Avaliações', icone: <Star size={18} />, permissao: 'conversas.supervisionar' },
+        { id: 'mcmv', tela: TELAS.mcmv, nome: 'Gestão de MCMV', icone: <FileCheck2 size={18} />, permissao: 'mcmv.gerir' },
       ]),
     },
     {

@@ -53,7 +53,7 @@ export function Equipe() {
     }
   }
 
-  const tomDoPapel = (p: Papel) => (p === 'admin' ? 'roxo' : p === 'supervisor' ? 'azul' : 'cinza');
+  const tomDoPapel = (p: Papel) => (p === 'admin' ? 'roxo' : p === 'supervisor' ? 'azul' : p === 'analista' ? 'ambar' : 'cinza');
   const colunas: Coluna<Funcionario>[] = [
     {
       chave: 'pessoa',
@@ -210,7 +210,7 @@ function ModalDaPessoa({ pessoa, times, onClose }: { pessoa: Funcionario | null;
               })}
             </div>
           )}
-          <p className="mt-1.5 text-xs text-[var(--text-muted)]">{papel === 'supervisor' ? 'Um supervisor acompanha os times em que está.' : papel === 'admin' ? 'Administrador vê todos os times; marcar aqui só diz onde ele também atende.' : 'Atendente recebe conversas dos times em que está.'}</p>
+          <p className="mt-1.5 text-xs text-[var(--text-muted)]">{papel === 'supervisor' ? 'Um supervisor acompanha os times em que está.' : papel === 'admin' ? 'Administrador vê todos os times; marcar aqui só diz onde ele também atende.' : papel === 'analista' ? 'Analista não atende fila — o time aqui é só informativo.' : 'Atendente recebe conversas dos times em que está.'}</p>
         </div>
         {!novo && !ehEu && (
           <Marcar marcado={ativo} onChange={setAtivo}>

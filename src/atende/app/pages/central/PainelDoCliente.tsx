@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Check, GitMerge, MessageSquare, Phone, Plus, Tag } from 'lucide-react';
+import { Check, FileText, GitMerge, MessageSquare, Phone, Plus, Tag } from 'lucide-react';
+import { DocumentosDoCliente } from '../../ui/DocumentosDoCliente';
 import { Entrada, AreaDeTexto } from '../../ui/Campo';
 import { Botao } from '../../ui/Botao';
 import { Avatar } from '../../ui/Avatar';
@@ -36,12 +37,20 @@ export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
   const [obs, setObs] = useState(c.observacoes ?? '');
   const [salvando, setSalvando] = useState(false);
   const [novaEtiqueta, setNovaEtiqueta] = useState('');
+  const [imoveis, setImoveis] = useState<Array<{ id: string; nome: string; categoria: string | null }>>([]);
 
   useEffect(() => {
     setNome(c.nome ?? '');
     setEmail(c.email ?? '');
     setObs(c.observacoes ?? '');
   }, [c.id, c.nome, c.email, c.observacoes]);
+
+  useEffect(() => {
+    api
+      .get<{ itens: Array<{ id: string; nome: string; categoria: string | null }> }>(`/clientes/${c.id}/imoveis`)
+      .then((r) => setImoveis(r.itens))
+      .catch(() => setImoveis([]));
+  }, [c.id]);
   useEffect(() => {
     if (etiquetas.length === 0) void carregarEtiquetas();
   }, [etiquetas.length, carregarEtiquetas]);
@@ -145,6 +154,28 @@ export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
           <Botao tamanho="sm" variante="secundaria" quadrado icone={<Plus size={14} />} onClick={criarEtiqueta} disabled={!novaEtiqueta.trim()} aria-label="Criar etiqueta" />
         </div>
       </section>
+
+      {/* Documentos — RG, CPF, comprovantes… quem analisa MCMV também vê, sem abrir esta conversa. */}
+      <section>
+        <Rotulo className="mb-2 flex items-center gap-1">
+          <FileText size={11} /> Documentos
+        </Rotulo>
+        <DocumentosDoCliente clienteId={c.id} />
+      </section>
+
+      {imoveis.length > 0 && (
+        <section>
+          <Rotulo className="mb-2">Imóveis que possui</Rotulo>
+          <ul className="space-y-1">
+            {imoveis.map((i) => (
+              <li key={i.id} className="rounded-lg border border-[var(--border)] px-2.5 py-1.5 text-xs text-[var(--text)]">
+                {i.nome}
+                {i.categoria && <span className="text-[var(--text-muted)]"> · {i.categoria}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* A ficha */}
       <section className="space-y-3">

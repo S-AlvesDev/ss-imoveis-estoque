@@ -28,6 +28,8 @@ export const TELAS = {
   inventario: 'inventario',
   /** Textos prontos para responder de um clique. */
   modelos: 'modelos',
+  /** O pipeline de análise de MCMV — quem analisa não abre a Central. */
+  mcmv: 'mcmv',
   empresa: 'empresa',
   times: 'times',
   equipe: 'equipe',

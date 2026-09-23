@@ -24,6 +24,7 @@ export const TABELAS_DO_ATENDE: ReadonlySet<string> = new Set([
   'atende_disparos_lote',
   'atende_inventario_itens',
   'atende_modelos_mensagem',
+  'atende_documentos_cliente',
   'atende_eventos',
   'atende_push_inscricoes',
   'atende_assinaturas',

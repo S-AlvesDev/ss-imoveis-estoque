@@ -113,3 +113,11 @@ export function exigir(permissao: Permissao) {
     next();
   };
 }
+
+/** Basta uma das permissões — ex.: documentos do cliente, que tanto quem atende quanto quem analisa MCMV pode mexer. */
+export function exigirQualquer(...permissoes: Permissao[]) {
+  return (req: RequisicaoAtende, res: express.Response, next: express.NextFunction) => {
+    if (!req.sessao || !permissoes.some((p) => pode(req.sessao!.papel, p))) return res.status(403).json({ error: 'Você não tem permissão para isso.' });
+    next();
+  };
+}

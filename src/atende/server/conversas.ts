@@ -173,7 +173,7 @@ async function exigirConversa(req: RequisicaoAtende, id: string): Promise<Conver
   return c;
 }
 
-async function registrarEvento(db: ScopedDb, conversaId: string, usuarioId: number | null, tipo: string, dados?: Record<string, unknown>) {
+export async function registrarEvento(db: ScopedDb, conversaId: string, usuarioId: number | null, tipo: string, dados?: Record<string, unknown>) {
   await db.from('atende_eventos').insert({ conversa_id: conversaId, usuario_id: usuarioId, tipo, dados: dados ?? null });
 }
 
@@ -429,6 +429,15 @@ export async function atualizarCliente(req: RequisicaoAtende, clienteId: string,
   return data as Cliente;
 }
 
+/** Busca rápida de clientes por nome/telefone — para escolher um proprietário no Inventário, por exemplo. */
+export async function buscarClientes(req: RequisicaoAtende, busca: string): Promise<Array<{ id: string; nome: string; telefone: string }>> {
+  const alvo = busca.trim();
+  if (!alvo) return [];
+  const { data, error } = await req.dbAtende!.from('atende_clientes').select('id, nome, nome_whatsapp, telefone').or(`nome.ilike.%${alvo}%,nome_whatsapp.ilike.%${alvo}%,telefone.ilike.%${alvo}%`).order('ultimo_contato_em', { ascending: false }).limit(10);
+  if (error) throw error;
+  return ((data || []) as any[]).map((c) => ({ id: c.id, nome: c.nome || c.nome_whatsapp || `+${c.telefone}`, telefone: c.telefone }));
+}
+
 export async function conversasDoCliente(req: RequisicaoAtende, clienteId: string): Promise<Conversa[]> {
   const { data, error } = await req.dbAtende!.from('atende_conversas').select(COM_CLIENTE).eq('cliente_id', clienteId).order('aberta_em', { ascending: false }).limit(20);
   if (error) throw error;
@@ -564,14 +573,22 @@ export function cursorDoDelta(carimbos: Array<string | null | undefined>, desde:
 // ---------------------------------------------------------------------------
 
 const TRIAGEM_COLUNAS = 'id, conversa_id, rodada, assunto, intencao, time_sugerido_id, atendente_sugerido_id, prioridade, confianca, resumo, pediu_esclarecimento, resposta_enviada, desfecho, modelo, corrigido_por, time_corrigido_id, corrigido_em, motivo_correcao, criado_em';
-const LEAD_COLUNAS = 'id, conversa_id, cliente_id, estado, sugestao_ia, valor, atualizado_por, criado_em, atualizado_em, followup_sugestao, followup_sugerido_em, followup_enviado_em, followup_descartado_em';
+export const LEAD_COLUNAS = 'id, conversa_id, cliente_id, estado, sugestao_ia, valor, atualizado_por, criado_em, atualizado_em, followup_sugestao, followup_sugerido_em, followup_enviado_em, followup_descartado_em, mcmv_status, mcmv_iniciado_em, mcmv_atualizado_em, origem';
 
 function montarTriagem(linha: any): Triagem {
   return { ...linha, atendente_sugerido_id: linha.atendente_sugerido_id === null ? null : Number(linha.atendente_sugerido_id), corrigido_por: linha.corrigido_por === null ? null : Number(linha.corrigido_por), confianca: linha.confianca === null ? null : Number(linha.confianca) };
 }
 
-function montarLead(linha: any): Lead {
-  return { ...linha, atualizado_por: linha.atualizado_por === null ? null : Number(linha.atualizado_por), valor: linha.valor === null ? null : Number(linha.valor) };
+export function montarLead(linha: any): Lead {
+  return {
+    ...linha,
+    atualizado_por: linha.atualizado_por === null ? null : Number(linha.atualizado_por),
+    valor: linha.valor === null ? null : Number(linha.valor),
+    origem: linha.origem ?? 'whatsapp',
+    mcmv_status: linha.mcmv_status ?? null,
+    mcmv_iniciado_em: linha.mcmv_iniciado_em ?? null,
+    mcmv_atualizado_em: linha.mcmv_atualizado_em ?? null,
+  };
 }
 
 /** As rodadas da IA nesta conversa (a mais recente primeiro) e o lead. */
@@ -659,6 +676,84 @@ export async function atualizarLead(req: RequisicaoAtende, conversaId: string, d
   await registrarEvento(db, c.id, s.id, 'lead_alterado', { de: atual?.estado ?? null, para: linha.estado, valor: linha.valor });
   await db.from('atende_conversas').update({ atualizado_em: new Date().toISOString() }).eq('id', c.id);
   return montarLead(linha);
+}
+
+/**
+ * Quem atende decide que este lead vai entrar no pipeline de MCMV — a
+ * partir daqui, é trabalho de quem analisa (papel `analista`), na tela
+ * "Gestão de MCMV". Não muda o funil de vendas geral (`estado`): as duas
+ * coisas correm em paralelo.
+ */
+export async function iniciarMcmv(req: RequisicaoAtende, conversaId: string): Promise<Lead> {
+  const c = await exigirConversa(req, conversaId);
+  const s = req.sessao!;
+  const db = req.dbAtende!;
+  const agora = new Date().toISOString();
+  const { data: atual } = await db.from('atende_leads').select(LEAD_COLUNAS).eq('conversa_id', c.id).maybeSingle();
+  if (atual?.mcmv_status) throw new ErroDeConversa('Este lead já está no pipeline de MCMV.');
+  const patch = { mcmv_status: 'em_analise', mcmv_iniciado_em: agora, mcmv_atualizado_em: agora, atualizado_por: s.id };
+  let linha: any;
+  if (atual) {
+    const { data, error } = await db.from('atende_leads').update(patch).eq('id', atual.id).select(LEAD_COLUNAS).single();
+    if (error || !data) throw error ?? new Error('não encaminhou para o MCMV');
+    linha = data;
+  } else {
+    const { data, error } = await db.from('atende_leads').insert({ conversa_id: c.id, cliente_id: c.cliente_id, estado: 'novo', ...patch }).select(LEAD_COLUNAS).single();
+    if (error || !data) throw error ?? new Error('não criou o lead');
+    linha = data;
+  }
+  await registrarEvento(db, c.id, s.id, 'mcmv_alterado', { de: null, para: 'em_analise' });
+  return montarLead(linha);
+}
+
+/**
+ * Um lead que não veio pelo WhatsApp (Instagram, indicação…): cadastrado à
+ * mão, sempre com telefone — isso cria uma conversa de verdade (mesma
+ * regra "um contato, um fio" de quem chega pelo WhatsApp). Se o telefone já
+ * é um contato desta empresa, reaproveita o cliente/conversa/lead que já
+ * existem em vez de duplicar.
+ */
+export async function criarLeadManual(req: RequisicaoAtende, dados: { nome?: unknown; telefone?: unknown }): Promise<{ lead: Lead; conversa_id: string; reaproveitado: boolean }> {
+  const db = req.dbAtende!;
+  const nome = String(dados.nome ?? '').trim().slice(0, 80);
+  if (!nome) throw new ErroDeConversa('Dê um nome ao lead.');
+  const telefone = String(dados.telefone ?? '').replace(/\D/g, '');
+  if (telefone.length < 10 || telefone.length > 15) throw new ErroDeConversa('Telefone inválido.');
+
+  const { data: clienteExistente } = await db.from('atende_clientes').select('id').in('telefone', variantesDoTelefone(telefone)).maybeSingle();
+  let clienteId: string;
+  let reaproveitado = false;
+  if (clienteExistente) {
+    clienteId = clienteExistente.id;
+    reaproveitado = true;
+  } else {
+    const agora = new Date().toISOString();
+    const { data: novoCliente, error } = await db.from('atende_clientes').insert({ telefone, nome, primeiro_contato_em: agora, ultimo_contato_em: agora }).select('id').single();
+    if (error || !novoCliente) throw error ?? new Error('não criou o cliente');
+    clienteId = novoCliente.id;
+  }
+
+  const { data: conversaExistente } = await db.from('atende_conversas').select('id').eq('cliente_id', clienteId).neq('estado', 'encerrada').maybeSingle();
+  let conversaId: string;
+  if (conversaExistente) {
+    conversaId = conversaExistente.id;
+  } else {
+    const { data: novaConversa, error } = await db.from('atende_conversas').insert({ cliente_id: clienteId, estado: 'nova' }).select('id').single();
+    if (error || !novaConversa) throw error ?? new Error('não criou a conversa');
+    conversaId = novaConversa.id;
+  }
+
+  const { data: leadExistente } = await db.from('atende_leads').select(LEAD_COLUNAS).eq('conversa_id', conversaId).maybeSingle();
+  let linha: any;
+  if (leadExistente) {
+    linha = leadExistente;
+    reaproveitado = true;
+  } else {
+    const { data, error } = await db.from('atende_leads').insert({ conversa_id: conversaId, cliente_id: clienteId, estado: 'novo', origem: 'manual' }).select(LEAD_COLUNAS).single();
+    if (error || !data) throw error ?? new Error('não criou o lead');
+    linha = data;
+  }
+  return { lead: montarLead(linha), conversa_id: conversaId, reaproveitado };
 }
 
 // ---------------------------------------------------------------------------

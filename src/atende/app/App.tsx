@@ -17,6 +17,7 @@ import { Avaliacoes } from './pages/Avaliacoes';
 import { Campanhas } from './pages/Campanhas';
 import { Inventario } from './pages/Inventario';
 import { Modelos } from './pages/Modelos';
+import { GestaoMcmv } from './pages/GestaoMcmv';
 import { Plano } from './pages/Plano';
 import { Bloqueada, SemRecurso } from './pages/SemPlano';
 import { planoAtendeLibera } from '../shared/planos';
@@ -144,6 +145,7 @@ function Dentro({ tela, resto }: { tela: Tela; resto: string }) {
           {tela === TELAS.campanhas && pode(sessao.papel, 'conversas.atender') && <Campanhas />}
           {tela === TELAS.inventario && pode(sessao.papel, 'conversas.atender') && <Inventario />}
           {tela === TELAS.modelos && pode(sessao.papel, 'modelos.gerir') && <Modelos />}
+          {tela === TELAS.mcmv && pode(sessao.papel, 'mcmv.gerir') && <GestaoMcmv />}
           {tela === TELAS.empresa && pode(sessao.papel, 'empresa.gerir') && <Empresa aba={resto === 'ia' ? 'ia' : 'empresa'} />}
           {tela === TELAS.times && pode(sessao.papel, 'times.gerir') && <Times />}
           {tela === TELAS.equipe && <Equipe />}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronDown, History } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useDadosAtende } from '../../store/dados';
-import { NOME_DO_ESTADO_DO_LEAD, type Conversa, type EstadoDoLead } from '../../../shared/tipos';
+import { NOME_DO_ESTADO_DO_LEAD, NOME_DO_ESTADO_MCMV, type Conversa, type EstadoDoLead, type EstadoMcmv } from '../../../shared/tipos';
 import { Rotulo } from '../../ui/Cartao';
 import { Esqueleto } from '../../ui/Estados';
 
@@ -73,6 +73,10 @@ export function Historico({ conversa }: { conversa: Conversa }) {
       case 'lead_alterado': {
         const nome = (v: string) => NOME_DO_ESTADO_DO_LEAD[v as EstadoDoLead] ?? v;
         return `${quem ?? 'Alguém'} moveu o lead: ${nome(d.de ?? 'novo')} → ${nome(d.para)}`;
+      }
+      case 'mcmv_alterado': {
+        const nome = (v: string | null) => (v ? (NOME_DO_ESTADO_MCMV[v as EstadoMcmv] ?? v) : 'fora do pipeline');
+        return `${quem ?? 'Alguém'} moveu o MCMV: ${nome(d.de)} → ${nome(d.para)}${d.nota ? ` — ${d.nota}` : ''}`;
       }
       case 'encerrada':
         return `${quem ?? 'Alguém'} encerrou${d.motivo ? ` — ${d.motivo}` : ''}`;

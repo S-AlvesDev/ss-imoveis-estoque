@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Pencil, X, Send, Target } from 'lucide-react';
+import { Pencil, X, Send, Target, FileCheck2 } from 'lucide-react';
 import { api, ErroDaApi } from '../../lib/api';
 import { useCentral } from '../../store/central';
 import { useDadosAtende } from '../../store/dados';
 import { useSessaoAtende } from '../../store/sessao';
 import { pode } from '../../../shared/papeis';
-import { ESTADOS_DO_LEAD, NOME_DO_ESTADO_DO_LEAD, NOME_DA_SUGESTAO, type Conversa, type Lead, type Triagem } from '../../../shared/tipos';
+import { ESTADOS_DO_LEAD, NOME_DO_ESTADO_DO_LEAD, NOME_DA_SUGESTAO, NOME_DO_ESTADO_MCMV, type Conversa, type Lead, type Triagem } from '../../../shared/tipos';
 import { BlocoIa, Confianca, PensandoIa, SeloIa, TituloIa } from '../../ui/Ia';
 import { Etiqueta, type TomDaEtiqueta } from '../../ui/Etiqueta';
 import { Botao } from '../../ui/Botao';
@@ -44,6 +44,7 @@ export function TriagemDaIa({ conversa }: { conversa: Conversa }) {
   const [timeCorrigido, setTimeCorrigido] = useState('');
   const [motivo, setMotivo] = useState('');
   const [salvando, setSalvando] = useState(false);
+  const [encaminhando, setEncaminhando] = useState(false);
 
   // Recarrega quando a conversa muda de setor/estado (a triagem acabou de rodar, ou alguém corrigiu).
   useEffect(() => {
@@ -90,6 +91,19 @@ export function TriagemDaIa({ conversa }: { conversa: Conversa }) {
       setLead(r.lead);
     } catch (err) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível mover o lead.');
+    }
+  }
+
+  async function encaminharParaMcmv() {
+    setEncaminhando(true);
+    try {
+      const r = await api.post<{ lead: Lead }>(`/conversas/${conversa.id}/mcmv/iniciar`);
+      setLead(r.lead);
+      toast.success('Encaminhado para a Gestão de MCMV.');
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível encaminhar.');
+    } finally {
+      setEncaminhando(false);
     }
   }
 
@@ -245,6 +259,19 @@ export function TriagemDaIa({ conversa }: { conversa: Conversa }) {
             ))}
           </Selecao>
           {lead?.valor ? <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">Valor: {lead.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p> : null}
+          {lead && (
+            <div className="mt-2 border-t border-[var(--border)] pt-2">
+              {lead.mcmv_status ? (
+                <p className="text-[11px] text-[var(--text-muted)]">
+                  MCMV: <strong className="text-[var(--text)]">{NOME_DO_ESTADO_MCMV[lead.mcmv_status]}</strong> — quem analisa cuida da etapa e dos documentos.
+                </p>
+              ) : (
+                <Botao tamanho="sm" variante="fantasma" icone={<FileCheck2 size={13} />} carregando={encaminhando} onClick={encaminharParaMcmv}>
+                  Encaminhar para análise de MCMV
+                </Botao>
+              )}
+            </div>
+          )}
         </div>
       )}
     </BlocoIa>

@@ -20,6 +20,8 @@ interface ItemDoInventario {
   preco: number | null;
   descricao: string | null;
   ativo: boolean;
+  proprietario_cliente_id: string | null;
+  proprietario_nome: string | null;
 }
 
 const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -113,6 +115,7 @@ export function Inventario() {
                 )}
               </div>
               {i.descricao && <p className="line-clamp-2 text-sm text-[var(--text-muted)]">{i.descricao}</p>}
+              {i.proprietario_nome && <p className="text-xs text-[var(--text-muted)]">Proprietário: {i.proprietario_nome}</p>}
               <div className="mt-auto flex items-center justify-between gap-2 border-t border-[var(--border)] pt-2.5 text-sm">
                 <Etiqueta tom={i.quantidade > 0 ? 'verde' : 'cinza'}>{i.quantidade > 0 ? `${i.quantidade} disponível${i.quantidade > 1 ? 'eis' : ''}` : 'Indisponível'}</Etiqueta>
                 {i.preco !== null && <span className="font-semibold text-[var(--text)]">{moeda.format(i.preco)}</span>}
@@ -156,12 +159,27 @@ function ModalDoItem({ item, onSalvo, onClose }: { item: ItemDoInventario | null
   const [descricao, setDescricao] = useState(item?.descricao ?? '');
   const [ativo, setAtivo] = useState(item?.ativo ?? true);
   const [salvando, setSalvando] = useState(false);
+  const [proprietarioId, setProprietarioId] = useState(item?.proprietario_cliente_id ?? null);
+  const [proprietarioBusca, setProprietarioBusca] = useState(item?.proprietario_nome ?? '');
+  const [resultados, setResultados] = useState<Array<{ id: string; nome: string; telefone: string }>>([]);
   const novo = !item?.id;
+
+  useEffect(() => {
+    if (!proprietarioBusca.trim() || proprietarioBusca === item?.proprietario_nome) return setResultados([]);
+    const t = window.setTimeout(() => {
+      api
+        .get<{ clientes: Array<{ id: string; nome: string; telefone: string }> }>(`/clientes?busca=${encodeURIComponent(proprietarioBusca)}`)
+        .then((r) => setResultados(r.clientes))
+        .catch(() => setResultados([]));
+    }, 300);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proprietarioBusca]);
 
   async function salvar(e: FormEvent) {
     e.preventDefault();
     setSalvando(true);
-    const corpo = { nome, categoria: categoria || null, quantidade: Number(quantidade) || 0, preco: preco === '' ? null : Number(preco), descricao: descricao || null, ativo };
+    const corpo = { nome, categoria: categoria || null, quantidade: Number(quantidade) || 0, preco: preco === '' ? null : Number(preco), descricao: descricao || null, ativo, proprietario_cliente_id: proprietarioId };
     try {
       const r = novo ? await api.post<{ itens: ItemDoInventario[] }>('/inventario', corpo) : await api.put<{ itens: ItemDoInventario[] }>(`/inventario/${item!.id}`, corpo);
       onSalvo(r.itens);
@@ -198,6 +216,36 @@ function ModalDoItem({ item, onSalvo, onClose }: { item: ItemDoInventario | null
         </div>
         <Entrada rotulo="Preço" ajuda="Opcional." type="number" min="0" step="0.01" value={preco} onChange={(e) => setPreco(e.target.value)} placeholder="0,00" />
         <AreaDeTexto rotulo="Descrição" ajuda="Opcional — aparece só para quem atende, não vai para o Jatobá." rows={3} value={descricao} onChange={(e) => setDescricao(e.target.value)} maxLength={500} />
+        <div className="relative">
+          <Entrada
+            rotulo="Proprietário"
+            ajuda="Opcional — um cliente já cadastrado, dono deste imóvel."
+            value={proprietarioBusca}
+            onChange={(e) => {
+              setProprietarioBusca(e.target.value);
+              setProprietarioId(null);
+            }}
+            placeholder="Buscar por nome ou telefone…"
+          />
+          {resultados.length > 0 && (
+            <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--sombra-flutuante)]">
+              {resultados.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setProprietarioId(c.id);
+                    setProprietarioBusca(c.nome);
+                    setResultados([]);
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--bg-2)]"
+                >
+                  {c.nome} <span className="text-xs text-[var(--text-muted)]">+{c.telefone}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {!novo && (
           <label className="inline-flex cursor-pointer items-center gap-2.5 text-sm text-[var(--text)]">
             <input type="checkbox" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} className="h-4 w-4 rounded border-[var(--border-strong)] accent-[var(--brand)]" />

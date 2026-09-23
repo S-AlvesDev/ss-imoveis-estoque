@@ -355,6 +355,54 @@ export const NOME_DO_ESTADO_DO_LEAD: Record<EstadoDoLead, string> = {
 export type SugestaoDeLead = 'quente' | 'morno' | 'frio' | 'nao_e_lead';
 export const NOME_DA_SUGESTAO: Record<SugestaoDeLead, string> = { quente: 'Quente', morno: 'Morno', frio: 'Frio', nao_e_lead: 'Não é lead' };
 
+/**
+ * A etapa do financiamento MCMV — uma dimensão PARALELA ao funil de vendas
+ * (`EstadoDoLead`): um lead pode estar "em negociação" no funil geral e, ao
+ * mesmo tempo, "em análise" no MCMV. `null` = nunca entrou nesse pipeline.
+ */
+export type EstadoMcmv = 'em_analise' | 'aprovado_condicionado' | 'aprovado' | 'reprovado';
+export const ESTADOS_MCMV: readonly EstadoMcmv[] = ['em_analise', 'aprovado_condicionado', 'aprovado', 'reprovado'];
+export const NOME_DO_ESTADO_MCMV: Record<EstadoMcmv, string> = {
+  em_analise: 'Em análise',
+  aprovado_condicionado: 'Aprovado condicionado',
+  aprovado: 'Aprovado',
+  reprovado: 'Reprovado',
+};
+
+export type OrigemDoLead = 'whatsapp' | 'manual';
+
+export const TIPOS_DE_DOCUMENTO = ['rg', 'cpf', 'comprovante_renda', 'contrato', 'outro'] as const;
+export type TipoDeDocumento = (typeof TIPOS_DE_DOCUMENTO)[number];
+export const NOME_DO_TIPO_DE_DOCUMENTO: Record<TipoDeDocumento, string> = {
+  rg: 'RG',
+  cpf: 'CPF',
+  comprovante_renda: 'Comprovante de renda',
+  contrato: 'Contrato',
+  outro: 'Outro',
+};
+
+export interface ItemDoPipelineMcmv {
+  lead_id: string;
+  conversa_id: string;
+  cliente_id: string;
+  cliente_nome: string;
+  telefone: string;
+  mcmv_status: EstadoMcmv;
+  mcmv_iniciado_em: string;
+  mcmv_atualizado_em: string;
+}
+
+export interface DocumentoDoCliente {
+  id: string;
+  cliente_id: string;
+  nome_arquivo: string;
+  mimetype: string;
+  tipo: TipoDeDocumento;
+  tamanho: number | null;
+  anexado_por: number | null;
+  criado_em: string;
+}
+
 export interface Lead {
   id: string;
   conversa_id: string;
@@ -370,6 +418,10 @@ export interface Lead {
   followup_sugerido_em: string | null;
   followup_enviado_em: string | null;
   followup_descartado_em: string | null;
+  mcmv_status: EstadoMcmv | null;
+  mcmv_iniciado_em: string | null;
+  mcmv_atualizado_em: string | null;
+  origem: OrigemDoLead;
 }
 
 /** O que a simulação da triagem devolve (nada é gravado nem enviado). */
