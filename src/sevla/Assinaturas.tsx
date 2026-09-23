@@ -221,7 +221,7 @@ export function Assinaturas({ token }: { token: string }) {
                       </div>
                       <p className="mt-2 text-xs text-[var(--texto-suave)]">
                         {lado.conta?.situacao === 'avaliacao' && lado.conta.dias_restantes !== null ? `Avaliação: ${lado.conta.dias_restantes} dia(s) restante(s).` : lado.conta?.ate ? `Vale até ${data(lado.conta.ate)}${lado.conta.renovacao === 'automatica' ? ' · renovação automática' : lado.conta.renovacao === 'manual' ? ' · renovação manual (Pix/boleto)' : ''}.` : lado.conta?.situacao === 'bloqueada' ? 'Sem plano: o produto está travado até assinar.' : 'Sem prazo definido.'}
-                        {vigente && lado.assinatura?.proxima_cobranca ? ` Próxima cobrança em ${data(lado.assinatura.proxima_cobranca)}.` : ''}
+                        {vigente && lado.assinatura?.proxima_cobranca ? ` Próxima cobrança em ${data(lado.assinatura.proxima_cobranca)} (${brl(lado.assinatura.valor)}${lado.assinatura.ciclo === 'anual' && produto === 'atende' ? '/mês' : ''}).` : ''}
                       </p>
                       {lado.pendente_avulso && !lado.pendente_avulso.combo && (
                         <p className="mt-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
@@ -281,13 +281,24 @@ export function Assinaturas({ token }: { token: string }) {
         </p>
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
           {dados.combos.map((c) => {
+            const m = c.precos.mensal;
+            const a = c.precos.anual;
             return (
               <div key={c.id} className="cartao flex flex-col rounded-2xl p-5">
                 <p className="font-display text-base font-bold text-white">{c.nome}</p>
                 <p className="mt-1 text-xs text-[var(--texto-suave)]">
                   {DEFINICOES[c.stok].nome} no Stok Aí + {DEFINICOES_ATENDE[c.atende].nome} no Atende Aí
                 </p>
-                <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--primaria-clara)]">{desconto}% de desconto em cada produto</p>
+                <p className="mt-4 text-2xl font-bold text-white">
+                  {brl(m?.total)}
+                  <span className="text-xs font-medium text-[var(--texto-suave)]">/mês</span>
+                </p>
+                {m && (
+                  <p className="text-xs text-[var(--texto-suave)]">
+                    <s>{brl(m.cheio)}</s> separados · você economiza {brl(m.economia)} por mês
+                  </p>
+                )}
+                {a && <p className="mt-1 text-xs text-[var(--texto-suave)]">ou {brl(a.total)} por ano (dois meses grátis em cada, e o desconto por cima)</p>}
                 {empresasDeCombo.length > 0 ? (
                   <button type="button" onClick={() => pedirCombo(empresasDeCombo[0], c.id)} className="mt-4 inline-flex items-center justify-center gap-2 rounded-full border border-[var(--primaria)]/60 px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--primaria)]/10">
                     <Layers size={14} /> Assinar {empresasDeCombo.length > 1 ? `na ${empresasDeCombo[0].organizacao}` : 'este combo'}
@@ -476,16 +487,23 @@ function ModalDeAssinatura({ token, dados, pedido, onFechar, onMudou }: { token:
                 <div className="grid grid-cols-3 gap-2">
                   {dados.combos.map((c) => {
                     const ativo = combo?.id === c.id;
+                    const pr = c.precos[ciclo];
                     return (
                       <button key={c.id} type="button" onClick={() => setComboId(c.id)} className={`rounded-xl border px-3 py-2 text-left text-xs transition-colors ${ativo ? 'border-[var(--primaria)] bg-[var(--primaria)]/10 text-white' : 'border-[var(--linha)] text-[var(--texto-suave)] hover:text-white'}`}>
                         <span className="block font-bold">{NOME_DO_PLANO[c.id] ?? c.nome}</span>
+                        <span className="block">{brl(pr?.total)}</span>
+                        {pr && (
+                          <span className="block text-[10px] opacity-70">
+                            <s>{brl(pr.cheio)}</s>
+                          </span>
+                        )}
                       </button>
                     );
                   })}
                 </div>
                 {combo && precosDoCombo && (
                   <p className="mt-2 text-[11px] text-[var(--suave)]">
-                    {DEFINICOES[combo.stok].nome} no Stok Aí + {DEFINICOES_ATENDE[combo.atende].nome} no Atende Aí, já com {combo.desconto}% de desconto em cada.
+                    {DEFINICOES[combo.stok].nome} no Stok Aí ({brl(precosDoCombo.stok)}) + {DEFINICOES_ATENDE[combo.atende].nome} no Atende Aí ({brl(precosDoCombo.atende)}), já com {combo.desconto}% de desconto em cada.
                   </p>
                 )}
                 {pedido.substitui.length > 0 && <p className="mt-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">Substitui a assinatura em vigor do {pedido.substitui.map((p) => NOME_DO_PRODUTO[p]).join(' e do ')}: ela é cancelada ao confirmar e o combo entra no lugar.</p>}
@@ -497,9 +515,11 @@ function ModalDeAssinatura({ token, dados, pedido, onFechar, onMudou }: { token:
                   <div className="grid grid-cols-3 gap-2">
                     {(produto === 'stok' ? PLANOS : PLANOS_ATENDE).map((id) => {
                       const ativo = produto === 'stok' ? planoStok === id : planoAtende === id;
+                      const preco = produto === 'stok' ? precoDo(id as Plano, ciclo as Ciclo) : precoDoPeriodoAtende(id as PlanoAtende, ciclo as CicloAtende);
                       return (
                         <button key={id} type="button" onClick={() => (produto === 'stok' ? setPlanoStok(id as Plano) : setPlanoAtende(id as PlanoAtende))} className={`rounded-xl border px-3 py-2 text-left text-xs transition-colors ${ativo ? 'border-[var(--primaria)] bg-[var(--primaria)]/10 text-white' : 'border-[var(--linha)] text-[var(--texto-suave)] hover:text-white'}`}>
                           <span className="block font-bold">{NOME_DO_PLANO[id]}</span>
+                          <span className="block">{brl(preco)}</span>
                         </button>
                       );
                     })}

@@ -4,7 +4,7 @@ import { Check, CreditCard, ExternalLink, QrCode, Receipt } from 'lucide-react';
 import { Button } from '@/shared/ui/Button';
 import { api } from '@/lib/api';
 import { track } from '@/lib/analytics';
-import { DEFINICOES, PLANOS, CICLOS, NOME_DO_CICLO, MESES_GRATIS_NO_ANUAL, precoDo, type Ciclo, type Metodo, type Plano } from '@/shared/planos';
+import { DEFINICOES, PLANOS, CICLOS, NOME_DO_CICLO, MESES_GRATIS_NO_ANUAL, formatarPreco, precoDo, type Ciclo, type Metodo, type Plano } from '@/shared/planos';
 import { FormularioCartao } from './FormularioCartao';
 import { FormularioPagador, PagamentoPendente, type PedidoAvulso } from './PagamentoAvulso';
 
@@ -107,12 +107,16 @@ export function EscolherPlano({ atual = null, trocar = false, disponivel = { men
             </p>
             <p className="text-[11px] text-[var(--text-muted)]">{d.publico}</p>
           </div>
+          <p className="text-lg font-extrabold text-[var(--text)]">
+            {formatarPreco(valorDe(escolhido))}
+            <span className="text-xs font-normal text-[var(--text-muted)]">/{ciclo === 'anual' ? 'ano' : 'mês'}</span>
+          </p>
         </div>
         {metodo === 'cartao' ? (
           <FormularioCartao
             publicKey={publicKey as string}
             emailInicial={emailInicial}
-            rotuloDoBotao="Assinar"
+            rotuloDoBotao={`Assinar por ${formatarPreco(valorDe(escolhido))}`}
             onToken={(dados) => assinarComCartao(escolhido, dados)}
             onCancelar={() => setEscolhido(null)}
           />
@@ -162,7 +166,11 @@ export function EscolherPlano({ atual = null, trocar = false, disponivel = { men
             <div key={p} className={`flex flex-col rounded-xl border p-4 ${destaque ? 'border-[var(--brand)]/60 bg-[var(--brand)]/5' : 'border-[var(--border)]'}`}>
               <p className="text-sm font-bold text-[var(--text)]">{d.nome}</p>
               <p className="text-[11px] text-[var(--text-muted)]">{d.publico}</p>
-              {teste && <p className="mt-3 text-[10px] font-semibold uppercase tracking-wide text-[var(--brand)]">plano de teste</p>}
+              <p className="mt-3 flex items-baseline gap-1 text-[var(--text)]">
+                <span className="text-2xl font-extrabold tracking-tight">{formatarPreco(valorDe(p))}</span>
+                <span className="text-xs text-[var(--text-muted)]">/{ciclo === 'anual' ? 'ano' : 'mês'}</span>
+              </p>
+              {teste && <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--brand)]">plano de teste</p>}
               {!compacto && (
                 <ul className="mt-3 space-y-1 text-xs text-[var(--text-muted)]">
                   {d.destaques.slice(0, 4).map((x) => (

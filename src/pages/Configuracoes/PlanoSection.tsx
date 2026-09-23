@@ -143,7 +143,7 @@ function Situacao({ conta, assinatura }: { conta: Conta; assinatura: Assinatura 
   if (assinatura?.status === 'autorizada') {
     return (
       <p className="text-xs text-[var(--text-muted)]">
-        Assinatura <strong className="text-[var(--text)]">{NOME_DO_CICLO[assinatura.ciclo].toLowerCase()}</strong>
+        Assinatura <strong className="text-[var(--text)]">{NOME_DO_CICLO[assinatura.ciclo].toLowerCase()}</strong> de {formatarPreco(Number(assinatura.valor))}
         {assinatura.proxima_cobranca && <> · próxima cobrança {fmtData.format(new Date(assinatura.proxima_cobranca))}</>}
         {assinatura.payer_email && <> · recibos em {assinatura.payer_email}</>}
       </p>
@@ -305,7 +305,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
   ];
 
   const tituloDoPlano = conta.situacao === 'avaliacao' ? 'Avaliação' : NOME_DO_PLANO[planoAtual.plano];
-  const subtituloDoPlano = conta.situacao === 'avaliacao' ? `${resumo?.avaliacao_dias ?? 7} dias grátis · tudo do Empresarial` : d.publico;
+  const subtituloDoPlano = conta.situacao === 'avaliacao' ? `${resumo?.avaliacao_dias ?? 7} dias grátis · tudo do Empresarial` : cortesia ? `${d.publico} · sem cobrança` : conta.renovacao === 'manual' ? `${d.publico} · pago por Pix/boleto` : `${formatarPreco(d.preco)}/mês · ${d.publico}`;
 
   return (
     <section className="space-y-4">
@@ -386,7 +386,7 @@ export function PlanoSection({ unidades, depositos, refetch }: PlanoSectionProps
             <div className="flex flex-wrap gap-1.5 pt-1">
               {(Object.keys(DEFINICOES) as Plano[]).map((p) => (
                 <Badge key={p} variant={p === planoAtual.plano ? 'info' : 'neutral'}>
-                  {DEFINICOES[p].nome}
+                  {DEFINICOES[p].nome} · {formatarPreco(DEFINICOES[p].preco)}
                 </Badge>
               ))}
             </div>
