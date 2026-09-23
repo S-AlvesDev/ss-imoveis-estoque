@@ -30,7 +30,8 @@ import { sanearHistorico, responderNaHomeDoAtende, responderNoPainelDoAtende, re
 import { listarClientesPorEtiqueta, listarLotes, statusDoLote, criarLote, processarLote, cancelarLote, processarLotesAbandonados } from './disparos';
 import { listarInventario, criarItem, atualizarItem, desativarItem, consultarInventario, listarPorProprietario } from './inventario';
 import { listarModelos, criarModelo, atualizarModelo, desativarModelo } from './modelos';
-import { listarPipelineMcmv, atualizarMcmv } from './mcmv';
+import { listarPipelineMcmv, atualizarMcmv, historicoMcmv } from './mcmv';
+import { listarFunilDeLeads } from './leads';
 import { listarDocumentos, prepararUploadDeDocumento, registrarDocumento, urlDoDocumento, excluirDocumento } from './documentos';
 import { criarLeadManual, iniciarMcmv } from './conversas';
 import { pode } from '../shared/papeis';
@@ -999,6 +1000,20 @@ export function criarRouterAtende(): express.Router {
       res.json({ item: await atualizarMcmv(req, req.params.leadId, req.body ?? {}) });
     } catch (err: any) {
       tratar(res, err, 'PUT /api/atende/mcmv/:leadId', 'Não foi possível mudar a etapa.');
+    }
+  });
+  r.get('/mcmv/:leadId/historico', exigir('mcmv.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ eventos: await historicoMcmv(req, req.params.leadId) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/mcmv/:leadId/historico', 'Erro ao carregar o histórico.');
+    }
+  });
+  r.get('/funil-leads', exigir('conversas.supervisionar'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ itens: await listarFunilDeLeads(req) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/funil-leads', 'Erro ao listar o funil de leads.');
     }
   });
   r.post('/conversas/:id/mcmv/iniciar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {

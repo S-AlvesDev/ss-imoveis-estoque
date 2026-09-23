@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { BarChart3, Bell, BellRing, Bot, ChevronDown, ChevronRight, CreditCard, Eye, FileCheck2, LogOut, Megaphone, Menu, MessageSquare, MessagesSquare, MoreHorizontal, Package, Settings, Smartphone, Star, UserCircle, Users, UsersRound, Wifi, WifiOff, X } from 'lucide-react';
+import { BarChart3, Bell, BellRing, Bot, ChevronDown, ChevronRight, CreditCard, Eye, FileCheck2, Kanban, LogOut, Megaphone, Menu, MessageSquare, MessagesSquare, MoreHorizontal, Package, Settings, Smartphone, Star, UserCircle, Users, UsersRound, Wifi, WifiOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { MarcaAtende } from './Marca';
 import { TELAS, useRotaAtende, type Tela } from './router';
@@ -56,6 +56,7 @@ function gruposDoMenu(papel: string): Grupo[] {
         { id: 'central', tela: TELAS.central, nome: 'Atendimentos', icone: <MessageSquare size={18} />, permissao: 'conversas.atender' },
         { id: 'conversas', tela: TELAS.central, filtro: 'todas', nome: 'Conversas', icone: <MessagesSquare size={18} />, permissao: 'conversas.atender' },
         { id: 'supervisao', tela: TELAS.supervisao, nome: 'Supervisão', icone: <Eye size={18} />, permissao: 'conversas.supervisionar' },
+        { id: 'leads', tela: TELAS.leads, nome: 'Gestão de Leads', icone: <Kanban size={18} />, permissao: 'conversas.supervisionar' },
         { id: 'campanhas', tela: TELAS.campanhas, nome: 'Campanhas', icone: <Megaphone size={18} />, permissao: 'conversas.atender' },
       ]),
     },

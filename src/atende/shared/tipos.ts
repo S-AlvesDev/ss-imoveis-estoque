@@ -392,6 +392,30 @@ export interface ItemDoPipelineMcmv {
   mcmv_atualizado_em: string;
 }
 
+export interface EventoMcmv {
+  id: string;
+  usuario_id: number | null;
+  de: EstadoMcmv | null;
+  para: EstadoMcmv;
+  nota: string | null;
+  criado_em: string;
+}
+
+/** Uma linha do quadro geral "Gestão de Leads" (supervisor/admin) — todo o funil, de todas as conversas. */
+export interface ItemDoFunilDeLeads {
+  lead_id: string;
+  conversa_id: string;
+  cliente_id: string;
+  cliente_nome: string;
+  telefone: string;
+  estado: EstadoDoLead;
+  mcmv_status: EstadoMcmv | null;
+  valor: number | null;
+  origem: OrigemDoLead;
+  atendente_id: number | null;
+  atualizado_em: string;
+}
+
 export interface DocumentoDoCliente {
   id: string;
   cliente_id: string;

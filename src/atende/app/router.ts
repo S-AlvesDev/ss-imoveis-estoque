@@ -19,6 +19,8 @@ export const TELAS = {
   redefinirSenha: 'redefinir-senha',
   central: 'central',
   supervisao: 'supervisao',
+  /** O quadro geral do funil de vendas, todas as conversas — supervisor e admin. */
+  leads: 'leads',
   dashboard: 'dashboard',
   /** As avaliações do atendimento (0 a 10), por período — supervisor e admin. */
   avaliacoes: 'avaliacoes',

@@ -1,6 +1,6 @@
 import type { RequisicaoAtende } from './auth';
 import { ErroDeConversa, registrarEvento } from './conversas';
-import { ESTADOS_MCMV, type ItemDoPipelineMcmv } from '../shared/tipos';
+import { ESTADOS_MCMV, type EventoMcmv, type ItemDoPipelineMcmv } from '../shared/tipos';
 
 /**
  * O pipeline de análise de financiamento MCMV — paralelo ao funil de vendas.
@@ -60,4 +60,26 @@ export async function atualizarMcmv(req: RequisicaoAtende, leadId: string, dados
     mcmv_iniciado_em: l.mcmv_iniciado_em,
     mcmv_atualizado_em: l.mcmv_atualizado_em,
   };
+}
+
+/**
+ * O histórico de mudanças de etapa do MCMV — para o próprio `analista` ver
+ * (ele não abre a conversa, então não vê o Histórico de lá; este é o
+ * recorte que interessa a ele, gerado pelo mesmo `registrarEvento` de
+ * `atualizarMcmv`).
+ */
+export async function historicoMcmv(req: RequisicaoAtende, leadId: string): Promise<EventoMcmv[]> {
+  const { data: lead, error: erroLead } = await req.dbAtende!.from('atende_leads').select('conversa_id').eq('id', leadId).maybeSingle();
+  if (erroLead) throw erroLead;
+  if (!lead) throw new ErroDeConversa('Lead não encontrado.', 404);
+  const { data, error } = await req.dbAtende!.from('atende_eventos').select('id, usuario_id, dados, criado_em').eq('conversa_id', lead.conversa_id).eq('tipo', 'mcmv_alterado').order('criado_em', { ascending: false });
+  if (error) throw error;
+  return ((data || []) as any[]).map((e) => ({
+    id: e.id,
+    usuario_id: e.usuario_id === null ? null : Number(e.usuario_id),
+    de: e.dados?.de ?? null,
+    para: e.dados?.para,
+    nota: e.dados?.nota ?? null,
+    criado_em: e.criado_em,
+  }));
 }

@@ -10,7 +10,8 @@ import { Pagina } from '../ui/Pagina';
 import { Vazio, Esqueleto } from '../ui/Estados';
 import { DocumentosDoCliente } from '../ui/DocumentosDoCliente';
 import { api, ErroDaApi } from '../lib/api';
-import { ESTADOS_MCMV, NOME_DO_ESTADO_MCMV, type EstadoMcmv, type ItemDoPipelineMcmv } from '../../shared/tipos';
+import { useDadosAtende } from '../store/dados';
+import { ESTADOS_MCMV, NOME_DO_ESTADO_MCMV, type EstadoMcmv, type EventoMcmv, type ItemDoPipelineMcmv } from '../../shared/tipos';
 
 const TOM_DA_ETAPA: Record<EstadoMcmv, 'azul' | 'ambar' | 'verde' | 'vermelho'> = {
   em_analise: 'azul',
@@ -92,7 +93,7 @@ export function GestaoMcmv() {
           onFechar={() => setSelecionado(null)}
           onSalvo={(atualizado) => {
             setItens((atual) => (atual ?? []).map((i) => (i.lead_id === atualizado.lead_id ? atualizado : i)));
-            setSelecionado(null);
+            setSelecionado(atualizado);
           }}
         />
       )}
@@ -101,15 +102,31 @@ export function GestaoMcmv() {
 }
 
 function ModalDoItem({ item, onFechar, onSalvo }: { item: ItemDoPipelineMcmv; onFechar: () => void; onSalvo: (item: ItemDoPipelineMcmv) => void }) {
+  const equipe = useDadosAtende((s) => s.equipe);
   const [status, setStatus] = useState<EstadoMcmv>(item.mcmv_status);
   const [nota, setNota] = useState('');
   const [salvando, setSalvando] = useState(false);
+  const [eventos, setEventos] = useState<EventoMcmv[] | null>(null);
+
+  function carregarHistorico() {
+    api
+      .get<{ eventos: EventoMcmv[] }>(`/mcmv/${item.lead_id}/historico`)
+      .then((r) => setEventos(r.eventos))
+      .catch(() => setEventos([]));
+  }
+
+  useEffect(() => {
+    carregarHistorico();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.lead_id]);
 
   async function salvar() {
     setSalvando(true);
     try {
       const r = await api.put<{ item: ItemDoPipelineMcmv }>(`/mcmv/${item.lead_id}`, { status, nota: nota || undefined });
       toast.success('Etapa atualizada.');
+      setNota('');
+      carregarHistorico();
       onSalvo(r.item);
     } catch (err) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível salvar.');
@@ -117,6 +134,8 @@ function ModalDoItem({ item, onFechar, onSalvo }: { item: ItemDoPipelineMcmv; on
       setSalvando(false);
     }
   }
+
+  const nomeDe = (id: number | null) => (id ? (equipe.find((f) => f.id === id)?.nome ?? `#${id}`) : 'Alguém');
 
   return (
     <Modal aberto onFechar={onFechar} titulo={item.cliente_nome} descricao={`+${item.telefone}`} largura="lg">
@@ -139,6 +158,27 @@ function ModalDoItem({ item, onFechar, onSalvo }: { item: ItemDoPipelineMcmv; on
         <div>
           <p className="mb-1.5 text-xs font-semibold text-[var(--text)]">Documentos</p>
           <DocumentosDoCliente clienteId={item.cliente_id} />
+        </div>
+
+        <div className="border-t border-[var(--border)] pt-4">
+          <p className="mb-1.5 text-xs font-semibold text-[var(--text)]">Histórico</p>
+          {eventos === null ? (
+            <p className="text-xs text-[var(--text-muted)]">Carregando…</p>
+          ) : eventos.length === 0 ? (
+            <p className="text-xs text-[var(--text-muted)]">Nenhuma mudança registrada ainda.</p>
+          ) : (
+            <ul className="space-y-2 text-xs">
+              {eventos.map((e) => (
+                <li key={e.id} className="rounded-lg border border-[var(--border)] px-2.5 py-2">
+                  <p className="text-[var(--text)]">
+                    <strong>{nomeDe(e.usuario_id)}</strong> moveu: {e.de ? NOME_DO_ESTADO_MCMV[e.de] : 'fora do pipeline'} → {NOME_DO_ESTADO_MCMV[e.para]}
+                  </p>
+                  {e.nota && <p className="mt-0.5 text-[var(--text-muted)]">{e.nota}</p>}
+                  <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">{new Date(e.criado_em).toLocaleString('pt-BR')}</p>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-4">

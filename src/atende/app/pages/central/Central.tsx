@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, ArrowRightLeft, CheckCircle2, Clock, Hand, Inbox, Layers, MessageSquare, MessagesSquare, PanelRightOpen, RotateCcw, Search, Star, UserPlus, UserRound, X } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, CheckCircle2, Clock, Hand, Inbox, Layers, MessageSquare, MessagesSquare, PanelRightOpen, RotateCcw, Search, Star, UserRound, X } from 'lucide-react';
 import { Botao } from '../../ui/Botao';
 import { Avatar } from '../../ui/Avatar';
 import { Etiqueta, EtiquetaColorida } from '../../ui/Etiqueta';
 import { ListaDeFiltros, Pilulas } from '../../ui/Controles';
 import { EsqueletoDeLista, FaixaOffline, Vazio } from '../../ui/Estados';
 import { Pagina } from '../../ui/Pagina';
-import { Modal } from '../../ui/Modal';
-import { Entrada } from '../../ui/Campo';
 import { SeloIa } from '../../ui/Ia';
 import { api, ErroDaApi } from '../../lib/api';
 import { useCentral, conversasVisiveis, type Filtro } from '../../store/central';
@@ -54,7 +52,6 @@ export function Central({ conversaId }: { conversaId: string | null }) {
   const [mostrarFicha, setMostrarFicha] = useState(true);
   // Abaixo de xl a ficha não cabe ao lado: abre como gaveta por cima da conversa.
   const [fichaMovel, setFichaMovel] = useState(false);
-  const [novoLeadAberto, setNovoLeadAberto] = useState(false);
   const alternarFicha = () => (window.matchMedia('(min-width: 1280px)').matches ? setMostrarFicha((v) => !v) : setFichaMovel(true));
 
   // A URL manda: /atende/central/<id> abre a conversa.
@@ -121,27 +118,7 @@ export function Central({ conversaId }: { conversaId: string | null }) {
   const descricao = filtro === 'todas' ? 'Todas as conversas da empresa, abertas e encerradas.' : 'As conversas abertas, a fila e as suas — em tempo real.';
 
   return (
-    <Pagina
-      titulo={titulo}
-      descricao={descricao}
-      largura="cheia"
-      acoes={
-        pode(sessao.papel, 'conversas.atender') && (
-          <Botao tamanho="sm" variante="secundaria" icone={<UserPlus size={14} />} onClick={() => setNovoLeadAberto(true)}>
-            Novo Lead
-          </Botao>
-        )
-      }
-    >
-      {novoLeadAberto && (
-        <NovoLeadModal
-          onFechar={() => setNovoLeadAberto(false)}
-          onCriado={(conversaId) => {
-            setNovoLeadAberto(false);
-            ir(TELAS.central, conversaId);
-          }}
-        />
-      )}
+    <Pagina titulo={titulo} descricao={descricao} largura="cheia">
       <div className="altura-da-central flex min-w-0 overflow-hidden">
         {/* Coluna 0 (telas largas): os filtros em lista */}
         <aside className={`hidden w-52 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface)] p-3 2xl:flex`}>
@@ -381,55 +358,5 @@ function Cabecalho({ conversa, onVoltar, onFicha, fichaAberta }: { conversa: Con
       <Transferir conversa={conversa} aberto={transferindo} onFechar={() => setTransferindo(false)} />
       <Encerrar conversa={conversa} aberto={encerrando} onFechar={() => setEncerrando(false)} />
     </header>
-  );
-}
-
-/**
- * Um lead que não veio pelo WhatsApp (Instagram, indicação…): pede nome e
- * telefone e cria uma conversa de verdade — se esse telefone já é um
- * contato, reaproveita o que já existe em vez de duplicar.
- */
-function NovoLeadModal({ onFechar, onCriado }: { onFechar: () => void; onCriado: (conversaId: string) => void }) {
-  const [nome, setNome] = useState('');
-  const [telefone, setTelefone] = useState('');
-  const [enviando, setEnviando] = useState(false);
-
-  async function criar(e: FormEvent) {
-    e.preventDefault();
-    setEnviando(true);
-    try {
-      const r = await api.post<{ conversa_id: string; reaproveitado: boolean }>('/leads', { nome, telefone });
-      toast.success(r.reaproveitado ? 'Esse telefone já é um contato — abrindo o lead existente.' : `${nome} cadastrado.`);
-      onCriado(r.conversa_id);
-    } catch (err) {
-      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível criar o lead.');
-    } finally {
-      setEnviando(false);
-    }
-  }
-
-  return (
-    <Modal
-      aberto
-      onFechar={onFechar}
-      titulo="Novo Lead"
-      descricao="Para quem chegou por outro canal (Instagram, indicação…), sem ter escrito no WhatsApp ainda."
-      largura="sm"
-      rodape={
-        <>
-          <Botao variante="fantasma" onClick={onFechar}>
-            Cancelar
-          </Botao>
-          <Botao type="submit" form="form-novo-lead" carregando={enviando}>
-            Criar
-          </Botao>
-        </>
-      }
-    >
-      <form id="form-novo-lead" onSubmit={criar} className="space-y-4">
-        <Entrada rotulo="Nome" required value={nome} onChange={(e) => setNome(e.target.value)} maxLength={80} autoFocus />
-        <Entrada rotulo="Telefone" ajuda="Com DDD — vira o WhatsApp deste contato, mesmo que ele nunca tenha escrito." required value={telefone} onChange={(e) => setTelefone(e.target.value)} placeholder="(84) 99999-9999" />
-      </form>
-    </Modal>
   );
 }
