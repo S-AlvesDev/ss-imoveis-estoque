@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { FileCheck2, Phone, RefreshCw } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao } from '../ui/Cartao';
 import { Etiqueta } from '../ui/Etiqueta';
 import { Modal } from '../ui/Modal';
-import { AreaDeTexto } from '../ui/Campo';
+import { AreaDeTexto, Selecao } from '../ui/Campo';
 import { Pagina } from '../ui/Pagina';
 import { Vazio, Esqueleto } from '../ui/Estados';
 import { DocumentosDoCliente } from '../ui/DocumentosDoCliente';
@@ -28,11 +28,36 @@ const COR_DA_ETAPA: Record<EstadoMcmv, string> = {
   reprovado: '#e11d48',
 };
 
+/** Quantos cartões cada coluna mostra antes de oferecer "ver todos". */
+const LIMITE_POR_COLUNA = 12;
+
 function tempoDesde(iso: string): string {
   const dias = Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000));
   if (dias <= 0) return 'hoje';
   if (dias === 1) return 'há 1 dia';
   return `há ${dias} dias`;
+}
+
+/** A pílula da barra de resumo: bolinha da etapa, rótulo, contagem e a fatia do total. */
+function PilulaDeResumo({ cor, rotulo, quantidade, pct }: { cor: string; rotulo: string; quantidade: number; pct: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs shadow-[0_1px_2px_rgba(23,21,58,0.03)]">
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: cor }} />
+      <span className="font-semibold text-[var(--text)]">{rotulo}:</span>
+      <span className="font-bold text-[var(--text)]">{quantidade}</span>
+      <span className="text-[var(--text-muted)]">({pct}%)</span>
+    </span>
+  );
+}
+
+/** Um item da grade de informações do modal: rótulo miúdo em caixa alta + valor. */
+function Info({ rotulo, children }: { rotulo: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">{rotulo}</p>
+      <p className="mt-0.5 text-sm font-medium text-[var(--text)]">{children}</p>
+    </div>
+  );
 }
 
 /**
@@ -45,6 +70,7 @@ export function GestaoMcmv() {
   const [itens, setItens] = useState<ItemDoPipelineMcmv[] | null>(null);
   const [atualizando, setAtualizando] = useState(false);
   const [selecionado, setSelecionado] = useState<ItemDoPipelineMcmv | null>(null);
+  const [expandidas, setExpandidas] = useState<Record<string, boolean>>({});
 
   function carregar(mostrarSpinner = false) {
     if (mostrarSpinner) setAtualizando(true);
@@ -59,11 +85,14 @@ export function GestaoMcmv() {
     carregar();
   }, []);
 
+  const total = itens?.length ?? 0;
+  const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
+
   return (
     <Pagina
       titulo="Gestão de MCMV"
-      descricao="Quem está em análise de financiamento — etapa, documentos e notas, sem abrir a conversa do WhatsApp."
-      largura="xl"
+      descricao={itens === null ? 'Quem está em análise de financiamento, etapa por etapa.' : `${total} ${total === 1 ? 'financiamento em análise' : 'financiamentos em análise'} · documentos e notas sem abrir o WhatsApp`}
+      largura="cheia"
       acoes={
         <Botao tamanho="sm" variante="secundaria" icone={<RefreshCw size={14} />} carregando={atualizando} onClick={() => carregar(true)}>
           Atualizar
@@ -71,44 +100,65 @@ export function GestaoMcmv() {
       }
     >
       {itens === null ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Esqueleto className="h-40" />
-          <Esqueleto className="h-40" />
+        <div className="flex gap-3 overflow-hidden">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Esqueleto key={i} className="h-56 w-72 shrink-0" />
+          ))}
         </div>
       ) : itens.length === 0 ? (
         <Cartao>
           <Vazio icone={<FileCheck2 size={22} />} titulo="Ninguém no pipeline de MCMV ainda" texto="Quem atende encaminha um lead para cá pela conversa, no painel da triagem." />
         </Cartao>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-4">
-          {ESTADOS_MCMV.map((etapa) => {
-            const doEtapa = itens.filter((i) => i.mcmv_status === etapa);
-            return (
-              <div key={etapa} className="space-y-2">
-                <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_ETAPA[etapa] }} />
-                  <span className="truncate">{NOME_DO_ESTADO_MCMV[etapa]}</span>
-                  <span className="ml-auto shrink-0 rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[10px] font-bold text-[var(--text)]">{doEtapa.length}</span>
-                </p>
-                <div className="space-y-2">
-                  {doEtapa.map((item) => (
-                    <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
-                      <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
-                        <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          <Etiqueta tom="cinza">
-                            <Phone size={10} className="mr-0.5 inline" /> +{item.telefone}
-                          </Etiqueta>
-                        </div>
-                        <div className="mt-2 border-t border-[var(--border)] pt-1.5 text-[11px] text-[var(--text-muted)]">Atualizado {tempoDesde(item.mcmv_atualizado_em)}</div>
-                      </Cartao>
-                    </button>
-                  ))}
+        <>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Etapas</span>
+            {ESTADOS_MCMV.map((etapa) => (
+              <PilulaDeResumo key={etapa} cor={COR_DA_ETAPA[etapa]} rotulo={NOME_DO_ESTADO_MCMV[etapa]} quantidade={itens.filter((i) => i.mcmv_status === etapa).length} pct={pct(itens.filter((i) => i.mcmv_status === etapa).length)} />
+            ))}
+          </div>
+
+          <div className="flex gap-3 overflow-x-auto pb-3">
+            {ESTADOS_MCMV.map((etapa) => {
+              const doEtapa = itens.filter((i) => i.mcmv_status === etapa);
+              const expandida = expandidas[etapa];
+              const visiveis = expandida ? doEtapa : doEtapa.slice(0, LIMITE_POR_COLUNA);
+              return (
+                <div key={etapa} className="flex w-72 shrink-0 flex-col">
+                  <div className="mb-2 flex items-center gap-1.5 px-0.5">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_ETAPA[etapa] }} />
+                    <span className="truncate text-[13px] font-bold text-[var(--text)]">{NOME_DO_ESTADO_MCMV[etapa]}</span>
+                    <span className="ml-auto shrink-0 rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-muted)]">{doEtapa.length}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {doEtapa.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-6 text-center text-xs text-[var(--text-disable)]">Vazio</div>
+                    ) : (
+                      visiveis.map((item) => (
+                        <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
+                          <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
+                            <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              <Etiqueta tom="cinza">
+                                <Phone size={10} className="mr-0.5 inline" /> +{item.telefone}
+                              </Etiqueta>
+                            </div>
+                            <div className="mt-2 border-t border-[var(--border)] pt-1.5 text-[11px] text-[var(--text-muted)]">Atualizado {tempoDesde(item.mcmv_atualizado_em)}</div>
+                          </Cartao>
+                        </button>
+                      ))
+                    )}
+                    {doEtapa.length > LIMITE_POR_COLUNA && (
+                      <Botao variante="fantasma" tamanho="sm" largo onClick={() => setExpandidas((e) => ({ ...e, [etapa]: !expandida }))}>
+                        {expandida ? 'Ver menos' : `Ver todos (${doEtapa.length})`}
+                      </Botao>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {selecionado && (
@@ -164,28 +214,37 @@ function ModalDoItem({ item, onFechar, onSalvo }: { item: ItemDoPipelineMcmv; on
   return (
     <Modal aberto onFechar={onFechar} titulo={item.cliente_nome} descricao={`+${item.telefone}`} largura="lg">
       <div className="space-y-5">
-        <div>
-          <p className="mb-1.5 text-xs font-semibold text-[var(--text)]">Etapa</p>
-          <div className="flex flex-wrap gap-1.5">
-            {ESTADOS_MCMV.map((e) => (
-              <button key={e} type="button" onClick={() => setStatus(e)} className={status === e ? '' : 'opacity-60 transition-opacity hover:opacity-100'}>
-                <Etiqueta tom={TOM_DA_ETAPA[e]} tamanho="md">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Selecao rotulo="Etapa de crédito" value={status} onChange={(e) => setStatus(e.target.value as EstadoMcmv)}>
+              {ESTADOS_MCMV.map((e) => (
+                <option key={e} value={e}>
                   {NOME_DO_ESTADO_MCMV[e]}
-                </Etiqueta>
-              </button>
-            ))}
+                </option>
+              ))}
+            </Selecao>
+            <div>
+              <p className="mb-1.5 block text-xs font-semibold text-[var(--text)]">Etapa atual</p>
+              <div className="flex h-[42px] items-center rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5">
+                <Etiqueta tom={TOM_DA_ETAPA[item.mcmv_status]}>{NOME_DO_ESTADO_MCMV[item.mcmv_status]}</Etiqueta>
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-4 border-t border-[var(--border)] pt-4">
+            <Info rotulo="Entrou na análise">{new Date(item.mcmv_iniciado_em).toLocaleDateString('pt-BR')}</Info>
+            <Info rotulo="Atualizado em">{new Date(item.mcmv_atualizado_em).toLocaleDateString('pt-BR')}</Info>
           </div>
         </div>
 
         <AreaDeTexto rotulo="Nota" ajuda="Registrada no histórico junto com a mudança de etapa." rows={3} value={nota} onChange={(e) => setNota(e.target.value)} placeholder="O que foi feito, o que falta…" maxLength={1000} />
 
         <div>
-          <p className="mb-1.5 text-xs font-semibold text-[var(--text)]">Documentos</p>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">Documentos</p>
           <DocumentosDoCliente clienteId={item.cliente_id} />
         </div>
 
         <div className="border-t border-[var(--border)] pt-4">
-          <p className="mb-1.5 text-xs font-semibold text-[var(--text)]">Histórico</p>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">Histórico</p>
           {eventos === null ? (
             <p className="text-xs text-[var(--text-muted)]">Carregando…</p>
           ) : eventos.length === 0 ? (

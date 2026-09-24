@@ -1,11 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { FileCheck2, Kanban, MessageCircle, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { FileCheck2, Kanban, MessageCircle, Plus, RefreshCw, Sparkles, UserPlus, XCircle } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao } from '../ui/Cartao';
-import { Etiqueta, type TomDaEtiqueta } from '../ui/Etiqueta';
+import { Etiqueta } from '../ui/Etiqueta';
 import { Modal } from '../ui/Modal';
-import { Entrada } from '../ui/Campo';
+import { Entrada, Selecao } from '../ui/Campo';
 import { Pagina } from '../ui/Pagina';
 import { Vazio, Esqueleto } from '../ui/Estados';
 import { api, ErroDaApi } from '../lib/api';
@@ -30,6 +30,10 @@ const COR_DA_COLUNA: Record<Coluna, string> = {
   perdido: '#e11d48',
 };
 
+/** Quantos cartões cada coluna mostra antes de oferecer "ver todos" — colunas
+ * cheias (o "Em atendimento" costuma ter dezenas) não estouram a tela. */
+const LIMITE_POR_COLUNA = 12;
+
 function colunaDoItem(item: ItemDoFunilDeLeads): Coluna {
   return item.mcmv_status ? 'credito' : item.estado;
 }
@@ -41,6 +45,24 @@ function tempoDesde(iso: string): string {
   return `há ${dias} dias`;
 }
 
+function moeda(valor: number): string {
+  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+}
+
+/** A pílula da barra de resumo (origens): ícone, rótulo, contagem e a fatia do total. */
+function PilulaDeResumo({ icone, cor, rotulo, quantidade, pct }: { icone: ReactNode; cor: string; rotulo: string; quantidade: number; pct: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs shadow-[0_1px_2px_rgba(23,21,58,0.03)]">
+      <span className="flex shrink-0 items-center" style={{ color: cor }}>
+        {icone}
+      </span>
+      <span className="font-semibold text-[var(--text)]">{rotulo}:</span>
+      <span className="font-bold text-[var(--text)]">{quantidade}</span>
+      <span className="text-[var(--text-muted)]">({pct}%)</span>
+    </span>
+  );
+}
+
 /**
  * O quadro geral do funil de vendas — todas as conversas da empresa, para
  * supervisor e admin. Diferente da Gestão de MCMV (que é o recorte que o
@@ -48,12 +70,12 @@ function tempoDesde(iso: string): string {
  * a etapa geral, e encaminhar um lead para a análise de crédito.
  */
 export function GestaoDeLeads() {
-  const equipe = useDadosAtende((s) => s.equipe);
   const ir = useRotaAtende((s) => s.ir);
   const [itens, setItens] = useState<ItemDoFunilDeLeads[] | null>(null);
   const [atualizando, setAtualizando] = useState(false);
   const [selecionado, setSelecionado] = useState<ItemDoFunilDeLeads | null>(null);
   const [novoLeadAberto, setNovoLeadAberto] = useState(false);
+  const [expandidas, setExpandidas] = useState<Record<string, boolean>>({});
 
   function carregar(mostrarSpinner = false) {
     if (mostrarSpinner) setAtualizando(true);
@@ -68,15 +90,16 @@ export function GestaoDeLeads() {
     carregar();
   }, []);
 
-  const nomeDoAtendente = (id: number | null) => (id ? (equipe.find((f) => f.id === id)?.nome ?? `#${id}`) : 'Sem responsável');
+  const total = itens?.length ?? 0;
+  const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
   const doWhatsapp = itens?.filter((i) => i.origem === 'whatsapp').length ?? 0;
   const manuais = itens?.filter((i) => i.origem === 'manual').length ?? 0;
 
   return (
     <Pagina
       titulo="Gestão de Leads"
-      descricao="O funil de vendas inteiro, de todas as conversas."
-      largura="xl"
+      descricao={itens === null ? 'O funil de vendas inteiro, de todas as conversas.' : `${total} ${total === 1 ? 'negociação' : 'negociações'} · todas as conversas da empresa`}
+      largura="cheia"
       acoes={
         <div className="flex items-center gap-2">
           <Botao tamanho="sm" variante="secundaria" icone={<RefreshCw size={14} />} carregando={atualizando} onClick={() => carregar(true)}>
@@ -89,9 +112,10 @@ export function GestaoDeLeads() {
       }
     >
       {itens === null ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Esqueleto className="h-40" />
-          <Esqueleto className="h-40" />
+        <div className="flex gap-3 overflow-hidden">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Esqueleto key={i} className="h-56 w-72 shrink-0" />
+          ))}
         </div>
       ) : itens.length === 0 ? (
         <Cartao>
@@ -99,46 +123,57 @@ export function GestaoDeLeads() {
         </Cartao>
       ) : (
         <>
-          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-semibold text-[var(--text-muted)]">Origens:</span>
-            <Etiqueta tom="azul" ponto>
-              <MessageCircle size={11} className="mr-0.5 inline" /> WhatsApp: {doWhatsapp}
-            </Etiqueta>
-            <Etiqueta tom="rosa" ponto>
-              Manual: {manuais}
-            </Etiqueta>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Origens</span>
+            <PilulaDeResumo icone={<MessageCircle size={13} />} cor="#0ea5e9" rotulo="WhatsApp" quantidade={doWhatsapp} pct={pct(doWhatsapp)} />
+            <PilulaDeResumo icone={<UserPlus size={13} />} cor="#ec4899" rotulo="Manual" quantidade={manuais} pct={pct(manuais)} />
           </div>
-          <div className="grid gap-4 lg:grid-cols-7">
+
+          <div className="flex gap-3 overflow-x-auto pb-3">
             {COLUNAS.map((coluna) => {
               const doColuna = itens.filter((i) => colunaDoItem(i) === coluna);
+              const expandida = expandidas[coluna];
+              const visiveis = expandida ? doColuna : doColuna.slice(0, LIMITE_POR_COLUNA);
+              const restantes = doColuna.length - visiveis.length;
               return (
-                <div key={coluna} className="space-y-2">
-                  <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">
+                <div key={coluna} className="flex w-72 shrink-0 flex-col">
+                  <div className="mb-2 flex items-center gap-1.5 px-0.5">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_COLUNA[coluna] }} />
-                    <span className="truncate">{NOME_DA_COLUNA[coluna]}</span>
-                    <span className="ml-auto shrink-0 rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[10px] font-bold text-[var(--text)]">{doColuna.length}</span>
-                  </p>
+                    <span className="truncate text-[13px] font-bold text-[var(--text)]">{NOME_DA_COLUNA[coluna]}</span>
+                    <span className="ml-auto shrink-0 rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-muted)]">{doColuna.length}</span>
+                  </div>
                   <div className="space-y-2">
-                    {doColuna.map((item) => (
-                      <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
-                        <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
-                          <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
-                          <div className="mt-1.5 flex flex-wrap gap-1">
-                            <Etiqueta tom={item.origem === 'manual' ? 'rosa' : 'azul'}>{item.origem === 'manual' ? 'Manual' : 'WhatsApp'}</Etiqueta>
-                            {item.mcmv_status && (
-                              <Etiqueta tom="ambar">
-                                <Sparkles size={10} className="mr-0.5 inline" /> {NOME_DO_ESTADO_MCMV[item.mcmv_status]}
-                              </Etiqueta>
-                            )}
-                            {item.valor !== null && <Etiqueta tom="verde">{item.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</Etiqueta>}
-                          </div>
-                          <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-1.5 text-[11px] text-[var(--text-muted)]">
-                            <span className="truncate">{nomeDoAtendente(item.atendente_id)}</span>
-                            <span className="shrink-0">{tempoDesde(item.atualizado_em)}</span>
-                          </div>
-                        </Cartao>
-                      </button>
-                    ))}
+                    {doColuna.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-6 text-center text-xs text-[var(--text-disable)]">Vazio</div>
+                    ) : (
+                      visiveis.map((item) => (
+                        <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
+                          <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
+                            <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
+                            {item.valor !== null && item.valor > 0 && <p className="mt-0.5 text-sm font-bold text-emerald-600">{moeda(item.valor)}</p>}
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              <Etiqueta tom={item.origem === 'manual' ? 'rosa' : 'azul'}>{item.origem === 'manual' ? 'Manual' : 'WhatsApp'}</Etiqueta>
+                              {item.mcmv_status && (
+                                <Etiqueta tom="ambar">
+                                  <Sparkles size={10} className="mr-0.5 inline" /> {NOME_DO_ESTADO_MCMV[item.mcmv_status]}
+                                </Etiqueta>
+                              )}
+                            </div>
+                            <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-1.5 text-[11px] text-[var(--text-muted)]">
+                              <span className="truncate">
+                                <NomeDoAtendente id={item.atendente_id} />
+                              </span>
+                              <span className="shrink-0">{tempoDesde(item.atualizado_em)}</span>
+                            </div>
+                          </Cartao>
+                        </button>
+                      ))
+                    )}
+                    {(restantes > 0 || expandida) && doColuna.length > LIMITE_POR_COLUNA && (
+                      <Botao variante="fantasma" tamanho="sm" largo onClick={() => setExpandidas((e) => ({ ...e, [coluna]: !expandida }))}>
+                        {expandida ? 'Ver menos' : `Ver todos (${doColuna.length})`}
+                      </Botao>
+                    )}
                   </div>
                 </div>
               );
@@ -171,16 +206,34 @@ export function GestaoDeLeads() {
   );
 }
 
+/** Resolve o nome do atendente pelo id, direto do store — "Sem responsável" quando não há. */
+function NomeDoAtendente({ id }: { id: number | null }) {
+  const equipe = useDadosAtende((s) => s.equipe);
+  if (!id) return <>Sem responsável</>;
+  return <>{equipe.find((f) => f.id === id)?.nome ?? `#${id}`}</>;
+}
+
+/** Um item da grade de informações do modal: rótulo miúdo em caixa alta + valor. */
+function Info({ rotulo, children }: { rotulo: string; children: ReactNode }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">{rotulo}</p>
+      <p className="mt-0.5 text-sm font-medium text-[var(--text)]">{children}</p>
+    </div>
+  );
+}
+
 function ModalDoLead({ item, onFechar, onSalvo }: { item: ItemDoFunilDeLeads; onFechar: () => void; onSalvo: (item: ItemDoFunilDeLeads) => void }) {
+  const equipe = useDadosAtende((s) => s.equipe);
   const [estado, setEstado] = useState<EstadoDoLead>(item.estado);
   const [salvando, setSalvando] = useState(false);
   const [encaminhando, setEncaminhando] = useState(false);
 
-  async function salvarEstado() {
+  async function salvarEstado(novo: EstadoDoLead = estado) {
     setSalvando(true);
     try {
-      await api.patch(`/conversas/${item.conversa_id}/lead`, { estado });
-      onSalvo({ ...item, estado });
+      await api.patch(`/conversas/${item.conversa_id}/lead`, { estado: novo });
+      onSalvo({ ...item, estado: novo });
       toast.success('Etapa atualizada.');
     } catch (err) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível salvar.');
@@ -202,27 +255,47 @@ function ModalDoLead({ item, onFechar, onSalvo }: { item: ItemDoFunilDeLeads; on
     }
   }
 
+  const responsavel = item.atendente_id ? (equipe.find((f) => f.id === item.atendente_id)?.nome ?? `#${item.atendente_id}`) : 'Sem responsável';
+
   return (
     <Modal aberto onFechar={onFechar} titulo={item.cliente_nome} descricao={`+${item.telefone}`} largura="md">
       <div className="space-y-5">
-        <div>
-          <p className="mb-1.5 text-xs font-semibold text-[var(--text)]">Etapa</p>
-          <div className="flex flex-wrap gap-1.5">
-            {ESTADOS_DO_LEAD.map((e) => (
-              <button key={e} type="button" onClick={() => setEstado(e)} className={estado === e ? '' : 'opacity-60 transition-opacity hover:opacity-100'}>
-                <Etiqueta tom={estado === e ? 'azul' : 'cinza'} tamanho="md">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Selecao rotulo="Etapa do atendimento" value={estado} onChange={(e) => setEstado(e.target.value as EstadoDoLead)}>
+              {ESTADOS_DO_LEAD.map((e) => (
+                <option key={e} value={e}>
                   {NOME_DO_ESTADO_DO_LEAD[e]}
-                </Etiqueta>
-              </button>
-            ))}
+                </option>
+              ))}
+            </Selecao>
+            <div>
+              <p className="mb-1.5 block text-xs font-semibold text-[var(--text)]">Etapa de crédito</p>
+              <div className="flex h-[42px] items-center rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5">
+                {item.mcmv_status ? (
+                  <Etiqueta tom="ambar">
+                    <Sparkles size={10} className="mr-0.5 inline" /> {NOME_DO_ESTADO_MCMV[item.mcmv_status]}
+                  </Etiqueta>
+                ) : (
+                  <span className="text-sm text-[var(--text-muted)]">Não iniciado</span>
+                )}
+              </div>
+            </div>
           </div>
-          <Botao className="mt-3" tamanho="sm" carregando={salvando} disabled={estado === item.estado} onClick={salvarEstado}>
+          <Botao className="mt-3" tamanho="sm" carregando={salvando} disabled={estado === item.estado} onClick={() => salvarEstado()}>
             Salvar etapa
           </Botao>
         </div>
 
+        <div className="grid grid-cols-2 gap-4">
+          <Info rotulo="Responsável">{responsavel}</Info>
+          <Info rotulo="Valor proposto">{item.valor !== null && item.valor > 0 ? moeda(item.valor) : '—'}</Info>
+          <Info rotulo="Origem">{item.origem === 'manual' ? 'Manual' : 'WhatsApp'}</Info>
+          <Info rotulo="Atualizado em">{new Date(item.atualizado_em).toLocaleDateString('pt-BR')}</Info>
+        </div>
+
         <div className="border-t border-[var(--border)] pt-4">
-          <p className="mb-1.5 text-xs font-semibold text-[var(--text)]">Análise de crédito (MCMV)</p>
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">Análise de crédito (MCMV)</p>
           {item.mcmv_status ? (
             <p className="text-sm text-[var(--text-muted)]">
               Em andamento: <strong className="text-[var(--text)]">{NOME_DO_ESTADO_MCMV[item.mcmv_status]}</strong> — documentos e nota ficam na tela Gestão de MCMV.
@@ -234,7 +307,14 @@ function ModalDoLead({ item, onFechar, onSalvo }: { item: ItemDoFunilDeLeads; on
           )}
         </div>
 
-        <div className="flex justify-end border-t border-[var(--border)] pt-4">
+        <div className="flex items-center justify-between gap-2 border-t border-[var(--border)] pt-4">
+          {item.estado !== 'perdido' ? (
+            <Botao variante="perigo" tamanho="sm" icone={<XCircle size={13} />} carregando={salvando} onClick={() => salvarEstado('perdido')}>
+              Marcar como perdida
+            </Botao>
+          ) : (
+            <span />
+          )}
           <Botao variante="fantasma" onClick={onFechar}>
             Fechar
           </Botao>
