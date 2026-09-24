@@ -49,6 +49,11 @@ function moeda(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 }
 
+/** O somatório do topo da coluna, curto: "R$ 160 mil". */
+function moedaCompacta(valor: number): string {
+  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1 });
+}
+
 /** A pílula da barra de resumo (origens): ícone, rótulo, contagem e a fatia do total. */
 function PilulaDeResumo({ icone, cor, rotulo, quantidade, pct }: { icone: ReactNode; cor: string; rotulo: string; quantidade: number; pct: number }) {
   return (
@@ -135,16 +140,18 @@ export function GestaoDeLeads() {
               const expandida = expandidas[coluna];
               const visiveis = expandida ? doColuna : doColuna.slice(0, LIMITE_POR_COLUNA);
               const restantes = doColuna.length - visiveis.length;
+              const soma = doColuna.reduce((t, i) => t + (i.valor ?? 0), 0);
               return (
-                <div key={coluna} className="flex w-72 shrink-0 flex-col">
-                  <div className="mb-2 flex items-center gap-1.5 px-0.5">
+                <div key={coluna} className="flex w-72 shrink-0 flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-2)]/70 p-2">
+                  <div className="flex items-center gap-1.5 px-1.5 pb-2 pt-1">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_COLUNA[coluna] }} />
-                    <span className="truncate text-[13px] font-bold text-[var(--text)]">{NOME_DA_COLUNA[coluna]}</span>
-                    <span className="ml-auto shrink-0 rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-muted)]">{doColuna.length}</span>
+                    <span className="truncate text-[13px] font-semibold text-[var(--text)]">{NOME_DA_COLUNA[coluna]}</span>
+                    <span className="ml-auto shrink-0 text-[11px] font-semibold tabular-nums text-[var(--text-muted)]">{doColuna.length}</span>
                   </div>
+                  {soma > 0 && <p className="px-1.5 pb-2 text-xs font-bold text-emerald-600">{moedaCompacta(soma)}</p>}
                   <div className="space-y-2">
                     {doColuna.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-6 text-center text-xs text-[var(--text-disable)]">Vazio</div>
+                      <div className="px-3 py-8 text-center text-xs text-[var(--text-disable)]">Vazio</div>
                     ) : (
                       visiveis.map((item) => (
                         <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">

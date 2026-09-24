@@ -124,15 +124,15 @@ export function GestaoMcmv() {
               const expandida = expandidas[etapa];
               const visiveis = expandida ? doEtapa : doEtapa.slice(0, LIMITE_POR_COLUNA);
               return (
-                <div key={etapa} className="flex w-72 shrink-0 flex-col">
-                  <div className="mb-2 flex items-center gap-1.5 px-0.5">
+                <div key={etapa} className="flex w-72 shrink-0 flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-2)]/70 p-2">
+                  <div className="flex items-center gap-1.5 px-1.5 pb-2 pt-1">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_ETAPA[etapa] }} />
-                    <span className="truncate text-[13px] font-bold text-[var(--text)]">{NOME_DO_ESTADO_MCMV[etapa]}</span>
-                    <span className="ml-auto shrink-0 rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[11px] font-bold text-[var(--text-muted)]">{doEtapa.length}</span>
+                    <span className="truncate text-[13px] font-semibold text-[var(--text)]">{NOME_DO_ESTADO_MCMV[etapa]}</span>
+                    <span className="ml-auto shrink-0 text-[11px] font-semibold tabular-nums text-[var(--text-muted)]">{doEtapa.length}</span>
                   </div>
                   <div className="space-y-2">
                     {doEtapa.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-[var(--border)] px-3 py-6 text-center text-xs text-[var(--text-disable)]">Vazio</div>
+                      <div className="px-3 py-8 text-center text-xs text-[var(--text-disable)]">Vazio</div>
                     ) : (
                       visiveis.map((item) => (
                         <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
