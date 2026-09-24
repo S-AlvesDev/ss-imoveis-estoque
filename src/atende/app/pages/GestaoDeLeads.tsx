@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { FileCheck2, Kanban, MessageCircle, Plus, RefreshCw, Sparkles, UserPlus, XCircle } from 'lucide-react';
+import { FileCheck2, Kanban, MessageCircle, Plus, RefreshCw, Search, Sparkles, UserPlus, XCircle } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao } from '../ui/Cartao';
 import { Etiqueta } from '../ui/Etiqueta';
@@ -13,30 +13,24 @@ import { useDadosAtende } from '../store/dados';
 import { TELAS, useRotaAtende } from '../router';
 import { ESTADOS_DO_LEAD, NOME_DO_ESTADO_DO_LEAD, NOME_DO_ESTADO_MCMV, type EstadoDoLead, type ItemDoFunilDeLeads } from '../../shared/tipos';
 
-/** As colunas do quadro: o funil geral, mais "Em Análise de Crédito" — que é
- * um recorte por `mcmv_status`, não um estado a mais no funil. Um lead com
- * mcmv_status preenchido aparece aqui, não na coluna do `estado` por baixo. */
-type Coluna = EstadoDoLead | 'credito';
-const COLUNAS: Coluna[] = ['novo', 'em_atendimento', 'em_negociacao', 'aguardando_cliente', 'credito', 'convertido', 'perdido'];
-const NOME_DA_COLUNA: Record<Coluna, string> = { ...NOME_DO_ESTADO_DO_LEAD, credito: 'Em Análise de Crédito' };
-/** A bolinha de cada coluna — a mesma linguagem de cor das etiquetas do resto do produto. */
-const COR_DA_COLUNA: Record<Coluna, string> = {
+/**
+ * As colunas do quadro são o funil de vendas — e só ele. A análise de
+ * crédito (MCMV) é uma dimensão PARALELA: anda por conta própria e aparece
+ * como etiqueta no cartão e no filtro, nunca prendendo o lead numa coluna.
+ * Antes o `mcmv_status` virava uma coluna e o cartão ficava preso nela: a
+ * etapa era salva mas o cartão não saía do lugar, e o funil travava.
+ */
+const COR_DA_COLUNA: Record<EstadoDoLead, string> = {
   novo: '#3b82f6',
   em_atendimento: '#7c3aed',
   em_negociacao: '#d97706',
   aguardando_cliente: '#94a3b8',
-  credito: '#f59e0b',
   convertido: '#16a34a',
   perdido: '#e11d48',
 };
 
-/** Quantos cartões cada coluna mostra antes de oferecer "ver todos" — colunas
- * cheias (o "Em atendimento" costuma ter dezenas) não estouram a tela. */
+/** Quantos cartões cada coluna mostra antes de oferecer "ver todos". */
 const LIMITE_POR_COLUNA = 12;
-
-function colunaDoItem(item: ItemDoFunilDeLeads): Coluna {
-  return item.mcmv_status ? 'credito' : item.estado;
-}
 
 function tempoDesde(iso: string): string {
   const dias = Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000));
@@ -52,6 +46,14 @@ function moeda(valor: number): string {
 /** O somatório do topo da coluna, curto: "R$ 160 mil". */
 function moedaCompacta(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1 });
+}
+
+/** Tira acento e caixa, para a busca casar "Jose" com "José". */
+function normalizar(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
 }
 
 /** A pílula da barra de resumo (origens): ícone, rótulo, contagem e a fatia do total. */
@@ -72,7 +74,8 @@ function PilulaDeResumo({ icone, cor, rotulo, quantidade, pct }: { icone: ReactN
  * O quadro geral do funil de vendas — todas as conversas da empresa, para
  * supervisor e admin. Diferente da Gestão de MCMV (que é o recorte que o
  * papel `analista` trabalha, sem abrir conversa): aqui dá para ver e mudar
- * a etapa geral, e encaminhar um lead para a análise de crédito.
+ * a etapa geral — arrastando o cartão ou pelo modal — e encaminhar um lead
+ * para a análise de crédito.
  */
 export function GestaoDeLeads() {
   const ir = useRotaAtende((s) => s.ir);
@@ -81,6 +84,10 @@ export function GestaoDeLeads() {
   const [selecionado, setSelecionado] = useState<ItemDoFunilDeLeads | null>(null);
   const [novoLeadAberto, setNovoLeadAberto] = useState(false);
   const [expandidas, setExpandidas] = useState<Record<string, boolean>>({});
+  const [busca, setBusca] = useState('');
+  const [filtro, setFiltro] = useState<'todos' | 'credito' | 'sem_responsavel'>('todos');
+  const [arrastando, setArrastando] = useState<string | null>(null);
+  const [colunaSobre, setColunaSobre] = useState<EstadoDoLead | null>(null);
 
   function carregar(mostrarSpinner = false) {
     if (mostrarSpinner) setAtualizando(true);
@@ -95,15 +102,48 @@ export function GestaoDeLeads() {
     carregar();
   }, []);
 
+  /** Move o lead de coluna: pinta na hora e desfaz se o servidor recusar. */
+  async function mover(leadId: string, novo: EstadoDoLead) {
+    const item = itens?.find((i) => i.lead_id === leadId);
+    if (!item || item.estado === novo) return;
+    const anterior = item.estado;
+    setItens((atual) => (atual ?? []).map((i) => (i.lead_id === leadId ? { ...i, estado: novo } : i)));
+    try {
+      await api.patch(`/conversas/${item.conversa_id}/lead`, { estado: novo });
+    } catch (err) {
+      setItens((atual) => (atual ?? []).map((i) => (i.lead_id === leadId ? { ...i, estado: anterior } : i)));
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível mover o lead.');
+    }
+  }
+
+  function soltarNa(coluna: EstadoDoLead) {
+    return (e: DragEvent) => {
+      e.preventDefault();
+      setColunaSobre(null);
+      setArrastando(null);
+      const id = e.dataTransfer.getData('text/plain');
+      if (id) void mover(id, coluna);
+    };
+  }
+
+  const termo = normalizar(busca.trim());
+  const visiveis = (itens ?? []).filter((i) => {
+    if (filtro === 'credito' && !i.mcmv_status) return false;
+    if (filtro === 'sem_responsavel' && i.atendente_id) return false;
+    if (termo && !normalizar(i.cliente_nome).includes(termo) && !i.telefone.includes(termo)) return false;
+    return true;
+  });
+
   const total = itens?.length ?? 0;
   const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
   const doWhatsapp = itens?.filter((i) => i.origem === 'whatsapp').length ?? 0;
   const manuais = itens?.filter((i) => i.origem === 'manual').length ?? 0;
+  const filtrando = termo !== '' || filtro !== 'todos';
 
   return (
     <Pagina
       titulo="Gestão de Leads"
-      descricao={itens === null ? 'O funil de vendas inteiro, de todas as conversas.' : `${total} ${total === 1 ? 'negociação' : 'negociações'} · todas as conversas da empresa`}
+      descricao={itens === null ? 'O funil de vendas inteiro, de todas as conversas.' : `${total} ${total === 1 ? 'negociação' : 'negociações'} · arraste um cartão para mudar a etapa`}
       largura="cheia"
       acoes={
         <div className="flex items-center gap-2">
@@ -128,6 +168,27 @@ export function GestaoDeLeads() {
         </Cartao>
       ) : (
         <>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Entrada
+              className="w-full sm:w-72"
+              icone={<Search size={15} />}
+              placeholder="Buscar por nome ou telefone…"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              aria-label="Buscar lead"
+            />
+            <Selecao className="w-full sm:w-56" value={filtro} onChange={(e) => setFiltro(e.target.value as typeof filtro)} aria-label="Filtrar leads">
+              <option value="todos">Todos</option>
+              <option value="credito">Em análise de crédito</option>
+              <option value="sem_responsavel">Sem responsável</option>
+            </Selecao>
+            {filtrando && (
+              <span className="text-xs text-[var(--text-muted)]">
+                {visiveis.length} de {total}
+              </span>
+            )}
+          </div>
+
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Origens</span>
             <PilulaDeResumo icone={<MessageCircle size={13} />} cor="#0ea5e9" rotulo="WhatsApp" quantidade={doWhatsapp} pct={pct(doWhatsapp)} />
@@ -135,26 +196,57 @@ export function GestaoDeLeads() {
           </div>
 
           <div className="flex gap-3 overflow-x-auto pb-3">
-            {COLUNAS.map((coluna) => {
-              const doColuna = itens.filter((i) => colunaDoItem(i) === coluna);
+            {ESTADOS_DO_LEAD.map((coluna) => {
+              const doColuna = visiveis.filter((i) => i.estado === coluna);
               const expandida = expandidas[coluna];
-              const visiveis = expandida ? doColuna : doColuna.slice(0, LIMITE_POR_COLUNA);
-              const restantes = doColuna.length - visiveis.length;
+              const mostrados = expandida ? doColuna : doColuna.slice(0, LIMITE_POR_COLUNA);
               const soma = doColuna.reduce((t, i) => t + (i.valor ?? 0), 0);
+              const alvo = colunaSobre === coluna;
               return (
-                <div key={coluna} className="flex w-72 shrink-0 flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-2)]/70 p-2">
+                <div
+                  key={coluna}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (colunaSobre !== coluna) setColunaSobre(coluna);
+                  }}
+                  onDragLeave={() => setColunaSobre((c) => (c === coluna ? null : c))}
+                  onDrop={soltarNa(coluna)}
+                  className={`flex w-72 shrink-0 flex-col rounded-2xl border p-2 transition-colors ${alvo ? 'border-[var(--brand)] bg-[var(--brand-soft)]/60' : 'border-[var(--border)] bg-[var(--bg-2)]/70'}`}
+                >
                   <div className="flex items-center gap-1.5 px-1.5 pb-2 pt-1">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_COLUNA[coluna] }} />
-                    <span className="truncate text-[13px] font-semibold text-[var(--text)]">{NOME_DA_COLUNA[coluna]}</span>
+                    <span className="truncate text-[13px] font-semibold text-[var(--text)]">{NOME_DO_ESTADO_DO_LEAD[coluna]}</span>
                     <span className="ml-auto shrink-0 text-[11px] font-semibold tabular-nums text-[var(--text-muted)]">{doColuna.length}</span>
                   </div>
                   {soma > 0 && <p className="px-1.5 pb-2 text-xs font-bold text-emerald-600">{moedaCompacta(soma)}</p>}
                   <div className="space-y-2">
                     {doColuna.length === 0 ? (
-                      <div className="px-3 py-8 text-center text-xs text-[var(--text-disable)]">Vazio</div>
+                      <div className="px-3 py-8 text-center text-xs text-[var(--text-disable)]">{alvo ? 'Solte aqui' : 'Vazio'}</div>
                     ) : (
-                      visiveis.map((item) => (
-                        <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
+                      mostrados.map((item) => (
+                        <div
+                          key={item.lead_id}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('text/plain', item.lead_id);
+                            e.dataTransfer.effectAllowed = 'move';
+                            setArrastando(item.lead_id);
+                          }}
+                          onDragEnd={() => {
+                            setArrastando(null);
+                            setColunaSobre(null);
+                          }}
+                          onClick={() => setSelecionado(item)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelecionado(item);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          className={`cursor-grab active:cursor-grabbing ${arrastando === item.lead_id ? 'opacity-40' : ''}`}
+                        >
                           <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
                             <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
                             {item.valor !== null && item.valor > 0 && <p className="mt-0.5 text-sm font-bold text-emerald-600">{moeda(item.valor)}</p>}
@@ -173,10 +265,10 @@ export function GestaoDeLeads() {
                               <span className="shrink-0">{tempoDesde(item.atualizado_em)}</span>
                             </div>
                           </Cartao>
-                        </button>
+                        </div>
                       ))
                     )}
-                    {(restantes > 0 || expandida) && doColuna.length > LIMITE_POR_COLUNA && (
+                    {doColuna.length > LIMITE_POR_COLUNA && (
                       <Botao variante="fantasma" tamanho="sm" largo onClick={() => setExpandidas((e) => ({ ...e, [coluna]: !expandida }))}>
                         {expandida ? 'Ver menos' : `Ver todos (${doColuna.length})`}
                       </Botao>
@@ -305,7 +397,7 @@ function ModalDoLead({ item, onFechar, onSalvo }: { item: ItemDoFunilDeLeads; on
           <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)]">Análise de crédito (MCMV)</p>
           {item.mcmv_status ? (
             <p className="text-sm text-[var(--text-muted)]">
-              Em andamento: <strong className="text-[var(--text)]">{NOME_DO_ESTADO_MCMV[item.mcmv_status]}</strong> — documentos e nota ficam na tela Gestão de MCMV.
+              Em andamento: <strong className="text-[var(--text)]">{NOME_DO_ESTADO_MCMV[item.mcmv_status]}</strong> — documentos e nota ficam na tela Gestão de MCMV. O lead segue andando pelo funil normalmente.
             </p>
           ) : (
             <Botao tamanho="sm" variante="secundaria" icone={<FileCheck2 size={13} />} carregando={encaminhando} onClick={encaminhar}>

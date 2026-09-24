@@ -1,11 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type DragEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { FileCheck2, Phone, RefreshCw } from 'lucide-react';
+import { FileCheck2, Phone, RefreshCw, Search } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao } from '../ui/Cartao';
 import { Etiqueta } from '../ui/Etiqueta';
 import { Modal } from '../ui/Modal';
-import { AreaDeTexto, Selecao } from '../ui/Campo';
+import { AreaDeTexto, Entrada, Selecao } from '../ui/Campo';
 import { Pagina } from '../ui/Pagina';
 import { Vazio, Esqueleto } from '../ui/Estados';
 import { DocumentosDoCliente } from '../ui/DocumentosDoCliente';
@@ -36,6 +36,14 @@ function tempoDesde(iso: string): string {
   if (dias <= 0) return 'hoje';
   if (dias === 1) return 'há 1 dia';
   return `há ${dias} dias`;
+}
+
+/** Tira acento e caixa, para a busca casar "Jose" com "José". */
+function normalizar(texto: string): string {
+  return texto
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
 }
 
 /** A pílula da barra de resumo: bolinha da etapa, rótulo, contagem e a fatia do total. */
@@ -71,6 +79,9 @@ export function GestaoMcmv() {
   const [atualizando, setAtualizando] = useState(false);
   const [selecionado, setSelecionado] = useState<ItemDoPipelineMcmv | null>(null);
   const [expandidas, setExpandidas] = useState<Record<string, boolean>>({});
+  const [busca, setBusca] = useState('');
+  const [arrastando, setArrastando] = useState<string | null>(null);
+  const [colunaSobre, setColunaSobre] = useState<EstadoMcmv | null>(null);
 
   function carregar(mostrarSpinner = false) {
     if (mostrarSpinner) setAtualizando(true);
@@ -85,13 +96,41 @@ export function GestaoMcmv() {
     carregar();
   }, []);
 
+  /** Move o item de etapa: pinta na hora e desfaz se o servidor recusar. */
+  async function mover(leadId: string, nova: EstadoMcmv) {
+    const item = itens?.find((i) => i.lead_id === leadId);
+    if (!item || item.mcmv_status === nova) return;
+    const anterior = item.mcmv_status;
+    setItens((atual) => (atual ?? []).map((i) => (i.lead_id === leadId ? { ...i, mcmv_status: nova } : i)));
+    try {
+      const r = await api.put<{ item: ItemDoPipelineMcmv }>(`/mcmv/${leadId}`, { status: nova });
+      setItens((atual) => (atual ?? []).map((i) => (i.lead_id === leadId ? r.item : i)));
+    } catch (err) {
+      setItens((atual) => (atual ?? []).map((i) => (i.lead_id === leadId ? { ...i, mcmv_status: anterior } : i)));
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível mover a análise.');
+    }
+  }
+
+  function soltarNa(etapa: EstadoMcmv) {
+    return (e: DragEvent) => {
+      e.preventDefault();
+      setColunaSobre(null);
+      setArrastando(null);
+      const id = e.dataTransfer.getData('text/plain');
+      if (id) void mover(id, etapa);
+    };
+  }
+
+  const termo = normalizar(busca.trim());
+  const visiveis = (itens ?? []).filter((i) => !termo || normalizar(i.cliente_nome).includes(termo) || i.telefone.includes(termo));
+
   const total = itens?.length ?? 0;
   const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
 
   return (
     <Pagina
       titulo="Gestão de MCMV"
-      descricao={itens === null ? 'Quem está em análise de financiamento, etapa por etapa.' : `${total} ${total === 1 ? 'financiamento em análise' : 'financiamentos em análise'} · documentos e notas sem abrir o WhatsApp`}
+      descricao={itens === null ? 'Quem está em análise de financiamento, etapa por etapa.' : `${total} ${total === 1 ? 'financiamento em análise' : 'financiamentos em análise'} · arraste um cartão para mudar a etapa`}
       largura="cheia"
       acoes={
         <Botao tamanho="sm" variante="secundaria" icone={<RefreshCw size={14} />} carregando={atualizando} onClick={() => carregar(true)}>
@@ -111,6 +150,22 @@ export function GestaoMcmv() {
         </Cartao>
       ) : (
         <>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Entrada
+              className="w-full sm:w-72"
+              icone={<Search size={15} />}
+              placeholder="Buscar por nome ou telefone…"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              aria-label="Buscar no pipeline"
+            />
+            {termo && (
+              <span className="text-xs text-[var(--text-muted)]">
+                {visiveis.length} de {total}
+              </span>
+            )}
+          </div>
+
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">Etapas</span>
             {ESTADOS_MCMV.map((etapa) => (
@@ -120,11 +175,21 @@ export function GestaoMcmv() {
 
           <div className="flex gap-3 overflow-x-auto pb-3">
             {ESTADOS_MCMV.map((etapa) => {
-              const doEtapa = itens.filter((i) => i.mcmv_status === etapa);
+              const doEtapa = visiveis.filter((i) => i.mcmv_status === etapa);
               const expandida = expandidas[etapa];
-              const visiveis = expandida ? doEtapa : doEtapa.slice(0, LIMITE_POR_COLUNA);
+              const mostrados = expandida ? doEtapa : doEtapa.slice(0, LIMITE_POR_COLUNA);
+              const alvo = colunaSobre === etapa;
               return (
-                <div key={etapa} className="flex w-72 shrink-0 flex-col rounded-2xl border border-[var(--border)] bg-[var(--bg-2)]/70 p-2">
+                <div
+                  key={etapa}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (colunaSobre !== etapa) setColunaSobre(etapa);
+                  }}
+                  onDragLeave={() => setColunaSobre((c) => (c === etapa ? null : c))}
+                  onDrop={soltarNa(etapa)}
+                  className={`flex w-72 shrink-0 flex-col rounded-2xl border p-2 transition-colors ${alvo ? 'border-[var(--brand)] bg-[var(--brand-soft)]/60' : 'border-[var(--border)] bg-[var(--bg-2)]/70'}`}
+                >
                   <div className="flex items-center gap-1.5 px-1.5 pb-2 pt-1">
                     <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_ETAPA[etapa] }} />
                     <span className="truncate text-[13px] font-semibold text-[var(--text)]">{NOME_DO_ESTADO_MCMV[etapa]}</span>
@@ -132,10 +197,32 @@ export function GestaoMcmv() {
                   </div>
                   <div className="space-y-2">
                     {doEtapa.length === 0 ? (
-                      <div className="px-3 py-8 text-center text-xs text-[var(--text-disable)]">Vazio</div>
+                      <div className="px-3 py-8 text-center text-xs text-[var(--text-disable)]">{alvo ? 'Solte aqui' : 'Vazio'}</div>
                     ) : (
-                      visiveis.map((item) => (
-                        <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
+                      mostrados.map((item) => (
+                        <div
+                          key={item.lead_id}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('text/plain', item.lead_id);
+                            e.dataTransfer.effectAllowed = 'move';
+                            setArrastando(item.lead_id);
+                          }}
+                          onDragEnd={() => {
+                            setArrastando(null);
+                            setColunaSobre(null);
+                          }}
+                          onClick={() => setSelecionado(item)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelecionado(item);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          className={`cursor-grab active:cursor-grabbing ${arrastando === item.lead_id ? 'opacity-40' : ''}`}
+                        >
                           <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
                             <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
                             <div className="mt-1.5 flex flex-wrap gap-1">
@@ -145,7 +232,7 @@ export function GestaoMcmv() {
                             </div>
                             <div className="mt-2 border-t border-[var(--border)] pt-1.5 text-[11px] text-[var(--text-muted)]">Atualizado {tempoDesde(item.mcmv_atualizado_em)}</div>
                           </Cartao>
-                        </button>
+                        </div>
                       ))
                     )}
                     {doEtapa.length > LIMITE_POR_COLUNA && (
