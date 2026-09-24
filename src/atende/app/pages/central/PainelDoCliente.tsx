@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import { Check, FileText, GitMerge, MessageSquare, Phone, Plus, Tag } from 'lucide-react';
 import { DocumentosDoCliente } from '../../ui/DocumentosDoCliente';
-import { Entrada, AreaDeTexto } from '../../ui/Campo';
+import { Entrada, AreaDeTexto, Interruptor } from '../../ui/Campo';
 import { Botao } from '../../ui/Botao';
 import { Avatar } from '../../ui/Avatar';
 import { Etiqueta } from '../../ui/Etiqueta';
@@ -36,6 +36,7 @@ export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
   const [email, setEmail] = useState(c.email ?? '');
   const [obs, setObs] = useState(c.observacoes ?? '');
   const [salvando, setSalvando] = useState(false);
+  const [salvandoIa, setSalvandoIa] = useState(false);
   const [novaEtiqueta, setNovaEtiqueta] = useState('');
   const [imoveis, setImoveis] = useState<Array<{ id: string; nome: string; categoria: string | null }>>([]);
 
@@ -67,6 +68,20 @@ export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível salvar.');
     } finally {
       setSalvando(false);
+    }
+  }
+
+  /** Liga/desliga a IA só para este contato. Salva na hora — é um interruptor, não um formulário. */
+  async function alternarIa(ligado: boolean) {
+    setSalvandoIa(true);
+    try {
+      const r = await api.patch<{ cliente: Cliente }>(`/clientes/${c.id}`, { ia_ativa: ligado });
+      aplicarConversa({ ...conversa, cliente: r.cliente });
+      toast.success(ligado ? 'A IA volta a atender este contato.' : 'A IA não atende mais este contato.');
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível salvar.');
+    } finally {
+      setSalvandoIa(false);
     }
   }
 
@@ -189,6 +204,18 @@ export function PainelDoCliente({ conversa }: { conversa: Conversa }) {
           </Botao>
         )}
         {c.nome_whatsapp && <p className="text-[11px] text-[var(--text-muted)]">No WhatsApp: {c.nome_whatsapp}</p>}
+      </section>
+
+      {/* A IA deste contato — o gerente, o contador, um parceiro não precisam de triagem. */}
+      <section className="space-y-3">
+        <Rotulo>Inteligência artificial</Rotulo>
+        <Interruptor
+          ligado={c.ia_ativa !== false}
+          desabilitado={salvandoIa}
+          onChange={alternarIa}
+          titulo="A IA atende este contato"
+          descricao="Desligue para quem não é cliente. As mensagens dessa pessoa vão direto para a fila, sem a IA responder nem classificar."
+        />
       </section>
 
       <Historico conversa={conversa} />

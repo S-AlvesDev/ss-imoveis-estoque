@@ -197,6 +197,8 @@ export interface Cliente {
   foto_url: string | null;
   email: string | null;
   observacoes: string | null;
+  /** false = a IA não tria as conversas deste contato; elas vão direto para a fila. */
+  ia_ativa: boolean;
   primeiro_contato_em: string;
   ultimo_contato_em: string;
 }

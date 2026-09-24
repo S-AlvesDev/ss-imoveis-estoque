@@ -333,7 +333,7 @@ interface ConversaParaTriar {
   conexao_id: string | null;
   estado: string;
   aberta_em: string | null;
-  cliente: { telefone: string; nome: string | null; nome_whatsapp: string | null } | null;
+  cliente: { telefone: string; nome: string | null; nome_whatsapp: string | null; ia_ativa: boolean | null } | null;
 }
 
 interface EmpresaCompleta extends EmpresaParaTriagem {
@@ -372,9 +372,19 @@ export async function triagemAtiva(empresaId: string): Promise<boolean> {
  * presa: se a IA falhar, a conversa vai para a fila sem time.
  */
 export async function triar(conversaId: string, mensagemId: string | null): Promise<ResultadoDaTriagem | null> {
-  const { data: c } = await supabaseServer.from('atende_conversas').select('id, empresa_id, cliente_id, conexao_id, estado, aberta_em, cliente:atende_clientes(telefone, nome, nome_whatsapp)').eq('id', conversaId).maybeSingle();
+  const { data: c } = await supabaseServer.from('atende_conversas').select('id, empresa_id, cliente_id, conexao_id, estado, aberta_em, cliente:atende_clientes(telefone, nome, nome_whatsapp, ia_ativa)').eq('id', conversaId).maybeSingle();
   const conversa = c as unknown as ConversaParaTriar | null;
   if (!conversa || (conversa.estado !== 'nova' && conversa.estado !== 'em_triagem')) return null;
+
+  // Contato com a IA desligada (o gerente, o contador, um parceiro): não
+  // classifica nem responde — vai direto para a fila, como quando a empresa
+  // desliga a triagem. O webhook já evita chegar aqui; esta é a garantia para
+  // a conversa que ficou em 'nova' antes de desligarem a IA do contato.
+  if (conversa.cliente?.ia_ativa === false) {
+    await supabaseServer.from('atende_conversas').update({ estado: 'na_fila' }).eq('id', conversaId).in('estado', ['nova', 'em_triagem']);
+    return null;
+  }
+
   const empresaId = conversa.empresa_id;
   const desde = conversa.aberta_em ?? '1970-01-01T00:00:00.000Z';
 

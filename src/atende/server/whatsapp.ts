@@ -179,14 +179,14 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   // ---- Cliente (o mesmo número com e sem o nono dígito é a mesma pessoa)
   // Se houver dois cadastros (com e sem o 9 — de antes de reconhecermos as duas grafias), fica com a grafia
   // exata; empatando, o de contato mais recente. Nunca "o primeiro que o banco devolver".
-  const { data: candidatos } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url, telefone, ultimo_contato_em').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).order('ultimo_contato_em', { ascending: false, nullsFirst: false }).limit(5);
+  const { data: candidatos } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url, telefone, ia_ativa, ultimo_contato_em').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).order('ultimo_contato_em', { ascending: false, nullsFirst: false }).limit(5);
   let cliente = ((candidatos || []) as any[]).find((c) => c.telefone === e.telefone) ?? ((candidatos || []) as any[])[0] ?? null;
   if (!cliente) {
     const foto = await fotoDoContato(e.telefone, conexao.instancia);
-    const { data: novo, error } = await supabaseServer.from('atende_clientes').insert({ empresa_id: empresaId, telefone: e.telefone, nome_whatsapp: e.nomeWhatsapp, foto_url: foto, primeiro_contato_em: agora, ultimo_contato_em: agora }).select('id, nome, nome_whatsapp, foto_url').single();
+    const { data: novo, error } = await supabaseServer.from('atende_clientes').insert({ empresa_id: empresaId, telefone: e.telefone, nome_whatsapp: e.nomeWhatsapp, foto_url: foto, primeiro_contato_em: agora, ultimo_contato_em: agora }).select('id, nome, nome_whatsapp, foto_url, ia_ativa').single();
     if (error || !novo) {
       // Duas mensagens ao mesmo tempo do mesmo número novo: a segunda acha a primeira.
-      const { data: existente } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).limit(1).maybeSingle();
+      const { data: existente } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url, ia_ativa').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).limit(1).maybeSingle();
       if (!existente) throw error ?? new Error('não criou o cliente');
       cliente = existente;
     } else cliente = novo;
@@ -210,9 +210,11 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   let conversa = await fioDoContato();
   let nova = false;
   let reaberta = false;
-  // Cliente escreveu: 'nova' para a IA triar (ou direto na fila, se a empresa desligou a triagem).
+  // Cliente escreveu: 'nova' para a IA triar (ou direto na fila, se a empresa desligou a
+  // triagem, ou se este contato tem a IA desligada — o gerente, o contador, um parceiro).
   // A empresa escreveu primeiro pelo celular: alguém já está atendendo por lá.
-  const estadoInicial = async () => (e.fromMe ? 'em_atendimento' : (await triagemAtiva(empresaId)) ? 'nova' : 'na_fila');
+  const iaDoContato = cliente.ia_ativa !== false;
+  const estadoInicial = async () => (e.fromMe ? 'em_atendimento' : iaDoContato && (await triagemAtiva(empresaId)) ? 'nova' : 'na_fila');
   if (conversa?.estado === 'encerrada') {
     // Reabre: novo atendimento (contadores do zero), mesmo fio. Quem atendia antes não é
     // dono de novo automaticamente — a triagem/fila decide; pelo celular, fica sem dono como antes.

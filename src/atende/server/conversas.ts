@@ -64,7 +64,7 @@ export function filtroDaVisao(v: Visao): string | null {
 // ---------------------------------------------------------------------------
 
 const CONVERSA_COLUNAS = 'id, cliente_id, conexao_id, estado, time_id, atendente_id, prioridade, assunto, intencao, resumo, aberta_em, primeira_resposta_em, ultima_mensagem_em, ultima_mensagem_do_cliente_em, ultima_mensagem_texto, ultima_mensagem_de, nao_lidas, encerrada_em, avaliacao_pedida_em, avaliacao_nota, atualizado_em';
-const CLIENTE_COLUNAS = 'id, telefone, nome, nome_whatsapp, foto_url, email, observacoes, primeiro_contato_em, ultimo_contato_em';
+const CLIENTE_COLUNAS = 'id, telefone, nome, nome_whatsapp, foto_url, email, observacoes, ia_ativa, primeiro_contato_em, ultimo_contato_em';
 const MENSAGEM_COLUNAS = 'id, conversa_id, direcao, autor_tipo, autor_id, tipo, texto, midia, wa_id, status, erro, respondendo_a, criado_em';
 const COM_CLIENTE = `${CONVERSA_COLUNAS}, cliente:atende_clientes(${CLIENTE_COLUNAS}), etiquetas:atende_conversa_etiquetas(etiqueta_id)`;
 
@@ -418,11 +418,12 @@ export async function marcarComoLida(req: RequisicaoAtende, conversaId: string):
   }
 }
 
-export async function atualizarCliente(req: RequisicaoAtende, clienteId: string, dados: { nome?: unknown; email?: unknown; observacoes?: unknown }): Promise<Cliente> {
+export async function atualizarCliente(req: RequisicaoAtende, clienteId: string, dados: { nome?: unknown; email?: unknown; observacoes?: unknown; ia_ativa?: unknown }): Promise<Cliente> {
   const patch: Record<string, unknown> = {};
   if (dados.nome !== undefined) patch.nome = String(dados.nome ?? '').trim().slice(0, 80) || null;
   if (dados.email !== undefined) patch.email = String(dados.email ?? '').trim().toLowerCase().slice(0, 120) || null;
   if (dados.observacoes !== undefined) patch.observacoes = String(dados.observacoes ?? '').trim().slice(0, 2000) || null;
+  if (dados.ia_ativa !== undefined) patch.ia_ativa = dados.ia_ativa !== false && dados.ia_ativa !== 'false';
   if (!Object.keys(patch).length) throw new ErroDeConversa('Nada para alterar.');
   const { data, error } = await req.dbAtende!.from('atende_clientes').update(patch).eq('id', clienteId).select(CLIENTE_COLUNAS).single();
   if (error || !data) throw error ?? new ErroDeConversa('Cliente não encontrado.', 404);
