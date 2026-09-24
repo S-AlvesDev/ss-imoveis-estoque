@@ -459,6 +459,9 @@ export function criarRouterAtende(): express.Router {
       const { data: novo, error } = await req.dbAtende!.from('atende_usuarios').insert({ nome: v.valor.nome, email: v.valor.email, senha: hash, papel: v.valor.papel }).select('id').single();
       if (error) {
         if (error.code === '23505') return res.status(409).json({ error: 'Já existe uma conta com este e-mail.' });
+        // 23514 = trava do Postgres. Acontece quando o papel existe no código
+        // mas a migração que o libera no banco ainda não foi aplicada.
+        if (error.code === '23514') return res.status(409).json({ error: `Este banco ainda não aceita o papel "${NOME_DO_PAPEL[v.valor.papel]}" — falta aplicar a migração 049.` });
         throw error;
       }
       await gravarTimesDoUsuario(req, Number(novo.id), v.valor.papel, v.valor.times);
@@ -473,7 +476,7 @@ export function criarRouterAtende(): express.Router {
       }
       res.status(201).json({ equipe: await carregarEquipe(req), times: await carregarTimes(req) });
     } catch (err: any) {
-      console.error('[POST /api/atende/equipe] erro:', err.message);
+      console.error('[POST /api/atende/equipe] erro:', err.code ?? '-', err.message, err.details ?? '');
       res.status(500).json({ error: 'Erro ao cadastrar a pessoa.' });
     }
   });
@@ -505,6 +508,8 @@ export function criarRouterAtende(): express.Router {
         const { error } = await req.dbAtende!.from('atende_usuarios').update(patch).eq('id', id);
         if (error) {
           if (error.code === '23505') return res.status(409).json({ error: 'Já existe uma conta com este e-mail.' });
+          // 23514 = trava do Postgres, o mesmo caso do cadastro acima.
+          if (error.code === '23514' && v.valor.papel) return res.status(409).json({ error: `Este banco ainda não aceita o papel "${NOME_DO_PAPEL[v.valor.papel]}" — falta aplicar a migração 049.` });
           throw error;
         }
       }
@@ -517,7 +522,7 @@ export function criarRouterAtende(): express.Router {
       esquecerUsuario(id);
       res.json({ equipe: await carregarEquipe(req), times: await carregarTimes(req) });
     } catch (err: any) {
-      console.error('[PATCH /api/atende/equipe/:id] erro:', err.message);
+      console.error('[PATCH /api/atende/equipe/:id] erro:', err.code ?? '-', err.message, err.details ?? '');
       res.status(500).json({ error: 'Erro ao salvar a pessoa.' });
     }
   });
