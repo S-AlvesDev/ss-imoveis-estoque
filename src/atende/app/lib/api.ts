@@ -29,6 +29,9 @@ async function pedir<T>(caminho: string, opcoes: RequestInit = {}): Promise<T> {
     // Com sessão, 401 é ela que venceu. Sem sessão (login, cadastro), é o que o servidor disse — "e-mail ou senha incorretos".
     if (token) {
       useSessaoAtende.getState().sair();
+      // Sem isso, a próxima vez que a pessoa entrar de novo o app acha que "já carregou"
+      // (com o erro desta sessão vencida) e nunca busca os dados de novo.
+      useDadosAtende.getState().limpar();
       throw new ErroDaApi('Sessão expirada. Entre novamente.', 401);
     }
     throw new ErroDaApi(body?.error || 'Não foi possível entrar.', 401, body);
