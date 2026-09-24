@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { FileCheck2, Phone } from 'lucide-react';
+import { FileCheck2, Phone, RefreshCw } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao } from '../ui/Cartao';
 import { Etiqueta } from '../ui/Etiqueta';
@@ -20,6 +20,14 @@ const TOM_DA_ETAPA: Record<EstadoMcmv, 'azul' | 'ambar' | 'verde' | 'vermelho'> 
   reprovado: 'vermelho',
 };
 
+/** A bolinha de cada coluna — a mesma cor da etiqueta daquela etapa. */
+const COR_DA_ETAPA: Record<EstadoMcmv, string> = {
+  em_analise: '#0ea5e9',
+  aprovado_condicionado: '#f59e0b',
+  aprovado: '#16a34a',
+  reprovado: '#e11d48',
+};
+
 function tempoDesde(iso: string): string {
   const dias = Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000));
   if (dias <= 0) return 'hoje';
@@ -35,13 +43,16 @@ function tempoDesde(iso: string): string {
  */
 export function GestaoMcmv() {
   const [itens, setItens] = useState<ItemDoPipelineMcmv[] | null>(null);
+  const [atualizando, setAtualizando] = useState(false);
   const [selecionado, setSelecionado] = useState<ItemDoPipelineMcmv | null>(null);
 
-  function carregar() {
+  function carregar(mostrarSpinner = false) {
+    if (mostrarSpinner) setAtualizando(true);
     api
       .get<{ itens: ItemDoPipelineMcmv[] }>('/mcmv')
       .then((r) => setItens(r.itens))
-      .catch((err) => toast.error(err instanceof ErroDaApi ? err.message : 'Erro ao carregar o pipeline.'));
+      .catch((err) => toast.error(err instanceof ErroDaApi ? err.message : 'Erro ao carregar o pipeline.'))
+      .finally(() => setAtualizando(false));
   }
 
   useEffect(() => {
@@ -49,7 +60,16 @@ export function GestaoMcmv() {
   }, []);
 
   return (
-    <Pagina titulo="Gestão de MCMV" descricao="Quem está em análise de financiamento — etapa, documentos e notas, sem abrir a conversa do WhatsApp." largura="xl">
+    <Pagina
+      titulo="Gestão de MCMV"
+      descricao="Quem está em análise de financiamento — etapa, documentos e notas, sem abrir a conversa do WhatsApp."
+      largura="xl"
+      acoes={
+        <Botao tamanho="sm" variante="secundaria" icone={<RefreshCw size={14} />} carregando={atualizando} onClick={() => carregar(true)}>
+          Atualizar
+        </Botao>
+      }
+    >
       {itens === null ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Esqueleto className="h-40" />
@@ -65,18 +85,22 @@ export function GestaoMcmv() {
             const doEtapa = itens.filter((i) => i.mcmv_status === etapa);
             return (
               <div key={etapa} className="space-y-2">
-                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                  {NOME_DO_ESTADO_MCMV[etapa]} <span className="rounded-full bg-[var(--bg-2)] px-1.5 text-[10px]">{doEtapa.length}</span>
+                <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_ETAPA[etapa] }} />
+                  <span className="truncate">{NOME_DO_ESTADO_MCMV[etapa]}</span>
+                  <span className="ml-auto shrink-0 rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[10px] font-bold text-[var(--text)]">{doEtapa.length}</span>
                 </p>
                 <div className="space-y-2">
                   {doEtapa.map((item) => (
                     <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
                       <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
-                        <p className="truncate text-sm font-semibold text-[var(--text)]">{item.cliente_nome}</p>
-                        <p className="mt-0.5 flex items-center gap-1 text-xs text-[var(--text-muted)]">
-                          <Phone size={11} /> +{item.telefone}
-                        </p>
-                        <p className="mt-1.5 text-[11px] text-[var(--text-muted)]">Atualizado {tempoDesde(item.mcmv_atualizado_em)}</p>
+                        <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          <Etiqueta tom="cinza">
+                            <Phone size={10} className="mr-0.5 inline" /> +{item.telefone}
+                          </Etiqueta>
+                        </div>
+                        <div className="mt-2 border-t border-[var(--border)] pt-1.5 text-[11px] text-[var(--text-muted)]">Atualizado {tempoDesde(item.mcmv_atualizado_em)}</div>
                       </Cartao>
                     </button>
                   ))}

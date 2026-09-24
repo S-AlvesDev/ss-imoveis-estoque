@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
-import { FileCheck2, Kanban, Phone, Plus, UserRound } from 'lucide-react';
+import { FileCheck2, Kanban, MessageCircle, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao } from '../ui/Cartao';
-import { Etiqueta } from '../ui/Etiqueta';
+import { Etiqueta, type TomDaEtiqueta } from '../ui/Etiqueta';
 import { Modal } from '../ui/Modal';
 import { Entrada } from '../ui/Campo';
 import { Pagina } from '../ui/Pagina';
@@ -19,9 +19,26 @@ import { ESTADOS_DO_LEAD, NOME_DO_ESTADO_DO_LEAD, NOME_DO_ESTADO_MCMV, type Esta
 type Coluna = EstadoDoLead | 'credito';
 const COLUNAS: Coluna[] = ['novo', 'em_atendimento', 'em_negociacao', 'aguardando_cliente', 'credito', 'convertido', 'perdido'];
 const NOME_DA_COLUNA: Record<Coluna, string> = { ...NOME_DO_ESTADO_DO_LEAD, credito: 'Em Análise de Crédito' };
+/** A bolinha de cada coluna — a mesma linguagem de cor das etiquetas do resto do produto. */
+const COR_DA_COLUNA: Record<Coluna, string> = {
+  novo: '#3b82f6',
+  em_atendimento: '#7c3aed',
+  em_negociacao: '#d97706',
+  aguardando_cliente: '#94a3b8',
+  credito: '#f59e0b',
+  convertido: '#16a34a',
+  perdido: '#e11d48',
+};
 
 function colunaDoItem(item: ItemDoFunilDeLeads): Coluna {
   return item.mcmv_status ? 'credito' : item.estado;
+}
+
+function tempoDesde(iso: string): string {
+  const dias = Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000));
+  if (dias <= 0) return 'hoje';
+  if (dias === 1) return 'há 1 dia';
+  return `há ${dias} dias`;
 }
 
 /**
@@ -34,14 +51,17 @@ export function GestaoDeLeads() {
   const equipe = useDadosAtende((s) => s.equipe);
   const ir = useRotaAtende((s) => s.ir);
   const [itens, setItens] = useState<ItemDoFunilDeLeads[] | null>(null);
+  const [atualizando, setAtualizando] = useState(false);
   const [selecionado, setSelecionado] = useState<ItemDoFunilDeLeads | null>(null);
   const [novoLeadAberto, setNovoLeadAberto] = useState(false);
 
-  function carregar() {
+  function carregar(mostrarSpinner = false) {
+    if (mostrarSpinner) setAtualizando(true);
     api
       .get<{ itens: ItemDoFunilDeLeads[] }>('/funil-leads')
       .then((r) => setItens(r.itens))
-      .catch((err) => toast.error(err instanceof ErroDaApi ? err.message : 'Erro ao carregar o funil.'));
+      .catch((err) => toast.error(err instanceof ErroDaApi ? err.message : 'Erro ao carregar o funil.'))
+      .finally(() => setAtualizando(false));
   }
 
   useEffect(() => {
@@ -49,6 +69,8 @@ export function GestaoDeLeads() {
   }, []);
 
   const nomeDoAtendente = (id: number | null) => (id ? (equipe.find((f) => f.id === id)?.nome ?? `#${id}`) : 'Sem responsável');
+  const doWhatsapp = itens?.filter((i) => i.origem === 'whatsapp').length ?? 0;
+  const manuais = itens?.filter((i) => i.origem === 'manual').length ?? 0;
 
   return (
     <Pagina
@@ -56,9 +78,14 @@ export function GestaoDeLeads() {
       descricao="O funil de vendas inteiro, de todas as conversas."
       largura="xl"
       acoes={
-        <Botao tamanho="sm" icone={<Plus size={14} />} onClick={() => setNovoLeadAberto(true)}>
-          Novo Lead
-        </Botao>
+        <div className="flex items-center gap-2">
+          <Botao tamanho="sm" variante="secundaria" icone={<RefreshCw size={14} />} carregando={atualizando} onClick={() => carregar(true)}>
+            Atualizar
+          </Botao>
+          <Botao tamanho="sm" icone={<Plus size={14} />} onClick={() => setNovoLeadAberto(true)}>
+            Novo Lead
+          </Botao>
+        </div>
       }
     >
       {itens === null ? (
@@ -71,39 +98,53 @@ export function GestaoDeLeads() {
           <Vazio icone={<Kanban size={22} />} titulo="Nenhum lead ainda" texto="Os leads aparecem aqui assim que uma conversa nova chega, ou você cadastra um com o botão Novo Lead." />
         </Cartao>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-7">
-          {COLUNAS.map((coluna) => {
-            const doColuna = itens.filter((i) => colunaDoItem(i) === coluna);
-            return (
-              <div key={coluna} className="space-y-2">
-                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
-                  {NOME_DA_COLUNA[coluna]} <span className="rounded-full bg-[var(--bg-2)] px-1.5 text-[10px]">{doColuna.length}</span>
-                </p>
-                <div className="space-y-2">
-                  {doColuna.map((item) => (
-                    <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
-                      <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
-                        <p className="truncate text-sm font-semibold text-[var(--text)]">{item.cliente_nome}</p>
-                        <p className="mt-0.5 flex items-center gap-1 text-xs text-[var(--text-muted)]">
-                          <Phone size={11} /> +{item.telefone}
-                        </p>
-                        <p className="mt-1 flex items-center gap-1 text-[11px] text-[var(--text-muted)]">
-                          <UserRound size={11} /> {nomeDoAtendente(item.atendente_id)}
-                        </p>
-                        {item.valor !== null && <p className="mt-1 text-xs font-semibold text-[var(--text)]">{item.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>}
-                        {item.origem === 'manual' && (
-                          <Etiqueta tom="cinza" className="mt-1.5">
-                            Manual
-                          </Etiqueta>
-                        )}
-                      </Cartao>
-                    </button>
-                  ))}
+        <>
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-semibold text-[var(--text-muted)]">Origens:</span>
+            <Etiqueta tom="azul" ponto>
+              <MessageCircle size={11} className="mr-0.5 inline" /> WhatsApp: {doWhatsapp}
+            </Etiqueta>
+            <Etiqueta tom="rosa" ponto>
+              Manual: {manuais}
+            </Etiqueta>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-7">
+            {COLUNAS.map((coluna) => {
+              const doColuna = itens.filter((i) => colunaDoItem(i) === coluna);
+              return (
+                <div key={coluna} className="space-y-2">
+                  <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--text-muted)]">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: COR_DA_COLUNA[coluna] }} />
+                    <span className="truncate">{NOME_DA_COLUNA[coluna]}</span>
+                    <span className="ml-auto shrink-0 rounded-full bg-[var(--bg-2)] px-2 py-0.5 text-[10px] font-bold text-[var(--text)]">{doColuna.length}</span>
+                  </p>
+                  <div className="space-y-2">
+                    {doColuna.map((item) => (
+                      <button key={item.lead_id} type="button" onClick={() => setSelecionado(item)} className="block w-full text-left">
+                        <Cartao className="p-3 transition-shadow hover:shadow-[var(--sombra-flutuante)]">
+                          <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            <Etiqueta tom={item.origem === 'manual' ? 'rosa' : 'azul'}>{item.origem === 'manual' ? 'Manual' : 'WhatsApp'}</Etiqueta>
+                            {item.mcmv_status && (
+                              <Etiqueta tom="ambar">
+                                <Sparkles size={10} className="mr-0.5 inline" /> {NOME_DO_ESTADO_MCMV[item.mcmv_status]}
+                              </Etiqueta>
+                            )}
+                            {item.valor !== null && <Etiqueta tom="verde">{item.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</Etiqueta>}
+                          </div>
+                          <div className="mt-2 flex items-center justify-between border-t border-[var(--border)] pt-1.5 text-[11px] text-[var(--text-muted)]">
+                            <span className="truncate">{nomeDoAtendente(item.atendente_id)}</span>
+                            <span className="shrink-0">{tempoDesde(item.atualizado_em)}</span>
+                          </div>
+                        </Cartao>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {selecionado && (
