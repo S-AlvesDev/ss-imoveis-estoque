@@ -31,7 +31,7 @@ import { listarClientesPorEtiqueta, listarLotes, statusDoLote, criarLote, proces
 import { listarInventario, criarItem, atualizarItem, desativarItem, consultarInventario, listarPorProprietario } from './inventario';
 import { listarModelos, criarModelo, atualizarModelo, desativarModelo } from './modelos';
 import { listarPipelineMcmv, atualizarMcmv, historicoMcmv } from './mcmv';
-import { listarFunilDeLeads } from './leads';
+import { decidirSobreLead, listarFunilDeLeads, listarLeadsPendentes } from './leads';
 import { listarDocumentos, prepararUploadDeDocumento, registrarDocumento, urlDoDocumento, excluirDocumento } from './documentos';
 import { criarLeadManual, iniciarMcmv } from './conversas';
 import { pode } from '../shared/papeis';
@@ -1019,6 +1019,29 @@ export function criarRouterAtende(): express.Router {
       res.json({ itens: await listarFunilDeLeads(req) });
     } catch (err: any) {
       tratar(res, err, 'GET /api/atende/funil-leads', 'Erro ao listar o funil de leads.');
+    }
+  });
+  r.get('/leads-pendentes', exigir('conversas.supervisionar'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json({ itens: await listarLeadsPendentes(req) });
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/leads-pendentes', 'Erro ao listar os leads a aprovar.');
+    }
+  });
+  r.post('/leads/:id/aprovar', exigir('conversas.supervisionar'), async (req: RequisicaoAtende, res) => {
+    try {
+      await decidirSobreLead(req, req.params.id, true);
+      res.json({ ok: true });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/leads/:id/aprovar', 'Não foi possível aprovar o lead.');
+    }
+  });
+  r.post('/leads/:id/reprovar', exigir('conversas.supervisionar'), async (req: RequisicaoAtende, res) => {
+    try {
+      await decidirSobreLead(req, req.params.id, false);
+      res.json({ ok: true });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/leads/:id/reprovar', 'Não foi possível reprovar o lead.');
     }
   });
   r.post('/conversas/:id/mcmv/iniciar', exigir('conversas.atender'), async (req: RequisicaoAtende, res) => {

@@ -680,7 +680,7 @@ export async function atualizarLead(req: RequisicaoAtende, conversaId: string, d
     linha = data;
   } else {
     // Conversa que nasceu sem triagem (IA desligada, ou a empresa começou pelo celular): o lead nasce agora.
-    const { data, error } = await db.from('atende_leads').insert({ conversa_id: c.id, cliente_id: c.cliente_id, estado: 'novo', ...patch }).select(LEAD_COLUNAS).single();
+    const { data, error } = await db.from('atende_leads').insert({ conversa_id: c.id, cliente_id: c.cliente_id, estado: 'novo', aprovado: true, ...patch }).select(LEAD_COLUNAS).single();
     if (error || !data) throw error ?? new Error('não criou o lead');
     linha = data;
   }
@@ -709,7 +709,7 @@ export async function iniciarMcmv(req: RequisicaoAtende, conversaId: string): Pr
     if (error || !data) throw error ?? new Error('não encaminhou para o MCMV');
     linha = data;
   } else {
-    const { data, error } = await db.from('atende_leads').insert({ conversa_id: c.id, cliente_id: c.cliente_id, estado: 'novo', ...patch }).select(LEAD_COLUNAS).single();
+    const { data, error } = await db.from('atende_leads').insert({ conversa_id: c.id, cliente_id: c.cliente_id, estado: 'novo', aprovado: true, ...patch }).select(LEAD_COLUNAS).single();
     if (error || !data) throw error ?? new Error('não criou o lead');
     linha = data;
   }
@@ -760,7 +760,7 @@ export async function criarLeadManual(req: RequisicaoAtende, dados: { nome?: unk
     linha = leadExistente;
     reaproveitado = true;
   } else {
-    const { data, error } = await db.from('atende_leads').insert({ conversa_id: conversaId, cliente_id: clienteId, estado: 'novo', origem: 'manual' }).select(LEAD_COLUNAS).single();
+    const { data, error } = await db.from('atende_leads').insert({ conversa_id: conversaId, cliente_id: clienteId, estado: 'novo', origem: 'manual', aprovado: true }).select(LEAD_COLUNAS).single();
     if (error || !data) throw error ?? new Error('não criou o lead');
     linha = data;
   }

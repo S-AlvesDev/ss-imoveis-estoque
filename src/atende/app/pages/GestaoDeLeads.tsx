@@ -1,12 +1,13 @@
 import { useEffect, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { FileCheck2, Kanban, MessageCircle, Plus, RefreshCw, Search, Sparkles, UserPlus, XCircle } from 'lucide-react';
+import { Check, FileCheck2, Inbox, Kanban, MessageCircle, Plus, RefreshCw, Search, Sparkles, UserPlus, X, XCircle } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao } from '../ui/Cartao';
 import { Etiqueta } from '../ui/Etiqueta';
 import { Modal } from '../ui/Modal';
 import { Entrada, Selecao } from '../ui/Campo';
 import { Pagina } from '../ui/Pagina';
+import { Abas } from '../ui/Controles';
 import { Vazio, Esqueleto } from '../ui/Estados';
 import { api, ErroDaApi } from '../lib/api';
 import { useDadosAtende } from '../store/dados';
@@ -88,14 +89,31 @@ export function GestaoDeLeads() {
   const [filtro, setFiltro] = useState<'todos' | 'credito' | 'sem_responsavel'>('todos');
   const [arrastando, setArrastando] = useState<string | null>(null);
   const [colunaSobre, setColunaSobre] = useState<EstadoDoLead | null>(null);
+  const [aba, setAba] = useState<'funil' | 'aprovar'>('funil');
+  const [pendentes, setPendentes] = useState<ItemDoFunilDeLeads[] | null>(null);
 
   function carregar(mostrarSpinner = false) {
     if (mostrarSpinner) setAtualizando(true);
-    api
-      .get<{ itens: ItemDoFunilDeLeads[] }>('/funil-leads')
-      .then((r) => setItens(r.itens))
+    Promise.all([api.get<{ itens: ItemDoFunilDeLeads[] }>('/funil-leads'), api.get<{ itens: ItemDoFunilDeLeads[] }>('/leads-pendentes')])
+      .then(([funil, fila]) => {
+        setItens(funil.itens);
+        setPendentes(fila.itens);
+      })
       .catch((err) => toast.error(err instanceof ErroDaApi ? err.message : 'Erro ao carregar o funil.'))
       .finally(() => setAtualizando(false));
+  }
+
+  /** Aprovar joga no funil (coluna Novo); reprovar tira da frente. A conversa fica intacta nos dois casos. */
+  async function decidir(item: ItemDoFunilDeLeads, aprovar: boolean) {
+    setPendentes((atual) => (atual ?? []).filter((i) => i.lead_id !== item.lead_id));
+    try {
+      await api.post(`/leads/${item.lead_id}/${aprovar ? 'aprovar' : 'reprovar'}`);
+      if (aprovar) setItens((atual) => [{ ...item, estado: 'novo' }, ...(atual ?? [])]);
+      toast.success(aprovar ? `${item.cliente_nome} entrou no funil.` : `${item.cliente_nome} foi reprovado.`);
+    } catch (err) {
+      setPendentes((atual) => [item, ...(atual ?? [])]);
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível salvar.');
+    }
   }
 
   useEffect(() => {
@@ -156,7 +174,19 @@ export function GestaoDeLeads() {
         </div>
       }
     >
-      {itens === null ? (
+      <Abas
+        className="mb-4"
+        valor={aba}
+        onChange={setAba}
+        opcoes={[
+          { valor: 'funil', rotulo: 'Funil', icone: <Kanban size={15} /> },
+          { valor: 'aprovar', rotulo: 'Aprovar Leads', icone: <Inbox size={15} />, contagem: pendentes?.length ?? 0 },
+        ]}
+      />
+
+      {aba === 'aprovar' ? (
+        <FilaDeAprovacao itens={pendentes} onDecidir={decidir} />
+      ) : itens === null ? (
         <div className="flex gap-3 overflow-hidden">
           {Array.from({ length: 5 }).map((_, i) => (
             <Esqueleto key={i} className="h-56 w-72 shrink-0" />
@@ -302,6 +332,54 @@ export function GestaoDeLeads() {
         />
       )}
     </Pagina>
+  );
+}
+
+/**
+ * A fila de aprovação: quem iniciou conversa e ainda não foi julgado. Um lead
+ * por conversa e uma conversa por contato, então ninguém aparece duas vezes.
+ * Aprovar manda para o funil (coluna Novo); reprovar tira daqui. Nos dois
+ * casos a conversa continua inteira na Central — nada é apagado.
+ */
+function FilaDeAprovacao({ itens, onDecidir }: { itens: ItemDoFunilDeLeads[] | null; onDecidir: (item: ItemDoFunilDeLeads, aprovar: boolean) => void }) {
+  if (itens === null) {
+    return (
+      <div className="space-y-2">
+        <Esqueleto className="h-20" />
+        <Esqueleto className="h-20" />
+      </div>
+    );
+  }
+  if (itens.length === 0) {
+    return (
+      <Cartao>
+        <Vazio icone={<Inbox size={22} />} tom="positivo" titulo="Nada para aprovar" texto="Quando alguém novo iniciar uma conversa, o lead aparece aqui antes de entrar no funil." />
+      </Cartao>
+    );
+  }
+  return (
+    <div className="mx-auto max-w-3xl space-y-2">
+      {itens.map((item) => (
+        <Cartao key={item.lead_id} className="flex flex-wrap items-center gap-3 p-3.5">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-bold text-[var(--text)]">{item.cliente_nome}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <Etiqueta tom={item.origem === 'manual' ? 'rosa' : 'azul'}>{item.origem === 'manual' ? 'Manual' : 'WhatsApp'}</Etiqueta>
+              <span className="text-[11px] text-[var(--text-muted)]">+{item.telefone}</span>
+              <span className="text-[11px] text-[var(--text-muted)]">· chegou {tempoDesde(item.atualizado_em)}</span>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Botao tamanho="sm" variante="secundaria" icone={<X size={14} />} onClick={() => onDecidir(item, false)}>
+              Reprovar
+            </Botao>
+            <Botao tamanho="sm" icone={<Check size={14} />} onClick={() => onDecidir(item, true)}>
+              Aprovar
+            </Botao>
+          </div>
+        </Cartao>
+      ))}
+    </div>
   );
 }
 
