@@ -73,6 +73,9 @@ export interface DadosDaEmpresa {
   responde_fora_do_horario?: boolean;
   sla_aviso_min?: number | null;
   sla_escalonar_min?: number | null;
+  /** Hex #rrggbb da cor da marca; null volta à cor de fábrica. */
+  cor_primaria?: string | null;
+  logo_url?: string | null;
 }
 
 /** O PATCH da empresa: só o que veio é validado e devolvido; o resto fica como está. */
@@ -92,6 +95,12 @@ export function validarEmpresa(body: unknown): Validado<DadosDaEmpresa> {
   if (b.mensagem_fora_do_horario !== undefined) d.mensagem_fora_do_horario = texto(b.mensagem_fora_do_horario, 500);
   if (b.triagem_ativa !== undefined) d.triagem_ativa = b.triagem_ativa === true;
   if (b.responde_fora_do_horario !== undefined) d.responde_fora_do_horario = b.responde_fora_do_horario === true;
+  if (b.cor_primaria !== undefined) {
+    const c = String(b.cor_primaria ?? '').trim();
+    if (c && !/^#[0-9a-fA-F]{6}$/.test(c)) return { ok: false, erro: 'Cor inválida — use o formato #RRGGBB.' };
+    d.cor_primaria = c || null;
+  }
+  if (b.logo_url !== undefined) d.logo_url = texto(b.logo_url, 500);
   // SLA: inteiros em minutos, ou nulo (desligado). Escalonar depois de avisar.
   const minutos = (v: unknown, max: number): number | null | false => {
     if (v === null || v === '' || v === undefined) return null;

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
 import { useCentral } from './central';
+import { useTema } from './tema';
 import type { BootstrapAtende, ContaAtende, Empresa, Funcionario, Time } from '../../shared/tipos';
 
 /**
@@ -34,6 +35,8 @@ export const useDadosAtende = create<Dados>((set) => ({
     try {
       const b = await api.get<BootstrapAtende>('/bootstrap');
       set({ carregado: true, erro: null, empresa: b.empresa, times: b.times, equipe: b.equipe, conta: b.conta ?? null });
+      // A empresa veste o sistema com a cor dela (o tema claro/escuro é de quem usa).
+      useTema.getState().setCor(b.empresa?.cor_primaria);
       // O cartão do WhatsApp na barra lateral lê daqui; o sync da Central mantém atualizado depois.
       useCentral.setState({ conexao: b.conexao });
       return b;
@@ -44,5 +47,9 @@ export const useDadosAtende = create<Dados>((set) => ({
   },
   aplicar: (parte) => set(parte),
   marcarBloqueada: () => set((s) => (s.conta && s.conta.situacao !== 'bloqueada' ? { conta: { ...s.conta, situacao: 'bloqueada', plano: 'avaliacao', dias_restantes: 0 } } : {})),
-  limpar: () => set({ carregado: false, erro: null, empresa: null, times: [], equipe: [], conta: null }),
+  limpar: () => {
+    // Ao sair, a próxima tela de login não herda a cor da empresa anterior.
+    useTema.getState().setCor(null);
+    set({ carregado: false, erro: null, empresa: null, times: [], equipe: [], conta: null });
+  },
 }));

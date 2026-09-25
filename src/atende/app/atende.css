@@ -66,6 +66,164 @@
   }
 }
 
+/* -------------------------------------------------------------------------
+ *  Tema escuro
+ *
+ *  Mesma linguagem, outra luz: em vez de cartão branco sobre lavanda claro,
+ *  cartão grafite-arroxeado sobre um fundo mais fundo ainda. A hierarquia se
+ *  mantém — `--bg` é o chão, `--surface` é o que está por cima dele.
+ *
+ *  O roxo da marca fica um tom mais claro para aguentar o fundo escuro (o
+ *  #7c3aed não tem contraste suficiente contra grafite). A cor que a empresa
+ *  escolhe entra por cima disto, pelo JS, nas mesmas variáveis.
+ *
+ *  Ligado por `data-tema="escuro"` no <body class="atende">.
+ * ------------------------------------------------------------------------- */
+.atende[data-tema='escuro'] {
+  color-scheme: dark;
+
+  --brand: #a78bfa;
+  --brand-deep: #8b5cf6;
+  --brand-soft: #2a2350;
+  --brand-2: #c4b5fd;
+  --brand-ink: #ddd6fe;
+  --amber: #a78bfa;
+  --amber-deep: #8b5cf6;
+
+  --bg: #100f1c;
+  --bg-2: #1a1830;
+  --surface: #17162a;
+  --border: #2a2745;
+  --border-strong: #3b3760;
+  --text: #eceaf7;
+  --text-muted: #a3a0c0;
+  --text-disable: #5f5c80;
+
+  --verde: #34d399;
+  --vermelho: #fb7185;
+  --amarelo: #fbbf24;
+  --azul: #60a5fa;
+  --roxo: #a78bfa;
+
+  --sidebar-bg: #151426;
+  --sidebar-bg-2: #100f1c;
+  --sidebar-border: #2a2745;
+  --sidebar-text: #c9c6e0;
+  --sidebar-muted: #8b88ab;
+
+  --sombra-cartao: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -22px rgba(0, 0, 0, 0.7);
+  --sombra-flutuante: 0 24px 64px -28px rgba(0, 0, 0, 0.85), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
+}
+
+.atende[data-tema='escuro'] .rolagem-fina::-webkit-scrollbar-thumb {
+  background: #3b3760;
+}
+
+.atende[data-tema='escuro'] .esqueleto {
+  background: linear-gradient(90deg, #1a1830 0%, #262247 50%, #1a1830 100%);
+  background-size: 800px 100%;
+}
+
+/* A dica clara sobre o fundo escuro, senão some. */
+.atende[data-tema='escuro'] [data-dica]::after {
+  background: #eceaf7;
+  color: #17153a;
+}
+
+.atende[data-tema='escuro'] :focus-visible {
+  outline-color: rgba(167, 139, 250, 0.7);
+}
+
+/*
+ * Os tons fixos do Tailwind (bg-rose-50, text-emerald-600…) que os avisos,
+ * etiquetas e KPIs usam. Foram escolhidos para papel branco e ficam ilegíveis
+ * no escuro. Aqui cada um vira a versão translúcida da mesma cor, para não
+ * ter de reescrever componente por componente.
+ */
+.atende[data-tema='escuro'] .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.14);
+}
+.atende[data-tema='escuro'] .bg-rose-50 {
+  background-color: rgba(244, 63, 94, 0.14);
+}
+.atende[data-tema='escuro'] .bg-amber-50 {
+  background-color: rgba(245, 158, 11, 0.14);
+}
+.atende[data-tema='escuro'] .bg-amber-100 {
+  background-color: rgba(245, 158, 11, 0.22);
+}
+.atende[data-tema='escuro'] .bg-sky-50 {
+  background-color: rgba(14, 165, 233, 0.14);
+}
+.atende[data-tema='escuro'] .bg-indigo-50 {
+  background-color: rgba(99, 102, 241, 0.16);
+}
+.atende[data-tema='escuro'] .bg-pink-50 {
+  background-color: rgba(236, 72, 153, 0.16);
+}
+.atende[data-tema='escuro'] .bg-slate-50,
+.atende[data-tema='escuro'] .bg-slate-100 {
+  background-color: rgba(148, 163, 184, 0.14);
+}
+
+.atende[data-tema='escuro'] .text-emerald-600,
+.atende[data-tema='escuro'] .text-emerald-700,
+.atende[data-tema='escuro'] .text-emerald-900 {
+  color: #6ee7b7;
+}
+.atende[data-tema='escuro'] .text-rose-600,
+.atende[data-tema='escuro'] .text-rose-700,
+.atende[data-tema='escuro'] .text-rose-800,
+.atende[data-tema='escuro'] .text-rose-900 {
+  color: #fda4af;
+}
+.atende[data-tema='escuro'] .text-amber-600,
+.atende[data-tema='escuro'] .text-amber-700,
+.atende[data-tema='escuro'] .text-amber-800,
+.atende[data-tema='escuro'] .text-amber-900 {
+  color: #fcd34d;
+}
+.atende[data-tema='escuro'] .text-sky-600,
+.atende[data-tema='escuro'] .text-sky-700,
+.atende[data-tema='escuro'] .text-sky-900 {
+  color: #7dd3fc;
+}
+.atende[data-tema='escuro'] .text-pink-700 {
+  color: #f9a8d4;
+}
+.atende[data-tema='escuro'] .text-indigo-700 {
+  color: #a5b4fc;
+}
+.atende[data-tema='escuro'] .text-slate-600,
+.atende[data-tema='escuro'] .text-slate-900 {
+  color: #cbd5e1;
+}
+
+.atende[data-tema='escuro'] .border-emerald-200 {
+  border-color: rgba(16, 185, 129, 0.35);
+}
+.atende[data-tema='escuro'] .border-rose-200 {
+  border-color: rgba(244, 63, 94, 0.35);
+}
+.atende[data-tema='escuro'] .border-amber-200,
+.atende[data-tema='escuro'] .border-amber-300 {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.atende[data-tema='escuro'] .border-sky-200 {
+  border-color: rgba(14, 165, 233, 0.35);
+}
+
+/* Cartão branco fixo dentro de aviso colorido (Erro) — segue a superfície. */
+.atende[data-tema='escuro'] .bg-white {
+  background-color: var(--surface);
+}
+
+/* Menos a bolinha do interruptor: ela é branca nos dois temas, senão
+ * desaparece dentro do trilho. */
+.atende[data-tema='escuro'] [role='switch'] .bg-white {
+  background-color: #ffffff;
+}
+
 /* ATD-14: o cabeçalho é sticky por cima do conteúdo; sem isto, quando o navegador rola até um campo
  * inválido (Salvar fora do <form>, validação nativa do HTML5), o campo fica atrás do cabeçalho — "some". */
 .atende {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { BarChart3, Bell, BellRing, Bot, ChevronDown, ChevronRight, CreditCard, Eye, FileCheck2, Kanban, LogOut, Megaphone, Menu, MessageSquare, MessagesSquare, MoreHorizontal, Package, Settings, Smartphone, Star, UserCircle, Users, UsersRound, Wifi, WifiOff, X } from 'lucide-react';
+import { BarChart3, Bell, BellRing, Bot, Moon, Sun, ChevronDown, ChevronRight, CreditCard, Eye, FileCheck2, Kanban, LogOut, Megaphone, Menu, MessageSquare, MessagesSquare, MoreHorizontal, Package, Settings, Smartphone, Star, UserCircle, Users, UsersRound, Wifi, WifiOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { MarcaAtende } from './Marca';
 import { TELAS, useRotaAtende, type Tela } from './router';
@@ -13,6 +13,7 @@ import { presencaEfetiva } from '../shared/presenca';
 import { useSincronizacao } from './store/useSincronizacao';
 import { useNotificacoes } from './store/useNotificacoes';
 import { ativarNotificacoes, estadoDasNotificacoes, type EstadoDasNotificacoes } from './notificacoes';
+import { useTema } from './store/tema';
 import { pode, NOME_DO_PAPEL, type Permissao } from '../shared/papeis';
 import { NOME_DO_PLANO_ATENDE, planoAtendeLibera } from '../shared/planos';
 import type { Filtro } from '../shared/tipos';
@@ -109,6 +110,7 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
   const limpar = useDadosAtende((s) => s.limpar);
   const limparCentral = useCentral((s) => s.limpar);
   const empresa = useDadosAtende((s) => s.empresa);
+  const temaAtual = useTema((t) => t.tema);
   const contaDaEmpresa = useDadosAtende((s) => s.conta);
   const conversas = useCentral((s) => s.conversas);
   const filtro = useCentral((s) => s.filtro);
@@ -217,7 +219,11 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
       {/* A marca */}
       <div className="flex h-16 shrink-0 items-center justify-between pl-5 pr-3">
         <button type="button" onClick={() => itens[0] && navegar(itens[0])} className="flex items-center" aria-label="Início">
-          <MarcaAtende tema="claro" tamanho={26} />
+          {empresa?.logo_url ? (
+            <img src={empresa.logo_url} alt={empresa.nome} style={{ height: 34 }} className="w-auto select-none object-contain" draggable={false} />
+          ) : (
+            <MarcaAtende tema={temaAtual === 'escuro' ? 'escuro' : 'claro'} tamanho={26} />
+          )}
         </button>
         <button type="button" onClick={() => setGavetaAberta(false)} className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-2)] lg:hidden" aria-label="Fechar menu">
           <X size={18} />
@@ -330,6 +336,7 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
                   <span className={`h-2 w-2 rounded-full ${estadoDaPresenca === 'online' ? 'bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)]' : estadoDaPresenca === 'ausente' ? 'bg-amber-400' : 'bg-slate-300'}`} />
                   {estadoDaPresenca === 'online' ? 'Online' : estadoDaPresenca === 'ausente' ? 'Ausente' : 'Conectando…'}
                 </button>
+                <BotaoDeTema />
                 <button
                   type="button"
                   onClick={() => {
@@ -391,6 +398,25 @@ export function Shell({ tela, resto = '', children }: { tela: Tela | null; resto
     </div>
   );
 }
+
+/** Claro ⇄ escuro. A escolha é de quem usa e fica no navegador dela. */
+function BotaoDeTema() {
+  const tema = useTema((t) => t.tema);
+  const alternar = useTema((t) => t.alternar);
+  const escuro = tema === 'escuro';
+  return (
+    <button
+      type="button"
+      onClick={alternar}
+      data-dica={escuro ? 'Usar o tema claro' : 'Usar o tema escuro'}
+      aria-label={escuro ? 'Usar o tema claro' : 'Usar o tema escuro'}
+      className="flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-2)] hover:text-[var(--text)]"
+    >
+      {escuro ? <Sun size={18} /> : <Moon size={18} />}
+    </button>
+  );
+}
+
 
 /** O menu da pessoa: conta, presença, notificações, SEVLA e sair. Fecha ao clicar fora ou com Esc. */
 function MenuDoUsuario({ aoFechar, posicao, tela, estadoDaPresenca, alternarPresenca, notificacoes, ativando, ativarNotificacoes, irParaConta, sair }: { aoFechar: () => void; posicao: 'acima' | 'abaixo'; tela: Tela | null; estadoDaPresenca: 'online' | 'ausente' | 'offline'; alternarPresenca: () => void; notificacoes: EstadoDasNotificacoes | null; ativando: boolean; ativarNotificacoes: () => void; irParaConta: () => void; sair: () => void }) {

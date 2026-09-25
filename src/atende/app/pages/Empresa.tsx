@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
-import { Bot, Building2, Clock, FlaskConical, MessageCircleQuestion, Plus, Save, Sparkles, Timer, Trash2 } from 'lucide-react';
+import { Bot, Building2, Clock, FlaskConical, MessageCircleQuestion, Palette, Plus, Save, Sparkles, Timer, Trash2 } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
 import { Entrada, AreaDeTexto, Interruptor, ESTILO_DO_CAMPO } from '../ui/Campo';
 import { Abas } from '../ui/Controles';
+import { COR_PADRAO, useTema } from '../store/tema';
 import { Pagina } from '../ui/Pagina';
 import { Vazio } from '../ui/Estados';
 import { SeloIa } from '../ui/Ia';
@@ -53,10 +54,13 @@ export function Empresa({ aba = 'empresa' }: { aba?: Aba }) {
         responde_fora_do_horario: form.responde_fora_do_horario,
         sla_aviso_min: form.sla_aviso_min === '' ? null : Number(form.sla_aviso_min),
         sla_escalonar_min: form.sla_escalonar_min === '' ? null : Number(form.sla_escalonar_min),
+        cor_primaria: form.cor_primaria || null,
+        logo_url: form.logo_url || null,
         faq: form.faq.filter((f) => f.pergunta.trim() || f.resposta.trim()),
         horario_atendimento: form.horario,
       });
       aplicar({ empresa: r.empresa });
+      useTema.getState().setCor(r.empresa.cor_primaria);
       toast.success('Empresa salva.');
     } catch (err) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível salvar.');
@@ -99,6 +103,32 @@ export function Empresa({ aba = 'empresa' }: { aba?: Aba }) {
                 <Entrada rotulo="Segmento" value={form.segmento} onChange={(e) => campo('segmento', e.target.value)} placeholder="Imobiliária, clínica, loja…" maxLength={60} />
               </div>
               <AreaDeTexto rotulo="Descrição" rows={3} value={form.descricao} onChange={(e) => campo('descricao', e.target.value)} placeholder="O que a empresa faz, para quem, onde atua." maxLength={2000} />
+            </Cartao>
+
+            <Cartao className="space-y-4 p-4 sm:p-5">
+              <CabecalhoDoCartao icone={<Palette size={14} />} titulo="Aparência" descricao="A cor e o logo valem para todo mundo da empresa. O tema claro ou escuro cada pessoa escolhe no topo da tela." />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <p className="mb-1.5 block text-xs font-semibold text-[var(--text)]">Cor da marca</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={form.cor_primaria || COR_PADRAO}
+                      onChange={(e) => campo('cor_primaria', e.target.value)}
+                      className="h-[42px] w-14 shrink-0 cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1"
+                      aria-label="Escolher a cor da marca"
+                    />
+                    <Entrada className="flex-1" value={form.cor_primaria} onChange={(e) => campo('cor_primaria', e.target.value)} placeholder={COR_PADRAO} maxLength={7} />
+                    {form.cor_primaria && (
+                      <Botao variante="fantasma" tamanho="sm" onClick={() => campo('cor_primaria', '')}>
+                        Padrão
+                      </Botao>
+                    )}
+                  </div>
+                  <p className="mt-1.5 text-xs text-[var(--text-muted)]">Vazio = o roxo do Atende Aí.</p>
+                </div>
+                <Entrada rotulo="Logo (endereço da imagem)" value={form.logo_url} onChange={(e) => campo('logo_url', e.target.value)} placeholder="https://..." maxLength={500} ajuda="Vazio = o logo do Atende Aí." />
+              </div>
             </Cartao>
 
             <Cartao className="space-y-4 p-4 sm:p-5">
@@ -201,6 +231,8 @@ function paraForm(e: TEmpresa) {
     responde_fora_do_horario: e.responde_fora_do_horario !== false,
     sla_aviso_min: e.sla_aviso_min === null || e.sla_aviso_min === undefined ? '' : String(e.sla_aviso_min),
     sla_escalonar_min: e.sla_escalonar_min === null || e.sla_escalonar_min === undefined ? '' : String(e.sla_escalonar_min),
+    cor_primaria: e.cor_primaria ?? '',
+    logo_url: e.logo_url ?? '',
     faq: (e.faq ?? []) as PerguntaFrequente[],
     horario,
   };

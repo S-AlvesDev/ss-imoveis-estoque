@@ -47,6 +47,10 @@ export interface Empresa {
   sla_aviso_min: number | null;
   /** SLA: minutos até a conversa ir para a fila geral com prioridade alta; nulo = desligado. */
   sla_escalonar_min: number | null;
+  /** Hex #rrggbb da cor da marca; nulo = o roxo de fábrica. */
+  cor_primaria: string | null;
+  /** O logo da empresa; nulo = o logo do Atende Aí. */
+  logo_url: string | null;
   criado_em: string;
 }
 

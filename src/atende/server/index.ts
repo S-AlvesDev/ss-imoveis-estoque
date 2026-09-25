@@ -49,7 +49,7 @@ import type { BootstrapAtende, Empresa, Funcionario, Time, SessaoAtende } from '
  * acontecem antes de existir empresa no contexto — como no Stok Aí.
  */
 
-const EMPRESA_COLUNAS = 'id, nome, slug, segmento, descricao, produtos_servicos, informacoes_ia, faq, horario_atendimento, regras_atendimento, mensagem_fora_do_horario, triagem_ativa, responde_fora_do_horario, sla_aviso_min, sla_escalonar_min, criado_em';
+const EMPRESA_COLUNAS = 'id, nome, slug, segmento, descricao, produtos_servicos, informacoes_ia, faq, horario_atendimento, regras_atendimento, mensagem_fora_do_horario, triagem_ativa, responde_fora_do_horario, sla_aviso_min, sla_escalonar_min, cor_primaria, logo_url, criado_em';
 const USUARIO_COLUNAS = 'id, nome, email, papel, ativo, presenca, presenca_em, ultimo_acesso, criado_em';
 
 /** E-mail vira padrão de ilike sem curingas: % e _ escapados. */
