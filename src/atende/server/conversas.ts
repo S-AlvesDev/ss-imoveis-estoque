@@ -226,12 +226,22 @@ export interface Envio {
  * Quem responde assume: conversa na fila passa para a pessoa; depois de
  * responder, a bola está com o cliente (aguardando_cliente).
  */
+/** O time da conversa pede anonimato? Sem time, não — a assinatura é a regra. */
+async function timeEhAnonimo(db: RequisicaoAtende['dbAtende'], timeId: string | null): Promise<boolean> {
+  if (!timeId) return false;
+  const { data } = await db!.from('atende_times').select('anonimo').eq('id', timeId).maybeSingle();
+  return (data as { anonimo?: boolean } | null)?.anonimo === true;
+}
+
 export async function enviarMensagem(req: RequisicaoAtende, conversaId: string, envio: Envio): Promise<Mensagem> {
   const db = req.dbAtende!;
   const s = req.sessao!;
   const c = await exigirConversa(req, conversaId);
   const instancia = await instanciaDaConversa(req, c);
   const autorTipo = s.papel === 'supervisor' ? 'supervisor' : 'atendente';
+  // Time anônimo: o cliente recebe só o texto, sem "Fulano:" na frente. Dentro
+  // do Atende Aí a mensagem continua gravada com o autor de sempre.
+  const remetente = (await timeEhAnonimo(db, c.time_id)) ? null : s.nome;
 
   let tipo: TipoDaMensagem = 'texto';
   let texto: string | null = null;
@@ -290,12 +300,12 @@ export async function enviarMensagem(req: RequisicaoAtende, conversaId: string, 
   let enviada: Enviada;
   try {
     const cit = envio.respondendo_a ? await chaveDaMensagem(db, envio.respondendo_a) : null;
-    if (envio.tipo === 'texto') enviada = await enviarTextoComId(c.cliente.telefone, assinarRemetente(s.nome, texto!), instancia, cit ? { citando: cit } : {});
+    if (envio.tipo === 'texto') enviada = await enviarTextoComId(c.cliente.telefone, assinarRemetente(remetente, texto!), instancia, cit ? { citando: cit } : {});
     else if (envio.tipo === 'audio' || envio.tipo === 'arquivo') {
       // A Evolution baixa o arquivo direto do bucket, por uma URL assinada de 10 min.
       const url = await urlAssinada(midia!.caminho as string);
       if (envio.tipo === 'audio') enviada = await enviarAudio(c.cliente.telefone, url, instancia);
-      else enviada = await enviarMidia(c.cliente.telefone, { tipo: tipo === 'imagem' ? 'image' : tipo === 'video' ? 'video' : 'document', conteudo: url, mimetype: midia!.mimetype as string, nomeArquivo: (midia!.nome as string | null) ?? undefined, legenda: texto ? assinarRemetente(s.nome, texto) : undefined }, instancia);
+      else enviada = await enviarMidia(c.cliente.telefone, { tipo: tipo === 'imagem' ? 'image' : tipo === 'video' ? 'video' : 'document', conteudo: url, mimetype: midia!.mimetype as string, nomeArquivo: (midia!.nome as string | null) ?? undefined, legenda: texto ? assinarRemetente(remetente, texto) : undefined }, instancia);
     }
     else if (envio.tipo === 'localizacao') enviada = await enviarLocalizacao(c.cliente.telefone, { latitude: Number(envio.latitude), longitude: Number(envio.longitude), nome: texto ?? undefined }, instancia);
     else enviada = await enviarContato(c.cliente.telefone, midia!.contato as { nome: string; telefone: string }, instancia);

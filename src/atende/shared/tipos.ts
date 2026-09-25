@@ -57,6 +57,8 @@ export interface Time {
   palavras_chave: string[];
   ordem: number;
   ativo: boolean;
+  /** true = no WhatsApp, as mensagens deste time saem sem o nome de quem escreveu. */
+  anonimo: boolean;
   /** Ids dos membros, para a tela montar sem segunda consulta. */
   membros: number[];
   /** Ids de quem supervisiona este time. */

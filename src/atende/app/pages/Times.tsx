@@ -53,7 +53,7 @@ export function Times() {
             acao={
               <div className="flex flex-wrap justify-center gap-2">
                 {SUGESTOES.map((s) => (
-                  <button key={s} type="button" onClick={() => setEditando({ id: '', nome: s, descricao_para_ia: null, palavras_chave: [], ordem: times.length, ativo: true, membros: [], supervisores: [] })} className="h-8 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--text-muted)] transition-colors hover:border-[var(--brand)]/50 hover:text-[var(--brand)]">
+                  <button key={s} type="button" onClick={() => setEditando({ id: '', nome: s, descricao_para_ia: null, palavras_chave: [], ordem: times.length, ativo: true, anonimo: false, membros: [], supervisores: [] })} className="h-8 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--text-muted)] transition-colors hover:border-[var(--brand)]/50 hover:text-[var(--brand)]">
                     + {s}
                   </button>
                 ))}
@@ -99,6 +99,7 @@ export function Times() {
                     </span>
                   </span>
                 )}
+                {t.anonimo && <Etiqueta tom="roxo">Anônimo</Etiqueta>}
                 {!t.ativo ? <Etiqueta tom="cinza">Inativo</Etiqueta> : t.supervisores.length > 0 ? <span className="shrink-0">{t.supervisores.length} {t.supervisores.length === 1 ? 'supervisor' : 'supervisores'}</span> : null}
               </div>
             </Cartao>
@@ -137,13 +138,14 @@ function ModalDoTime({ time, onClose }: { time: Time | null; onClose: () => void
   const [descricao, setDescricao] = useState(time?.descricao_para_ia ?? '');
   const [palavras, setPalavras] = useState(time?.palavras_chave.join(', ') ?? '');
   const [ativo, setAtivo] = useState(time?.ativo ?? true);
+  const [anonimo, setAnonimo] = useState(time?.anonimo ?? false);
   const [salvando, setSalvando] = useState(false);
   const novo = !time?.id;
 
   async function salvar(e: FormEvent) {
     e.preventDefault();
     setSalvando(true);
-    const corpo = { nome, descricao_para_ia: descricao, palavras_chave: palavras.split(',').map((p) => p.trim()).filter(Boolean), ativo };
+    const corpo = { nome, descricao_para_ia: descricao, palavras_chave: palavras.split(',').map((p) => p.trim()).filter(Boolean), ativo, anonimo };
     try {
       const r = novo ? await api.post<{ times: Time[] }>('/times', corpo) : await api.patch<{ times: Time[] }>(`/times/${time!.id}`, corpo);
       aplicar({ times: r.times });
@@ -182,6 +184,14 @@ function ModalDoTime({ time, onClose }: { time: Time | null; onClose: () => void
             Time ativo (a IA só encaminha para times ativos)
           </Marcar>
         )}
+        <div>
+          <Marcar marcado={anonimo} onChange={setAnonimo}>
+            Atendimento anônimo
+          </Marcar>
+          <p className="mt-1.5 text-xs text-[var(--text-muted)]">
+            O cliente recebe só a mensagem, sem o nome de quem escreveu. Dentro do Atende Aí a equipe continua vendo o autor.
+          </p>
+        </div>
       </form>
     </Modal>
   );

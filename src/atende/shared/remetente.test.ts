@@ -31,6 +31,13 @@ describe('assinarRemetente', () => {
     expect(assinarRemetente('Ana', '   ')).toBe('   ');
   });
 
+  it('time anônimo: sem remetente, o cliente recebe só a mensagem', () => {
+    // É assim que o time anônimo funciona (migração 051): enviarMensagem passa
+    // `null` no lugar do nome, e nada é acrescentado ao texto.
+    expect(assinarRemetente(null, 'Oi, bom dia!')).toBe('Oi, bom dia!');
+    expect(assinarRemetente(null, 'Segue o contrato.\n\nQualquer dúvida, estou aqui.')).toBe('Segue o contrato.\n\nQualquer dúvida, estou aqui.');
+  });
+
   it('um nome parecido não engana a checagem de repetição', () => {
     expect(assinarRemetente('Ana', 'Ana Paula:\nOi')).toBe('Ana:\nAna Paula:\nOi');
   });

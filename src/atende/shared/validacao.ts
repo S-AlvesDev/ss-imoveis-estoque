@@ -154,6 +154,8 @@ export interface DadosDoTime {
   palavras_chave: string[];
   ordem: number;
   ativo: boolean;
+  /** true = mensagens deste time saem ao cliente sem a assinatura de quem escreveu. */
+  anonimo: boolean;
 }
 
 export function validarTime(body: unknown, atual?: Partial<DadosDoTime>): Validado<DadosDoTime> {
@@ -175,6 +177,7 @@ export function validarTime(body: unknown, atual?: Partial<DadosDoTime>): Valida
       palavras_chave: palavras,
       ordem,
       ativo: b.ativo !== undefined ? Boolean(b.ativo) : (atual?.ativo ?? true),
+      anonimo: b.anonimo !== undefined ? Boolean(b.anonimo) : (atual?.anonimo ?? false),
     },
   };
 }

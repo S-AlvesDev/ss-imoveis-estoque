@@ -135,11 +135,11 @@ describe('Atende Aí — validação', () => {
   });
 
   it('time: nome, palavras-chave sem repetição, ordem; edição preserva o que não veio', () => {
-    expect(validarTime({ nome: 'Vendas', palavras_chave: ['Comprar', 'comprar ', 'visita'] })).toEqual({ ok: true, valor: { nome: 'Vendas', descricao_para_ia: null, palavras_chave: ['comprar', 'visita'], ordem: 0, ativo: true } });
+    expect(validarTime({ nome: 'Vendas', palavras_chave: ['Comprar', 'comprar ', 'visita'] })).toEqual({ ok: true, valor: { nome: 'Vendas', descricao_para_ia: null, palavras_chave: ['comprar', 'visita'], ordem: 0, ativo: true, anonimo: false } });
     expect(validarTime({ nome: 'V' }).ok).toBe(false);
     expect(validarTime({ ativo: false }, { nome: 'Vendas', descricao_para_ia: 'Compra de imóveis', palavras_chave: ['comprar'], ordem: 2, ativo: true })).toEqual({
       ok: true,
-      valor: { nome: 'Vendas', descricao_para_ia: 'Compra de imóveis', palavras_chave: ['comprar'], ordem: 2, ativo: false },
+      valor: { nome: 'Vendas', descricao_para_ia: 'Compra de imóveis', palavras_chave: ['comprar'], ordem: 2, ativo: false, anonimo: false },
     });
   });
 

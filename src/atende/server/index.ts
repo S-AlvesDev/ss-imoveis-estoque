@@ -331,7 +331,7 @@ export function criarRouterAtende(): express.Router {
 
   async function carregarTimes(req: RequisicaoAtende): Promise<Time[]> {
     const [{ data: times, error }, { data: membros, error: erroM }] = await Promise.all([
-      req.dbAtende!.from('atende_times').select('id, nome, descricao_para_ia, palavras_chave, ordem, ativo').order('ordem', { ascending: true }).order('nome', { ascending: true }),
+      req.dbAtende!.from('atende_times').select('id, nome, descricao_para_ia, palavras_chave, ordem, ativo, anonimo').order('ordem', { ascending: true }).order('nome', { ascending: true }),
       req.dbAtende!.from('atende_time_membros').select('time_id, usuario_id, supervisiona'),
     ]);
     if (error) throw error;

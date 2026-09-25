@@ -63,6 +63,25 @@ async function inicioDaEspera(conversaId: string, ultimaDoCliente: string | null
   return inicio ? new Date(inicio) : null;
 }
 
+/**
+ * O dono da conversa já falou com o cliente nela?
+ *
+ * Escalonar tira a conversa de quem a tem (zera time e atendente) e devolve
+ * para a fila geral. Isso faz sentido para quem assumiu e sumiu — mas não
+ * para quem já está tocando o atendimento e só demorou nesta resposta.
+ * Quando o dono já falou, o SLA cobra por push e deixa a conversa com ele.
+ */
+async function donoJaFalou(conversaId: string, atendenteId: number | null): Promise<boolean> {
+  if (!atendenteId) return false;
+  const { count } = await supabaseServer
+    .from('atende_mensagens')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversa_id', conversaId)
+    .eq('autor_id', atendenteId)
+    .in('autor_tipo', ['atendente', 'supervisor']);
+  return (count ?? 0) > 0;
+}
+
 async function supervisoresDe(empresaId: string, timeId: string | null): Promise<number[]> {
   const { data: gestores } = await supabaseServer.from('atende_usuarios').select('id, papel').eq('empresa_id', empresaId).eq('ativo', true).in('papel', ['admin', 'supervisor']);
   const admins = ((gestores || []) as any[]).filter((u) => u.papel === 'admin').map((u) => Number(u.id));
@@ -95,8 +114,14 @@ export async function vigiarSla(empresaId: string, agora: Date = new Date()): Pr
     for (const c of (data || []) as unknown as ConversaEsperando[]) {
       const desde = await inicioDaEspera(c.id, c.ultima_mensagem_do_cliente_em);
       if (!desde) continue;
-      const acao = decidirSla(c, desde, agora, cfg);
+      let acao = decidirSla(c, desde, agora, cfg);
       if (!acao) continue;
+      // Quem já respondeu nesta conversa não a perde: o estouro vira aviso.
+      if (acao === 'escalonar' && (await donoJaFalou(c.id, c.atendente_id === null ? null : Number(c.atendente_id)))) {
+        const jaAvisou = Boolean(c.sla_avisada_em && new Date(c.sla_avisada_em).getTime() >= desde.getTime());
+        if (jaAvisou) continue;
+        acao = 'avisar';
+      }
       const minutos = Math.round((agora.getTime() - desde.getTime()) / MIN_MS);
       const carimbo = agora.toISOString();
       if (acao === 'escalonar') {
