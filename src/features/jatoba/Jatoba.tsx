@@ -1,9 +1,30 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useMotionValue, useReducedMotion } from 'motion/react';
 import { Check, Loader2, Send, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { track } from '@/lib/analytics';
 import { PRODUTO } from '@/shared/produto';
+
+/** Onde a pessoa deixou o botão do Jatobá, em pixels acima da posição de origem. */
+const CHAVE_DA_ALTURA = 'jatoba-altura';
+
+function lerAltura(): number {
+  try {
+    const v = Number(localStorage.getItem(CHAVE_DA_ALTURA));
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    // Navegação anônima, armazenamento bloqueado: o botão só volta ao lugar de origem.
+    return 0;
+  }
+}
+
+function guardarAltura(v: number) {
+  try {
+    localStorage.setItem(CHAVE_DA_ALTURA, String(Math.round(v)));
+  } catch {
+    /* sem armazenamento: a posição vale só nesta visita */
+  }
+}
 
 /**
  * Jatobá — o assistente do Stok Aí dentro do site. O mesmo componente atende
@@ -298,6 +319,31 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
     }
   }
 
+  // ---- Arrastar o botão para cima ou para baixo
+  // O balão vive por cima do conteúdo e às vezes cobre justo o que importa.
+  // Segurando, ele sobe ou desce; a altura escolhida fica guardada neste
+  // navegador. O deslocamento é relativo ao canto onde o CSS o coloca — que
+  // muda entre celular e desktop, e com o compositor aberto —, então mover
+  // não briga com essas regras.
+  const alturaDoBotao = useMotionValue(lerAltura());
+  const arrastou = useRef(false);
+  const [limites, setLimites] = useState({ top: -400, bottom: 0 });
+
+  useEffect(() => {
+    const medir = () => {
+      const novos = { top: -Math.max(0, window.innerHeight - 140), bottom: 0 };
+      setLimites(novos);
+      // A altura guardada numa tela grande não cabe numa pequena: traz o botão
+      // de volta para dentro, senão ele fica fora da tela e sem como alcançar.
+      const atual = alturaDoBotao.get();
+      if (atual < novos.top) alturaDoBotao.set(novos.top);
+      else if (atual > novos.bottom) alturaDoBotao.set(novos.bottom);
+    };
+    medir();
+    window.addEventListener('resize', medir);
+    return () => window.removeEventListener('resize', medir);
+  }, [alturaDoBotao]);
+
   const mostrarSugestoes = mensagens.length === 1 && !pensando;
 
   return (
@@ -308,13 +354,29 @@ export function Jatoba({ modo, produto = 'stok', pedir, onAbrir, onNavigate, onD
           <motion.button
             key="jatoba-botao"
             type="button"
-            onClick={abrir}
+            onClick={() => {
+              // Um arrasto termina em clique no navegador; só abre se foi toque seco.
+              if (!arrastou.current) abrir();
+            }}
+            drag="y"
+            dragMomentum={false}
+            dragElastic={0.04}
+            dragConstraints={limites}
+            onPointerDown={() => {
+              arrastou.current = false;
+            }}
+            onDragStart={() => {
+              arrastou.current = true;
+            }}
+            onDragEnd={() => guardarAltura(alturaDoBotao.get())}
+            style={{ y: alturaDoBotao }}
             initial={reduzido ? false : { scale: 0.6, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={reduzido ? undefined : { scale: 0.6, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-            aria-label={`Falar com o Jatobá, o assistente ${produto === 'sevla' ? 'da' : 'do'} ${p.nome}`}
-            className={`fixed bottom-5 right-5 z-[90] flex h-14 w-14 items-center justify-center rounded-full shadow-lg ring-4 transition-transform hover:scale-105 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/60 ${paleta.botao}`}
+            whileHover={reduzido ? undefined : { scale: 1.05 }}
+            aria-label={`Falar com o Jatobá, o assistente ${produto === 'sevla' ? 'da' : 'do'} ${p.nome} — segure para mover para cima ou para baixo`}
+            className={`fixed bottom-5 right-5 z-[90] flex h-14 w-14 cursor-grab touch-none items-center justify-center rounded-full shadow-lg ring-4 focus:outline-none focus-visible:ring-4 focus-visible:ring-white/60 active:cursor-grabbing ${paleta.botao}`}
           >
             <Avatar tamanho={48} simbolo={p.simbolo} mascote={p.mascote} />
           </motion.button>
