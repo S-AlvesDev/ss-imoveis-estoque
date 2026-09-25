@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
-import { Bot, Building2, Clock, FlaskConical, MessageCircleQuestion, Palette, Plus, Save, Sparkles, Timer, Trash2 } from 'lucide-react';
+import { Bot, Building2, Clock, FlaskConical, Image as ImageIcon, MessageCircleQuestion, Palette, Plus, Save, Sparkles, Timer, Trash2, Upload } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
 import { Entrada, AreaDeTexto, Interruptor, ESTILO_DO_CAMPO } from '../ui/Campo';
@@ -55,7 +55,6 @@ export function Empresa({ aba = 'empresa' }: { aba?: Aba }) {
         sla_aviso_min: form.sla_aviso_min === '' ? null : Number(form.sla_aviso_min),
         sla_escalonar_min: form.sla_escalonar_min === '' ? null : Number(form.sla_escalonar_min),
         cor_primaria: form.cor_primaria || null,
-        logo_url: form.logo_url || null,
         faq: form.faq.filter((f) => f.pergunta.trim() || f.resposta.trim()),
         horario_atendimento: form.horario,
       });
@@ -127,7 +126,7 @@ export function Empresa({ aba = 'empresa' }: { aba?: Aba }) {
                   </div>
                   <p className="mt-1.5 text-xs text-[var(--text-muted)]">Vazio = o roxo do Atende Aí.</p>
                 </div>
-                <Entrada rotulo="Logo (endereço da imagem)" value={form.logo_url} onChange={(e) => campo('logo_url', e.target.value)} placeholder="https://..." maxLength={500} ajuda="Vazio = o logo do Atende Aí." />
+                <LogoDaEmpresa />
               </div>
             </Cartao>
 
@@ -232,8 +231,83 @@ function paraForm(e: TEmpresa) {
     sla_aviso_min: e.sla_aviso_min === null || e.sla_aviso_min === undefined ? '' : String(e.sla_aviso_min),
     sla_escalonar_min: e.sla_escalonar_min === null || e.sla_escalonar_min === undefined ? '' : String(e.sla_escalonar_min),
     cor_primaria: e.cor_primaria ?? '',
-    logo_url: e.logo_url ?? '',
     faq: (e.faq ?? []) as PerguntaFrequente[],
     horario,
   };
+}
+
+/** Os tipos e o teto que o servidor também confere — aqui é só para avisar antes de enviar. */
+const LOGO_TIPOS = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
+const LOGO_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * O logo da empresa. O arquivo não passa pelo nosso servidor: ele pede um
+ * caminho autorizado, o navegador envia direto ao Storage e só então o
+ * servidor confere que chegou e grava a URL. É o mesmo caminho do Stok Aí —
+ * a Vercel corta requisição em 4,5 MB e o logo pode ter 5 MB.
+ */
+function LogoDaEmpresa() {
+  const empresa = useDadosAtende((s) => s.empresa);
+  const aplicar = useDadosAtende((s) => s.aplicar);
+  const [enviando, setEnviando] = useState(false);
+  const [removendo, setRemovendo] = useState(false);
+  const arquivoRef = useRef<HTMLInputElement>(null);
+
+  async function enviar(file: File) {
+    if (!LOGO_TIPOS.includes(file.type)) return toast.error('Use PNG, JPG, WebP ou SVG.');
+    if (file.size > LOGO_MAX_BYTES) return toast.error('O logo pode ter no máximo 5 MB.');
+    setEnviando(true);
+    try {
+      // 1. O servidor autoriza um caminho dentro da pasta desta empresa.
+      const { signedUrl, path } = await api.post<{ signedUrl: string; token: string; path: string }>('/empresa/logo-upload-url', { content_type: file.type, size: file.size });
+      // 2. O arquivo vai direto para o Storage.
+      const subida = await fetch(signedUrl, { method: 'PUT', headers: { 'Content-Type': file.type, 'x-upsert': 'true' }, body: file });
+      if (!subida.ok) throw new Error(`O Storage recusou o arquivo (${subida.status}).`);
+      // 3. O servidor confere que chegou, grava a URL e apaga o logo anterior.
+      const r = await api.post<{ empresa: TEmpresa }>('/empresa/logo', { path });
+      aplicar({ empresa: r.empresa });
+      toast.success('Logo atualizado.');
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : err instanceof Error ? err.message : 'Erro ao enviar o logo.');
+    } finally {
+      setEnviando(false);
+      if (arquivoRef.current) arquivoRef.current.value = '';
+    }
+  }
+
+  async function remover() {
+    setRemovendo(true);
+    try {
+      const r = await api.delete<{ empresa: TEmpresa }>('/empresa/logo');
+      aplicar({ empresa: r.empresa });
+      toast.success('Logo removido.');
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : 'Erro ao remover o logo.');
+    } finally {
+      setRemovendo(false);
+    }
+  }
+
+  return (
+    <div>
+      <p className="mb-1.5 block text-xs font-semibold text-[var(--text)]">Logo</p>
+      <div className="flex items-center gap-3">
+        <div className="flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg)]">
+          {empresa?.logo_url ? <img src={empresa.logo_url} alt="Logo da empresa" className="h-full w-full object-contain p-1" /> : <ImageIcon size={18} className="text-[var(--text-disable)]" />}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <input ref={arquivoRef} type="file" accept={LOGO_TIPOS.join(',')} className="hidden" onChange={(e) => e.target.files?.[0] && void enviar(e.target.files[0])} />
+          <Botao variante="secundaria" tamanho="sm" icone={<Upload size={13} />} carregando={enviando} onClick={() => arquivoRef.current?.click()}>
+            {empresa?.logo_url ? 'Trocar' : 'Enviar logo'}
+          </Botao>
+          {empresa?.logo_url && (
+            <Botao variante="fantasma" tamanho="sm" carregando={removendo} onClick={remover}>
+              Remover
+            </Botao>
+          )}
+        </div>
+      </div>
+      <p className="mt-1.5 text-xs text-[var(--text-muted)]">PNG, JPG, WebP ou SVG, até 5 MB. Sem logo, aparece o do Atende Aí.</p>
+    </div>
+  );
 }

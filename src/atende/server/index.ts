@@ -383,6 +383,92 @@ export function criarRouterAtende(): express.Router {
   });
 
   // ---- Empresa
+  // ---- O logo da empresa
+  //
+  // Mesmo desenho do Stok Aí: o arquivo NÃO passa por aqui. A Vercel corta
+  // requisição em 4,5 MB e o limite do logo é 5 MB, então o servidor só
+  // autoriza um caminho e o navegador envia direto ao Storage. O bucket
+  // `logos` (migração 015) é público para leitura e só aceita imagem; a
+  // escrita é sempre por URL assinada emitida aqui, com a chave de serviço.
+  // O prefixo `atende/` separa estes arquivos dos do Stok Aí no mesmo bucket.
+  const LOGO_MAX_BYTES = 5 * 1024 * 1024;
+  const LOGO_TIPOS: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
+  const pastaDoLogo = (empresaId: string) => `atende/${empresaId}/`;
+
+  /** Caminho no bucket a partir da URL pública, ou nulo se a URL não for nossa. */
+  function caminhoDoLogo(logoUrl: string | null | undefined): string | null {
+    if (!logoUrl) return null;
+    const m = logoUrl.match(/\/object\/public\/logos\/([^?]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
+  r.post('/empresa/logo-upload-url', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      const tipo = String(req.body?.content_type ?? '');
+      const tamanho = Number(req.body?.size ?? 0);
+      const ext = LOGO_TIPOS[tipo];
+      if (!ext) return res.status(400).json({ error: 'Use PNG, JPG, WebP ou SVG.' });
+      if (!Number.isFinite(tamanho) || tamanho <= 0) return res.status(400).json({ error: 'Arquivo vazio.' });
+      if (tamanho > LOGO_MAX_BYTES) return res.status(400).json({ error: 'O logo pode ter no máximo 5 MB.' });
+
+      const caminho = `${pastaDoLogo(req.sessao!.empresa_id)}logo-${Date.now()}.${ext}`;
+      const { data, error } = await supabaseServer.storage.from('logos').createSignedUploadUrl(caminho);
+      if (error || !data) throw error ?? new Error('sem URL assinada');
+      res.json({ signedUrl: data.signedUrl, token: data.token, path: caminho });
+    } catch (err: any) {
+      console.error('[POST /api/atende/empresa/logo-upload-url] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao preparar o envio do logo.' });
+    }
+  });
+
+  r.post('/empresa/logo', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      const caminho = String(req.body?.path ?? '');
+      const pasta = pastaDoLogo(req.sessao!.empresa_id);
+      // O caminho vem de fora: tem que ser desta empresa, e nada de subir de pasta.
+      if (!caminho.startsWith(pasta) || caminho.includes('..')) return res.status(400).json({ error: 'Caminho inválido.' });
+
+      const nomeArquivo = caminho.slice(pasta.length);
+      const { data: lista, error: erroLista } = await supabaseServer.storage.from('logos').list(pasta.slice(0, -1), { search: nomeArquivo });
+      if (erroLista) throw erroLista;
+      if (!lista?.some((f) => f.name === nomeArquivo)) return res.status(404).json({ error: 'O arquivo não chegou ao Storage. Envie de novo.' });
+
+      const { data: atual } = await req.dbAtende!.from('atende_empresas').select('logo_url').eq('id', req.sessao!.empresa_id).maybeSingle();
+      const anterior = caminhoDoLogo((atual as { logo_url?: string } | null)?.logo_url);
+
+      const publicUrl = supabaseServer.storage.from('logos').getPublicUrl(caminho).data.publicUrl;
+      const { error } = await req.dbAtende!.from('atende_empresas').update({ logo_url: publicUrl }).eq('id', req.sessao!.empresa_id);
+      if (error) throw error;
+
+      // O logo antigo não serve mais a ninguém: sai do bucket. Se falhar, só avisa.
+      if (anterior && anterior !== caminho) {
+        const { error: erroRemocao } = await supabaseServer.storage.from('logos').remove([anterior]);
+        if (erroRemocao) console.warn('[atende logo] não apagou o anterior:', erroRemocao.message);
+      }
+      res.json({ empresa: await carregarEmpresa(req) });
+    } catch (err: any) {
+      console.error('[POST /api/atende/empresa/logo] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao salvar o logo.' });
+    }
+  });
+
+  r.delete('/empresa/logo', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      const { data: atual } = await req.dbAtende!.from('atende_empresas').select('logo_url').eq('id', req.sessao!.empresa_id).maybeSingle();
+      const caminho = caminhoDoLogo((atual as { logo_url?: string } | null)?.logo_url);
+      const { error } = await req.dbAtende!.from('atende_empresas').update({ logo_url: null }).eq('id', req.sessao!.empresa_id);
+      if (error) throw error;
+      if (caminho) {
+        const { error: erroRemocao } = await supabaseServer.storage.from('logos').remove([caminho]);
+        if (erroRemocao) console.warn('[atende logo] não apagou o arquivo:', erroRemocao.message);
+      }
+      res.json({ empresa: await carregarEmpresa(req) });
+    } catch (err: any) {
+      console.error('[DELETE /api/atende/empresa/logo] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao remover o logo.' });
+    }
+  });
+
   r.patch('/empresa', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
     try {
       const v = validarEmpresa(req.body);
