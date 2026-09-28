@@ -97,7 +97,12 @@ export function Recontagem({ open, onClose, deposito, categorias, materials, ref
 
   const countedInView = filtered.filter((m) => matched.has(m.id) || counts[m.id] !== undefined).length;
 
-  const diffs = useMemo(() => {
+  /**
+   * Tudo que foi contado nesta rodada — inclusive o que bateu com o sistema.
+   * O servidor precisa saber de todos para carimbar a recontagem; sem isso
+   * não há como a gestão saber o que ainda falta conferir.
+   */
+  const contados = useMemo(() => {
     return materials
       .map((m) => {
         const raw = counts[m.id];
@@ -105,30 +110,32 @@ export function Recontagem({ open, onClose, deposito, categorias, materials, ref
         const contagem = Number(raw);
         if (Number.isNaN(contagem)) return null;
         const saldo = saldoDe(m);
-        const diferenca = contagem - saldo;
-        if (diferenca === 0) return null;
-        return { material: m, saldo, contagem, diferenca };
+        return { material: m, saldo, contagem, diferenca: contagem - saldo };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
   }, [materials, counts, location]);
 
+  /** O recorte que a tela de revisão mostra: só onde o físico discordou. */
+  const diffs = useMemo(() => contados.filter((c) => c.diferenca !== 0), [contados]);
+
   async function handleSubmit() {
-    if (diffs.length === 0) {
-      toast.info('Nenhuma divergência para salvar.');
+    if (contados.length === 0) {
+      toast.info('Nenhuma contagem para salvar.');
       return;
     }
     setSubmitting(true);
     try {
       await api.post('/api/materials/bulk-recount', naUnidade({
         warehouse_id: deposito.id,
-        counts: diffs.map((d) => ({ material_id: d.material.id, contagem: d.contagem })),
+        counts: contados.map((c) => ({ material_id: c.material.id, contagem: c.contagem })),
       }));
-      toast.success(`${diffs.length} ajuste(s) de recontagem aplicado(s).`);
+      const conferidos = contados.length - diffs.length;
+      toast.success(diffs.length > 0 ? `${diffs.length} ajuste(s) aplicado(s); ${conferidos} item(ns) conferido(s) sem divergência.` : `${conferidos} item(ns) conferido(s), tudo certo com o sistema.`);
       const remainingCounts = { ...counts };
       const nextMatched = new Set(matched);
-      diffs.forEach((d) => {
-        delete remainingCounts[d.material.id];
-        nextMatched.add(d.material.id);
+      contados.forEach((c) => {
+        delete remainingCounts[c.material.id];
+        nextMatched.add(c.material.id);
       });
       setCounts(remainingCounts);
       setMatched(nextMatched);
@@ -167,8 +174,11 @@ export function Recontagem({ open, onClose, deposito, categorias, materials, ref
             </p>
           </div>
         </div>
-        <Button variant="accent" onClick={() => setStep('review')} disabled={diffs.length === 0}>
-          Revisar e Salvar {diffs.length > 0 && `(${diffs.length})`}
+        {/* Contagem que bate também precisa ser salva: é ela que marca o
+            material como conferido para a gestão. Antes o botão só ligava
+            havendo divergência, e uma rodada "tudo certo" se perdia. */}
+        <Button variant="accent" onClick={() => setStep('review')} disabled={contados.length === 0}>
+          Revisar e Salvar {contados.length > 0 && `(${contados.length})`}
         </Button>
       </header>
 
@@ -265,8 +275,13 @@ export function Recontagem({ open, onClose, deposito, categorias, materials, ref
           <div className="mx-auto max-w-2xl">
             <div className="mb-5 flex items-center gap-2">
               <ClipboardCheck size={18} className="text-[var(--brand)]" />
-              <h3 className="font-display text-lg font-bold text-[var(--text)]">Confirmar {diffs.length} divergência(s)</h3>
+              <h3 className="font-display text-lg font-bold text-[var(--text)]">
+                {diffs.length > 0 ? `Confirmar ${diffs.length} divergência(s)` : 'Nenhuma divergência'}
+              </h3>
             </div>
+            <p className="mb-4 text-sm text-[var(--text-muted)]">
+              {contados.length} item(ns) contado(s){diffs.length > 0 ? `, ${contados.length - diffs.length} bateu(ram) com o sistema.` : ' — todos bateram com o sistema.'} Salvar registra todos como conferidos.
+            </p>
             <div className="space-y-2">
               <AnimatePresence>
                 {diffs.map((d) => (
@@ -297,7 +312,7 @@ export function Recontagem({ open, onClose, deposito, categorias, materials, ref
                 Voltar
               </Button>
               <Button variant="primary" fullWidth loading={submitting} onClick={handleSubmit}>
-                Confirmar Ajustes
+                {diffs.length > 0 ? 'Confirmar Ajustes' : 'Registrar Conferência'}
               </Button>
             </div>
           </div>

@@ -1598,6 +1598,60 @@ export function createApp() {
   });
 
   // --------------------------- EDIÇÃO EM LOTE ---------------------------
+  /**
+   * O que ainda não foi recontado num depósito — só para a gestão
+   * (CEO/Administrador/Administrativo).
+   *
+   * "Não recontado" = o saldo daquele material naquele depósito está sem
+   * carimbo (nunca passou por contagem desde a migração 055) ou com carimbo
+   * anterior a `desde`. Sem `desde`, vale a meia-noite de hoje: a pergunta
+   * de todo dia é "o que falta conferir hoje?".
+   *
+   * Só material que existe no depósito entra: linha em stock_balances. O que
+   * nunca teve saldo ali não está "faltando ser contado".
+   */
+  app.get('/api/materials/nao-recontados', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
+    try {
+      const warehouseId = String(req.query.warehouse_id ?? '');
+      if (!warehouseId) return res.status(400).json({ error: 'Informe o depósito.' });
+
+      const depositos = await depositosDaOrg(req.db!);
+      const deposito = depositos.find((d) => d.id === warehouseId);
+      if (!deposito) return res.status(404).json({ error: 'Depósito não encontrado.' });
+
+      const bruto = req.query.desde ? new Date(String(req.query.desde)) : new Date(new Date().setHours(0, 0, 0, 0));
+      if (!Number.isFinite(bruto.getTime())) return res.status(400).json({ error: 'Data inválida.' });
+      const desde = bruto.toISOString();
+
+      const { data, error } = await req
+        .db!.from('stock_balances')
+        .select('material_id, saldo, recontado_em, recontado_por, material:materials(id, nome, categoria, unidade_medida, estoque_minimo)')
+        .eq('warehouse_id', warehouseId)
+        .or(`recontado_em.is.null,recontado_em.lt.${desde}`)
+        .limit(2000);
+      if (error) throw error;
+
+      const itens = ((data || []) as any[])
+        .filter((l) => l.material)
+        .map((l) => ({
+          material_id: l.material_id,
+          nome: l.material.nome,
+          categoria: l.material.categoria,
+          unidade_medida: l.material.unidade_medida,
+          estoque_minimo: Number(l.material.estoque_minimo ?? 0),
+          saldo: Number(l.saldo ?? 0),
+          recontado_em: l.recontado_em ?? null,
+          recontado_por: l.recontado_por ?? null,
+        }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+
+      res.json({ deposito: { id: deposito.id, nome: deposito.nome }, desde, itens });
+    } catch (err: any) {
+      console.error('[GET /api/materials/nao-recontados] erro:', err.message);
+      res.status(500).json({ error: 'Erro ao listar o que falta recontar.' });
+    }
+  });
+
   app.patch('/api/materials/bulk-minimo', authenticate, withTenant, requireRole(ADMIN_ROLES), async (req, res) => {
     try {
       const { ids, estoque_minimo } = req.body || {};
@@ -2774,6 +2828,8 @@ export function createApp() {
 
       const applied: { material_id: number; nome: string; diferenca: number }[] = [];
       const criticalItems: { nome: string; novoSaldo: number; estoque_minimo: number }[] = [];
+      /** Todo material que passou pela contagem — tenha divergido ou não. */
+      const carimbar: number[] = [];
 
       for (const entry of counts) {
         const materialId = entry?.material_id;
@@ -2787,6 +2843,10 @@ export function createApp() {
         const atuais = await saldosDoMaterial(req.db!, Number(materialId));
         const saldoAtual = atuais[deposito.id] ?? 0;
         const diferenca = arredondar(contagem - saldoAtual);
+
+        // Conferido é conferido, mesmo sem divergência: é isto que responde
+        // "o que ainda falta recontar?" na tela da gestão.
+        carimbar.push(Number(materialId));
         if (diferenca === 0) continue;
 
         // Recontagem não é um delta: é "o físico diz que tem X". Grava X.
@@ -2812,6 +2872,17 @@ export function createApp() {
         if (contagem <= material.estoque_minimo) {
           criticalItems.push({ nome: material.nome, novoSaldo: contagem, estoque_minimo: material.estoque_minimo });
         }
+      }
+
+      // O carimbo da recontagem, numa tacada só. Falhar aqui não desfaz os
+      // ajustes já aplicados — o saldo é o que importa; o carimbo é registro.
+      if (carimbar.length > 0) {
+        const { error: erroCarimbo } = await req
+          .db!.from('stock_balances')
+          .update({ recontado_em: new Date().toISOString(), recontado_por: req.user!.matricula })
+          .eq('warehouse_id', deposito.id)
+          .in('material_id', carimbar);
+        if (erroCarimbo) console.error('[bulk-recount] não carimbou a recontagem:', erroCarimbo.message);
       }
 
       if (criticalItems.length > 0) {

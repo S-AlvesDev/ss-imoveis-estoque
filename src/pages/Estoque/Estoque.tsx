@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ClipboardCheck, ClipboardList, Clock, LayoutGrid, Search, Warehouse } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, ClipboardList, Clock, LayoutGrid, ListChecks, Search, Warehouse } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { StatCard } from '@/shared/ui/StatCard';
 import { Badge } from '@/shared/ui/Badge';
@@ -14,6 +14,10 @@ import { AuditModal } from '@/features/estoque/AuditModal';
 import { HistoryModal } from '@/features/estoque/HistoryModal';
 import { MovementForm, type MovimentoPayload } from '@/features/estoque/MovementForm';
 import { Recontagem } from '@/features/estoque/Recontagem';
+import { NaoRecontados } from '@/features/estoque/NaoRecontados';
+import { ManageModal } from '@/pages/Admin/ManageModal';
+import { useAuth } from '@/store/auth';
+import { ADMIN_ROLES } from '@/shared/constants';
 import { api } from '@/lib/api';
 import type { Deposito, Material, MaterialMovement, StaffUser } from '@/shared/types';
 import { formatNumber, ondeTem, saldoEm, stockStatus } from '@/features/estoque/utils';
@@ -46,6 +50,11 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
   const [historyMaterial, setHistoryMaterial] = useState<Material | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);
   const [recontagemOpen, setRecontagemOpen] = useState(false);
+  // O que falta conferir é pergunta de gestão: CEO, Administrador, Administrativo.
+  const usuario = useAuth((s) => s.user);
+  const ehGestao = !!usuario && ADMIN_ROLES.includes(usuario.role);
+  const [naoRecontadosOpen, setNaoRecontadosOpen] = useState(false);
+  const [editando, setEditando] = useState<Material | null>(null);
 
   const outros = useMemo(() => depositosDaUnidade.filter((d) => d.id !== deposito.id && d.ativo), [depositosDaUnidade, deposito.id]);
   const olhandoDeposito = depositosDaUnidade.find((d) => d.id === olhando) ?? deposito;
@@ -95,13 +104,20 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
           <h1 className="truncate text-2xl font-bold text-[var(--text)]">{deposito.nome}</h1>
           <p className="text-sm text-[var(--text-muted)]">{MODO_LABELS[deposito.modo]?.descricao}</p>
         </div>
-        {podeOperar ? (
-          <Button variant="accent" icon={<ClipboardCheck size={16} />} onClick={() => setRecontagemOpen(true)}>
-            Recontagem Rápida
-          </Button>
-        ) : (
-          <Badge variant="neutral">Só consulta</Badge>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {ehGestao && deposito.modo === 'almoxarifado' && (
+            <Button variant="outline" icon={<ListChecks size={16} />} onClick={() => setNaoRecontadosOpen(true)}>
+              Falta recontar
+            </Button>
+          )}
+          {podeOperar ? (
+            <Button variant="accent" icon={<ClipboardCheck size={16} />} onClick={() => setRecontagemOpen(true)}>
+              Recontagem Rápida
+            </Button>
+          ) : (
+            <Badge variant="neutral">Só consulta</Badge>
+          )}
+        </div>
       </div>
 
       <Reveal className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -230,6 +246,17 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
         exportFilename={`auditoria-${deposito.nome.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
         title={`Auditoria — ${deposito.nome}`}
       />
+      {ehGestao && (
+        <NaoRecontados
+          open={naoRecontadosOpen}
+          onClose={() => setNaoRecontadosOpen(false)}
+          deposito={deposito}
+          materials={materials}
+          onEditar={(m) => setEditando(m)}
+          refetch={refetch}
+        />
+      )}
+      {editando && <ManageModal material={editando} categorias={categorias} depositos={depositosDaUnidade} onClose={() => setEditando(null)} onUpdated={refetch} />}
       <Recontagem open={recontagemOpen} onClose={() => setRecontagemOpen(false)} deposito={deposito} categorias={categorias} materials={materials} refetch={refetch} />
     </div>
   );
