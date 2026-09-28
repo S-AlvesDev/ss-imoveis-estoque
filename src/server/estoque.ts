@@ -361,6 +361,28 @@ export async function saldosDaOrg(db: ScopedDb): Promise<Map<number, SaldosPorDe
   return porMaterial;
 }
 
+/**
+ * Quando cada material passou por recontagem pela última vez, olhando TODOS
+ * os depósitos: o mais recente entre eles. Responde "este material já foi
+ * conferido em algum lugar?", que é pergunta de catálogo, não de estoque.
+ *
+ * Tolera o banco sem a migração 055: devolve o mapa vazio em vez de quebrar
+ * a tela inteira — antes dela ninguém foi carimbado mesmo.
+ */
+export async function recontagensDaOrg(db: ScopedDb): Promise<Map<number, string>> {
+  const maisRecente = new Map<number, string>();
+  const { data, error } = await db.from('stock_balances').select('material_id, recontado_em').not('recontado_em', 'is', null).limit(20000);
+  if (error) {
+    if (/recontado_em/.test(error.message)) return maisRecente;
+    throw error;
+  }
+  for (const linha of (data || []) as { material_id: number; recontado_em: string }[]) {
+    const atual = maisRecente.get(linha.material_id);
+    if (!atual || linha.recontado_em > atual) maisRecente.set(linha.material_id, linha.recontado_em);
+  }
+  return maisRecente;
+}
+
 export async function saldosDoMaterial(db: ScopedDb, materialId: number): Promise<SaldosPorDeposito> {
   const { data, error } = await db
     .from('stock_balances')

@@ -16,7 +16,7 @@ import { exportMaterialsToWord } from './exportWord';
 import { api } from '@/lib/api';
 import { naUnidade } from '@/store/unidade';
 import type { Material, MaterialMovement, StaffUser, Deposito } from '@/shared/types';
-import { formatNumber, stockStatus } from '@/features/estoque/utils';
+import { chaveDoNome, formatNumber, stockStatus } from '@/features/estoque/utils';
 import { buscaInicial } from '@/store/busca';
 import { usePlano } from '@/features/planos/usePlano';
 
@@ -24,19 +24,36 @@ import { usePlano } from '@/features/planos/usePlano';
  * Filtros por situação. TRANSFERIR é avaliado da ótica da Obra: são os itens
  * que faltam lá mas existem na Central — resolvem-se com remessa, não com compra.
  */
-type StatusFilter = 'TODOS' | 'RUPTURA' | 'ABAIXO' | 'TRANSFERIR';
+type StatusFilter = 'TODOS' | 'RUPTURA' | 'ABAIXO' | 'TRANSFERIR' | 'SEM_RECONTAGEM' | 'PARADOS' | 'DUPLICADOS';
 
 const STATUS_FILTERS: { value: StatusFilter; label: string; tone: string }[] = [
   { value: 'TODOS', label: 'Todos', tone: 'text-[var(--text)]' },
   { value: 'RUPTURA', label: 'Sem estoque', tone: 'text-rose-500' },
   { value: 'ABAIXO', label: 'Abaixo do mínimo', tone: 'text-[var(--brand)]' },
   { value: 'TRANSFERIR', label: 'Tem em outro estoque', tone: 'text-sky-500' },
+  { value: 'SEM_RECONTAGEM', label: 'Nunca recontado', tone: 'text-amber-500' },
+  { value: 'PARADOS', label: 'Parado há 30 dias', tone: 'text-slate-500' },
+  { value: 'DUPLICADOS', label: 'Possível duplicado', tone: 'text-fuchsia-500' },
 ];
 
-function matchesStatusFilter(m: Material, filter: StatusFilter, depositos: Deposito[]): boolean {
+/** Dias sem nenhuma movimentação para um material entrar em "Parado". */
+const DIAS_PARADO = 30;
+
+interface Contexto {
+  depositos: Deposito[];
+  /** Ids cuja última movimentação é antiga (ou que nunca se moveram). */
+  parados: Set<number>;
+  /** Ids cujo nome normalizado colide com o de outro material. */
+  duplicados: Set<number>;
+}
+
+function matchesStatusFilter(m: Material, filter: StatusFilter, ctx: Contexto): boolean {
   if (filter === 'TODOS') return true;
   // Zerado em algum estoque da unidade e disponível em outro.
-  if (filter === 'TRANSFERIR') return depositos.some((d) => stockStatus(m, d.id) === 'TRANSFERIR');
+  if (filter === 'TRANSFERIR') return ctx.depositos.some((d) => stockStatus(m, d.id) === 'TRANSFERIR');
+  if (filter === 'SEM_RECONTAGEM') return !m.recontado_em;
+  if (filter === 'PARADOS') return ctx.parados.has(m.id);
+  if (filter === 'DUPLICADOS') return ctx.duplicados.has(m.id);
   return stockStatus(m, 'empresa') === filter;
 }
 
@@ -98,17 +115,51 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
   /** Não é nenhuma categoria nomeada pela empresa — o mesmo "Outros" que o painel já mostra no gráfico. */
   const naoClassificado = (m: Material) => !categorias.includes(m.categoria);
 
+  /**
+   * Parados: nenhuma movimentação nos últimos DIAS_PARADO dias. Material que
+   * nunca se moveu entra também — é o caso mais suspeito de cadastro morto.
+   * As movimentações já vêm todas do servidor, então não custa consulta.
+   */
+  const parados = useMemo(() => {
+    const corte = Date.now() - DIAS_PARADO * 86_400_000;
+    const mexeuRecentemente = new Set<number>();
+    for (const mv of materialMovements) {
+      if (mv.material_id != null && new Date(mv.created_at).getTime() >= corte) mexeuRecentemente.add(mv.material_id);
+    }
+    return new Set(materials.filter((m) => !mexeuRecentemente.has(m.id)).map((m) => m.id));
+  }, [materials, materialMovements]);
+
+  /** Duplicados: nomes que, normalizados, são o mesmo. */
+  const duplicados = useMemo(() => {
+    const porChave = new Map<string, number[]>();
+    for (const m of materials) {
+      const k = chaveDoNome(m.nome);
+      if (!k) continue;
+      porChave.set(k, [...(porChave.get(k) ?? []), m.id]);
+    }
+    const ids = new Set<number>();
+    for (const grupo of porChave.values()) if (grupo.length > 1) grupo.forEach((id) => ids.add(id));
+    return ids;
+  }, [materials]);
+
+  const ctxDoFiltro = useMemo(() => ({ depositos, parados, duplicados }), [depositos, parados, duplicados]);
+
   const visibleMaterials = useMemo(() => {
     let list = materials;
     if (categoria === OUTROS_CATEGORIA) list = list.filter(naoClassificado);
     else if (categoria !== 'TODAS') list = list.filter((m) => m.categoria === categoria);
-    list = list.filter((m) => matchesStatusFilter(m, filter, depositos));
+    list = list.filter((m) => matchesStatusFilter(m, filter, ctxDoFiltro));
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((m) => m.nome.toLowerCase().includes(q) || m.categoria.toLowerCase().includes(q));
     }
+    // Duplicados só servem se ficarem lado a lado: é assim que se compara e
+    // se escolhe qual fica antes de fundir.
+    if (filter === 'DUPLICADOS') {
+      list = [...list].sort((a, b) => chaveDoNome(a.nome).localeCompare(chaveDoNome(b.nome)) || a.id - b.id);
+    }
     return list;
-  }, [materials, filter, categoria, search, categorias]);
+  }, [materials, filter, categoria, search, categorias, ctxDoFiltro]);
 
   /** Contagem por situação, respeitando a categoria escolhida mas não o filtro atual. */
   const statusCounts = useMemo(() => {
@@ -118,8 +169,11 @@ export function Admin({ materials, materialMovements, staff, categorias, deposit
       RUPTURA: base.filter((m) => stockStatus(m, 'empresa') === 'RUPTURA').length,
       ABAIXO: base.filter((m) => stockStatus(m, 'empresa') === 'ABAIXO').length,
       TRANSFERIR: base.filter((m) => depositos.some((d) => stockStatus(m, d.id) === 'TRANSFERIR')).length,
+      SEM_RECONTAGEM: base.filter((m) => !m.recontado_em).length,
+      PARADOS: base.filter((m) => parados.has(m.id)).length,
+      DUPLICADOS: base.filter((m) => duplicados.has(m.id)).length,
     } satisfies Record<StatusFilter, number>;
-  }, [materials, categoria, categorias]);
+  }, [materials, categoria, categorias, depositos, parados, duplicados]);
 
   const saldoCalculado = (Number(form.qtd_volumes) || 0) * (Number(form.fator_multiplicador) || 0);
 

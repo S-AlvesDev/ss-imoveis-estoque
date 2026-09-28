@@ -172,6 +172,8 @@ export interface Material {
   categoria: string;
   /** Modo entrega: a cada quantos dias este material precisa ser trocado. Nulo = sem prazo. */
   validade_troca_dias: number | null;
+  /** Última recontagem deste material em QUALQUER depósito. Nulo = nunca conferido. */
+  recontado_em: string | null;
   created_at: string;
   updated_at: string;
 }

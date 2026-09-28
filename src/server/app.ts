@@ -61,6 +61,7 @@ import {
   operacaoPermitida,
   unidadesDaOrg,
   saldosDaOrg,
+  recontagensDaOrg,
   saldosDoMaterial,
   gravarSaldos,
   totalDosDepositos,
@@ -805,6 +806,8 @@ export function createApp() {
           lendo('units', unidadesDaOrg(db)),
           lendo('warehouses', depositosDaOrg(db, { incluirUnidadesInativas: true })),
           lendo('stock_balances', saldosDaOrg(db)),
+          // Quando cada material foi recontado pela última vez, em qualquer depósito.
+          lendo('recontagens', recontagensDaOrg(db), { tolerar: true }),
           // Organização ausente vira null na resposta, como sempre foi.
           lendo('organizations', db.from('organizations').select('id, nome, slug, cor_primaria, logo_url, plano, plano_ate, avaliacao_ate').eq('id', req.user!.organization_id).single(), { tolerar: true }),
           lendo('categories', db.from('categories').select('id, nome, ordem').order('ordem', { ascending: true }).order('nome', { ascending: true })),
@@ -823,7 +826,7 @@ export function createApp() {
         await new Promise((r) => setTimeout(r, 400));
         leitura = await ler();
       }
-      const [materialsRes, movements, staffRes, unidades, depositos, saldos, orgRes, categoriasRes, emprestimosRes, lotesRes, itensRes] = leitura;
+      const [materialsRes, movements, staffRes, unidades, depositos, saldos, recontagens, orgRes, categoriasRes, emprestimosRes, lotesRes, itensRes] = leitura;
 
       // Quem não é admin só recebe os depósitos que pode ver — e as unidades
       // que têm algum deles. O saldo dos outros não sai do servidor.
@@ -843,7 +846,7 @@ export function createApp() {
         const porDeposito: SaldosPorDeposito = acessos === null
           ? todos
           : Object.fromEntries(Object.entries(todos).filter(([id]) => visivel.has(id)));
-        return { ...m, saldos: porDeposito };
+        return { ...m, saldos: porDeposito, recontado_em: recontagens?.get(m.id) ?? null };
       });
 
       const emprestimos = (emprestimosRes.data || [])

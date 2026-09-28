@@ -216,3 +216,21 @@ export function contarPendencias(materials: Material[], depositos: Deposito[], e
 
   return materiaisComAlerta.size + atrasados + lotesComAlerta;
 }
+
+/**
+ * A chave que junta nomes que são o mesmo material escrito diferente: sem
+ * acento, sem caixa, sem pontuação, sem espaço repetido.
+ *
+ * Não tenta adivinhar parecença — só agrupa quem, normalizado, é idêntico.
+ * Acusar dois materiais distintos de duplicados custa caro (alguém funde o
+ * que não devia), então o critério é conservador de propósito: "PARAFUSO 10"
+ * e "PARAFUSO 12" continuam sendo dois materiais.
+ */
+export function chaveDoNome(nome: string): string {
+  return nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}

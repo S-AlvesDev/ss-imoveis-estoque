@@ -20,6 +20,21 @@ interface MaterialsTableProps {
   onDelete?: (id: number) => void;
 }
 
+/**
+ * Quando este material foi conferido pela última vez, em qualquer estoque.
+ * Fica na linha do material porque a pergunta "isto já foi recontado?" se
+ * faz olhando a lista, não abrindo ficha por ficha.
+ */
+function Recontagem({ em }: { em: string | null }) {
+  if (!em) return <span className="font-semibold text-amber-600"> · nunca recontado</span>;
+  const dias = Math.floor((Date.now() - new Date(em).getTime()) / 86_400_000);
+  return (
+    <span title={`Última recontagem em ${new Date(em).toLocaleDateString('pt-BR')}`}>
+      {' '}· recontado {dias <= 0 ? 'hoje' : dias === 1 ? 'ontem' : `há ${dias} dias`}
+    </span>
+  );
+}
+
 /** Saldo em destaque quando o local está zerado, apagado quando é só zero irrelevante. */
 function Saldo({ value, unidade }: { value: number; unidade: string }) {
   const zero = Number(value) <= 0;
@@ -97,6 +112,7 @@ export function MaterialsTable({
                         <p className="font-semibold text-[var(--text)]">{m.nome}</p>
                         <p className="text-[11px] text-[var(--text-muted)]">
                           {m.categoria} · {m.unidade_medida}
+                          <Recontagem em={m.recontado_em} />
                         </p>
                       </div>
                     </div>

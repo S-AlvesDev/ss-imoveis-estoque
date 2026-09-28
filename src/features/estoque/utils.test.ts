@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  chaveDoNome,
   contarPendencias,
   movementDirection,
   needsPurchase,
@@ -265,5 +266,34 @@ describe('contarPendencias — BUG-13: o sino conta o mesmo que a tela de Alerta
   it('sem nenhuma pendência, o total é zero', () => {
     const materials = [{ id: 1, saldo_unidade: 20, saldos_unidade: { central: 20 }, estoque_minimo: 5 }] as any;
     expect(contarPendencias(materials, [deposito('central')], [], [])).toBe(0);
+  });
+});
+
+/**
+ * A chave que detecta material cadastrado duas vezes. O risco aqui não é
+ * deixar passar um duplicado — é acusar dois materiais distintos, porque aí
+ * alguém funde o que não devia e o estoque some numa linha só.
+ */
+describe('chaveDoNome', () => {
+  it('junta o mesmo nome escrito de formas diferentes', () => {
+    const alvo = chaveDoNome('TINTA TUBARÃO BRANCO');
+    expect(chaveDoNome('Tinta Tubarao Branco')).toBe(alvo);
+    expect(chaveDoNome('  tinta   tubarão  branco ')).toBe(alvo);
+    expect(chaveDoNome('TINTA-TUBARÃO/BRANCO')).toBe(alvo);
+  });
+
+  it('não junta materiais que só se parecem', () => {
+    expect(chaveDoNome('PARAFUSO 10')).not.toBe(chaveDoNome('PARAFUSO 12'));
+    expect(chaveDoNome('CANO DE 20 AGUA')).not.toBe(chaveDoNome('CANO DE 25 AGUA'));
+    expect(chaveDoNome('JOELHO DE 40 ESGOTO')).not.toBe(chaveDoNome('JOELHO DE 75 ESGOTO'));
+  });
+
+  it('o número sobrevive à limpeza — é ele que separa as bitolas', () => {
+    expect(chaveDoNome('TÊ DE LATÃO DE 25x20 AGUA')).toBe('te de latao de 25x20 agua');
+  });
+
+  it('nome só de pontuação vira vazio, e vazio não agrupa ninguém', () => {
+    expect(chaveDoNome('---')).toBe('');
+    expect(chaveDoNome('   ')).toBe('');
   });
 });
