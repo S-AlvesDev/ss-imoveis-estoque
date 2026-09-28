@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, ClipboardCheck, ClipboardList, Clock, LayoutGrid, ListChecks, Search, Warehouse } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, ClipboardList, Clock, LayoutGrid, Search, Warehouse } from 'lucide-react';
 import { Card } from '@/shared/ui/Card';
 import { StatCard } from '@/shared/ui/StatCard';
 import { Badge } from '@/shared/ui/Badge';
@@ -53,8 +53,11 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
   // O que falta conferir é pergunta de gestão: CEO, Administrador, Administrativo.
   const usuario = useAuth((s) => s.user);
   const ehGestao = !!usuario && ADMIN_ROLES.includes(usuario.role);
-  const [naoRecontadosOpen, setNaoRecontadosOpen] = useState(false);
   const [editando, setEditando] = useState<Material | null>(null);
+  // A aba do card de estoque: a lista de sempre, ou o que falta conferir.
+  const [abaDoEstoque, setAbaDoEstoque] = useState<'atual' | 'recontar'>('atual');
+  const [pendentesDeRecontagem, setPendentesDeRecontagem] = useState<number | null>(null);
+  const mostraAbaDeRecontagem = ehGestao && deposito.modo === 'almoxarifado';
 
   const outros = useMemo(() => depositosDaUnidade.filter((d) => d.id !== deposito.id && d.ativo), [depositosDaUnidade, deposito.id]);
   const olhandoDeposito = depositosDaUnidade.find((d) => d.id === olhando) ?? deposito;
@@ -104,20 +107,13 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
           <h1 className="truncate text-2xl font-bold text-[var(--text)]">{deposito.nome}</h1>
           <p className="text-sm text-[var(--text-muted)]">{MODO_LABELS[deposito.modo]?.descricao}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {ehGestao && deposito.modo === 'almoxarifado' && (
-            <Button variant="outline" icon={<ListChecks size={16} />} onClick={() => setNaoRecontadosOpen(true)}>
-              Falta recontar
-            </Button>
-          )}
-          {podeOperar ? (
-            <Button variant="accent" icon={<ClipboardCheck size={16} />} onClick={() => setRecontagemOpen(true)}>
-              Recontagem Rápida
-            </Button>
-          ) : (
-            <Badge variant="neutral">Só consulta</Badge>
-          )}
-        </div>
+        {podeOperar ? (
+          <Button variant="accent" icon={<ClipboardCheck size={16} />} onClick={() => setRecontagemOpen(true)}>
+            Recontagem Rápida
+          </Button>
+        ) : (
+          <Badge variant="neutral">Só consulta</Badge>
+        )}
       </div>
 
       <Reveal className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -178,8 +174,20 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
 
         <Card className="p-5 lg:col-span-3">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-bold text-[var(--text)]">Estoque atual</p>
-            {depositosDaUnidade.length > 1 && (
+            {mostraAbaDeRecontagem ? (
+              <SegmentedControl
+                value={abaDoEstoque}
+                onChange={setAbaDoEstoque}
+                layoutId={`estoque-${deposito.id}-aba`}
+                options={[
+                  { value: 'atual', label: 'Estoque atual' },
+                  { value: 'recontar', label: pendentesDeRecontagem === null ? 'Falta recontar' : `Falta recontar (${pendentesDeRecontagem})` },
+                ]}
+              />
+            ) : (
+              <p className="text-sm font-bold text-[var(--text)]">Estoque atual</p>
+            )}
+            {abaDoEstoque === 'atual' && depositosDaUnidade.length > 1 && (
               <SegmentedControl
                 value={olhando}
                 onChange={setOlhando}
@@ -189,6 +197,12 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
             )}
           </div>
 
+          {abaDoEstoque === 'recontar' && mostraAbaDeRecontagem && (
+            <NaoRecontados deposito={deposito} materials={materials} onEditar={(m) => setEditando(m)} refetch={refetch} onContagem={setPendentesDeRecontagem} />
+          )}
+
+          {abaDoEstoque === 'atual' && (
+          <>
           <div className="relative mb-3">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
@@ -232,6 +246,8 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
             })}
             {stockListMaterials.length === 0 && <EmptyState icon={<Warehouse size={20} />} title="Nenhum material encontrado" />}
           </div>
+          </>
+          )}
         </Card>
       </div>
 
@@ -246,16 +262,6 @@ export function Estoque({ deposito, depositosDaUnidade, materials, materialMovem
         exportFilename={`auditoria-${deposito.nome.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
         title={`Auditoria — ${deposito.nome}`}
       />
-      {ehGestao && (
-        <NaoRecontados
-          open={naoRecontadosOpen}
-          onClose={() => setNaoRecontadosOpen(false)}
-          deposito={deposito}
-          materials={materials}
-          onEditar={(m) => setEditando(m)}
-          refetch={refetch}
-        />
-      )}
       {editando && <ManageModal material={editando} categorias={categorias} depositos={depositosDaUnidade} onClose={() => setEditando(null)} onUpdated={refetch} />}
       <Recontagem open={recontagemOpen} onClose={() => setRecontagemOpen(false)} deposito={deposito} categorias={categorias} materials={materials} refetch={refetch} />
     </div>
