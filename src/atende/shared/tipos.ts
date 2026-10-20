@@ -330,6 +330,16 @@ export interface Etiqueta {
 }
 
 /** O que muda de um `sync` para o outro. */
+/** "Olha essa conversa": o toque de um supervisor na pessoa que está com ela. */
+export interface Cutucada {
+  id: string;
+  conversa_id: string;
+  /** Quem chamou. */
+  de: string | null;
+  texto: string | null;
+  criado_em: string;
+}
+
 export interface Delta {
   /** O carimbo para pedir o próximo delta. */
   cursor: string;
@@ -337,6 +347,8 @@ export interface Delta {
   mensagens: Mensagem[];
   equipe: Array<{ id: number; presenca: Presenca; presenca_em: string | null }>;
   conexao: Conexao | null;
+  /** Chamados para mim, dos últimos minutos. A tela toca e dedupe por id. */
+  cutucadas: Cutucada[];
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
-import type { Conversa, Mensagem, Delta, Conexao, Presenca, Etiqueta, Filtro } from '../../shared/tipos';
+import type { Conversa, Mensagem, Delta, Conexao, Presenca, Etiqueta, Filtro, Cutucada } from '../../shared/tipos';
 
 /**
  * O estado da central: as conversas que a pessoa vê, as mensagens das que
@@ -12,6 +12,9 @@ export type { Filtro };
 
 /** O que o sync trouxe de novo, para a camada de notificações decidir se avisa. */
 export type Novidade = { tipo: 'mensagem' | 'conversa' | 'atribuida'; conversa: Conversa };
+
+/** Cutucadas já tocadas nesta aba: o servidor reenvia as recentes a cada sync. */
+const cutucadasVistas = new Set<string>();
 
 interface Central {
   conversas: Record<string, Conversa>;
@@ -29,6 +32,8 @@ interface Central {
   carregandoConversa: boolean;
   /** Quem quer saber das novidades de cada sync (o Shell: som, título, toast). */
   ouvinte: ((novidades: Novidade[]) => void) | null;
+  /** Quem trata os chamados da supervisão (alarme + toast). */
+  ouvinteDeCutucada: ((c: Cutucada) => void) | null;
 
   setFiltro: (f: Filtro) => void;
   setBusca: (b: string) => void;
@@ -60,6 +65,7 @@ export const useCentral = create<Central>((set, get) => ({
   filtro: 'abertas',
   busca: '',
   cursor: null,
+  ouvinteDeCutucada: null,
   presenca: {},
   conexao: null,
   etiquetas: [],
@@ -116,6 +122,15 @@ export const useCentral = create<Central>((set, get) => ({
     for (const u of d.equipe) presenca[u.id] = { presenca: u.presenca, presenca_em: u.presenca_em };
     set({ conversas, mensagens, presenca, conexao: d.conexao, cursor: d.cursor });
     if (novidades.length) get().ouvinte?.(novidades);
+    // Chamados da supervisão. O servidor manda os dos últimos minutos a cada
+    // sync, então o id já visto é descartado — senão o alarme tocaria de 4 em
+    // 4 segundos até a janela fechar.
+    for (const c of d.cutucadas ?? []) {
+      if (cutucadasVistas.has(c.id)) continue;
+      cutucadasVistas.add(c.id);
+      // Na primeira carga não há o que avisar: seria alarme de coisa já lida.
+      if (cursor) get().ouvinteDeCutucada?.(c);
+    }
   },
 
   abrir: async (id) => {
@@ -151,7 +166,10 @@ export const useCentral = create<Central>((set, get) => ({
     set({ etiquetas: r.etiquetas });
   },
 
-  limpar: () => set({ conversas: {}, mensagens: {}, anteriores: [], selecionada: null, cursor: null, presenca: {}, conexao: null, etiquetas: [] }),
+  limpar: () => {
+    cutucadasVistas.clear();
+    set({ conversas: {}, mensagens: {}, anteriores: [], selecionada: null, cursor: null, presenca: {}, conexao: null, etiquetas: [] });
+  },
 }));
 
 /** A lista, filtrada e ordenada, para a coluna da esquerda. */

@@ -139,6 +139,40 @@ export function tocarAviso() {
   }
 }
 
+/**
+ * O alarme de "olha essa conversa" — quando um supervisor chama.
+ *
+ * Soa diferente do aviso de mensagem nova de propósito: três toques curtos e
+ * mais graves, repetidos, para destacar no meio de um dia cheio de avisos.
+ * Toca mesmo com o som desligado: desligar o aviso de mensagem é uma coisa,
+ * ignorar um chamado da supervisão é outra.
+ */
+export function tocarAlarme() {
+  try {
+    contexto ??= new (window.AudioContext || (window as any).webkitAudioContext)();
+    if (contexto.state === 'suspended') void contexto.resume();
+    const base = contexto.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const t = base + i * 0.26;
+      const o = contexto.createOscillator();
+      const g = contexto.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(660, t);
+      o.frequency.setValueAtTime(520, t + 0.09);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      o.connect(g).connect(contexto.destination);
+      o.start(t);
+      o.stop(t + 0.24);
+    }
+    // Vibra no celular, para alcançar quem está com a tela no bolso.
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate([180, 90, 180, 90, 180]);
+  } catch {
+    /* sem áudio: o toast e a notificação do sistema continuam valendo */
+  }
+}
+
 const TITULO_PADRAO = 'Atende Aí — Seu atendimento, no controle.';
 
 /** ATD-07: o título da aba acompanha a tela (a que a página manda via <Pagina titulo="…">), não fica fixo. */

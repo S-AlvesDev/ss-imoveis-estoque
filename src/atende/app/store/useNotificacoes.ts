@@ -4,7 +4,7 @@ import { useCentral, type Novidade } from './central';
 import { useDadosAtende } from './dados';
 import { useSessaoAtende } from './sessao';
 import { lerCaminho, TELAS, useRotaAtende } from '../router';
-import { registrarServiceWorker, tocarAviso, atualizarTitulo, notificarDaPagina } from '../notificacoes';
+import { registrarServiceWorker, tocarAviso, tocarAlarme, atualizarTitulo, notificarDaPagina } from '../notificacoes';
 import { useCabecalho } from './cabecalho';
 import type { Conversa } from '../../shared/tipos';
 
@@ -78,4 +78,22 @@ export function useNotificacoes(naoLidas: number) {
     });
     return () => useCentral.setState({ ouvinte: null });
   }, [sessao.id, sessao.papel, times, ir]);
+
+  // Chamado da supervisão: alarme próprio, toast que fica até ser lido, e a
+  // notificação do sistema — a pessoa pode estar em outra aba.
+  useEffect(() => {
+    useCentral.setState({
+      ouvinteDeCutucada: (c) => {
+        const conversa = useCentral.getState().conversas[c.conversa_id];
+        const quem = c.de ?? 'A supervisão';
+        const titulo = `${quem} chamou você`;
+        const corpo = c.texto ?? (conversa ? `Olhe a conversa com ${nomeDoCliente(conversa)}.` : 'Olhe esta conversa.');
+        tocarAlarme();
+        const abrir = () => ir(TELAS.central, c.conversa_id);
+        toast.warning(titulo, { description: corpo, action: { label: 'Abrir', onClick: abrir }, duration: Infinity, closeButton: true });
+        void notificarDaPagina(titulo, corpo, `cutucada-${c.id}`, abrir);
+      },
+    });
+    return () => useCentral.setState({ ouvinteDeCutucada: null });
+  }, [ir]);
 }

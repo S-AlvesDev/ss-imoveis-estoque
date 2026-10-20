@@ -11,7 +11,7 @@ import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, v
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
 import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa } from './whatsapp';
-import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, buscarClientes, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
+import { listarConversas, conversaPorId, cutucar, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, buscarClientes, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular, destravarTriagensParadas } from './triagem';
 import { consertarFotosVencidas } from './fotos';
 import { montarDashboard, PERIODOS } from './dashboard';
@@ -731,6 +731,20 @@ export function criarRouterAtende(): express.Router {
       res.status(201).json({ mensagem: await notaInterna(req, req.params.id, req.body?.texto) });
     } catch (err: any) {
       tratar(res, err, 'POST /api/atende/conversas/:id/notas', 'Não foi possível anotar.');
+    }
+  });
+
+  /**
+   * "Olha essa conversa": faz a tela de quem está com ela tocar. Só quem
+   * supervisiona — é para chamar a atenção de alguém, não um apito solto.
+   */
+  r.post('/conversas/:id/cutucar', exigir('conversas.supervisionar'), async (req: RequisicaoAtende, res) => {
+    try {
+      const r2 = await cutucar(req, req.params.id, typeof req.body?.texto === 'string' ? req.body.texto : undefined);
+      console.info('[atende cutucada]', { conversa: req.params.id, de: req.sessao!.id, para: r2.para });
+      res.status(201).json(r2);
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/conversas/:id/cutucar', 'Não foi possível chamar a atenção.');
     }
   });
 

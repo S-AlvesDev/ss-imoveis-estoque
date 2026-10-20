@@ -193,6 +193,46 @@ async function exigirConversa(req: RequisicaoAtende, id: string): Promise<Conver
   return c;
 }
 
+/** Quanto tempo uma cutucada continua valendo para a tela do atendente tocar. */
+export const CUTUCADA_VALE_MS = 2 * 60_000;
+/** Uma cutucada por conversa a cada tanto: é para chamar atenção, não para martelar. */
+export const CUTUCADA_INTERVALO_MS = 30_000;
+
+/**
+ * "Olha essa conversa": supervisor ou admin faz a tela do atendente tocar.
+ *
+ * Não é mensagem para o cliente nem nota na conversa — é um toque na pessoa
+ * que está com ela, para o caso de o cliente ter respondido e ninguém ter
+ * visto. Viaja no `delta` (a tela já pergunta de 4 em 4 segundos) e também
+ * vai por push, para alcançar quem está com o celular no bolso.
+ */
+export async function cutucar(req: RequisicaoAtende, conversaId: string, texto?: string): Promise<{ para: number }> {
+  const s = req.sessao!;
+  const c = await exigirConversa(req, conversaId);
+  if (!c.atendente_id) throw new ErroDeConversa('Esta conversa não está com ninguém — transfira ou atribua antes.', 409);
+  if (c.atendente_id === s.id) throw new ErroDeConversa('Esta conversa já é sua.', 409);
+
+  // Cutucada repetida na mesma conversa, logo em seguida, não vira duas.
+  const desde = new Date(Date.now() - CUTUCADA_INTERVALO_MS).toISOString();
+  const { data: recente } = await req
+    .dbAtende!.from('atende_eventos')
+    .select('id')
+    .eq('conversa_id', conversaId)
+    .eq('tipo', 'cutucada')
+    .gte('criado_em', desde)
+    .limit(1)
+    .maybeSingle();
+  if (recente) throw new ErroDeConversa('Você acabou de chamar. Espere um instante antes de chamar de novo.', 429);
+
+  const recado = texto ? String(texto).trim().slice(0, 200) : null;
+  await registrarEvento(req.dbAtende!, conversaId, s.id, 'cutucada', { para: c.atendente_id, de_nome: s.nome, texto: recado });
+  await avisarSobreConversa(s.empresa_id, { id: c.id, atendente_id: c.atendente_id, time_id: null }, {
+    titulo: `${s.nome} chamou você`,
+    corpo: recado ?? `Olhe a conversa com ${c.cliente?.nome ?? c.cliente?.nome_whatsapp ?? 'o cliente'}.`,
+  });
+  return { para: c.atendente_id };
+}
+
 export async function registrarEvento(db: ScopedDb, conversaId: string, usuarioId: number | null, tipo: string, dados?: Record<string, unknown>) {
   await db.from('atende_eventos').insert({ conversa_id: conversaId, usuario_id: usuarioId, tipo, dados: dados ?? null });
 }
@@ -539,7 +579,7 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
   const visao = await visaoDe(req);
   const f = filtroDaVisao(visao);
 
-  const [conversasRes, mensagensRes, equipeRes, conexaoRes] = await Promise.all([
+  const [conversasRes, mensagensRes, equipeRes, conexaoRes, cutucadasRes] = await Promise.all([
     (() => {
       let q = db.from('atende_conversas').select(COM_CLIENTE).order('atualizado_em', { ascending: false }).limit(200);
       if (f) q = q.or(f);
@@ -550,6 +590,9 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
     desde ? db.from('atende_mensagens').select(`${MENSAGEM_COLUNAS}, atualizado_em`).gte('atualizado_em', desde).order('atualizado_em', { ascending: true }).limit(300) : Promise.resolve({ data: [], error: null }),
     db.from('atende_usuarios').select('id, presenca, presenca_em').eq('ativo', true),
     supabaseServer.from('atende_conexoes').select('id, instancia, numero, estado, conectado_em, ultimo_evento_em').eq('empresa_id', s.empresa_id).maybeSingle(),
+    // Chamados para mim, recentes. A janela curta evita que uma aba que ficou
+    // fora do ar volte tocando alarme de coisa velha; a tela ainda dedupe por id.
+    db.from('atende_eventos').select('id, conversa_id, usuario_id, dados, criado_em').eq('tipo', 'cutucada').gte('criado_em', new Date(inicio - CUTUCADA_VALE_MS).toISOString()).order('criado_em', { ascending: true }).limit(20),
   ]);
   if (conversasRes.error) throw conversasRes.error;
   if (mensagensRes.error) throw mensagensRes.error;
@@ -580,6 +623,9 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
     mensagens,
     equipe: ((equipeRes.data || []) as any[]).map((u) => ({ id: Number(u.id), presenca: u.presenca, presenca_em: u.presenca_em })),
     conexao: (conexaoRes.data as any) ?? null,
+    cutucadas: ((cutucadasRes.data || []) as any[])
+      .filter((e) => Number(e.dados?.para) === s.id)
+      .map((e) => ({ id: String(e.id), conversa_id: String(e.conversa_id), de: e.dados?.de_nome ? String(e.dados.de_nome) : null, texto: e.dados?.texto ? String(e.dados.texto) : null, criado_em: String(e.criado_em) })),
   };
 }
 

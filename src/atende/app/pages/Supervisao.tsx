@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowRightLeft, Clock, Eye, Hand, Inbox, MessageSquareText, Users, Wifi } from 'lucide-react';
+import { AlertTriangle, ArrowRightLeft, BellRing, Clock, Eye, Hand, Inbox, MessageSquareText, Users, Wifi, X } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
 import { Modal } from '../ui/Modal';
@@ -42,6 +42,9 @@ export function Supervisao() {
   const [agora, setAgora] = useState(Date.now());
   const [transferindo, setTransferindo] = useState<Conversa | null>(null);
   const [orientando, setOrientando] = useState<Conversa | null>(null);
+  /** Filtrar a lista por pessoa: clicar em alguém da equipe mostra o que é dela. */
+  const [pessoaFiltrada, setPessoaFiltrada] = useState<number | null>(null);
+  const [cutucando, setCutucando] = useState<string | null>(null);
 
   // O sync roda no Shell; aqui só a lista inteira das abertas, uma vez.
   const carregarLista = useCentral((s) => s.carregarLista);
@@ -72,7 +75,32 @@ export function Supervisao() {
     [abertas, agora],
   );
   const emAlerta = esperando.filter((e) => e.espera >= ESPERA_ALERTA_MS);
+  /**
+   * Com uma pessoa escolhida, a lista principal deixa de ser "quem espera" e
+   * passa a ser TUDO que está com ela — que é a pergunta do supervisor:
+   * o que fulano está atendendo agora.
+   */
+  const daPessoa = useMemo(
+    () => (pessoaFiltrada === null ? [] : abertas.filter((c) => c.atendente_id === pessoaFiltrada).map((c) => ({ c, espera: c.ultima_mensagem_de === 'cliente' && c.ultima_mensagem_do_cliente_em ? agora - Date.parse(c.ultima_mensagem_do_cliente_em) : 0 })).sort((a, b) => b.espera - a.espera)),
+    [abertas, pessoaFiltrada, agora],
+  );
+  const nomeFiltrado = pessoaFiltrada === null ? null : (equipe.find((f) => f.id === pessoaFiltrada)?.nome ?? 'essa pessoa');
+  const listaPrincipal = pessoaFiltrada === null ? esperando : daPessoa;
   const online = pessoas.filter((p) => p.estado === 'online').length;
+
+  /** Faz a tela de quem está com a conversa tocar. */
+  async function cutucar(c: Conversa) {
+    setCutucando(c.id);
+    try {
+      await api.post(`/conversas/${c.id}/cutucar`, {});
+      const nome = equipe.find((f) => f.id === c.atendente_id)?.nome ?? 'o atendente';
+      toast.success(`Chamamos ${nome}: a tela dele vai tocar.`);
+    } catch (err) {
+      toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível chamar.');
+    } finally {
+      setCutucando(null);
+    }
+  }
 
   async function assumir(c: Conversa) {
     try {
@@ -98,12 +126,30 @@ export function Supervisao() {
 
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[3fr_2fr]">
           <Cartao className="p-4 sm:p-5">
-            <CabecalhoDoCartao icone={<Clock size={14} />} titulo="Cliente esperando resposta" descricao="Da espera mais longa para a mais curta" acoes={<span className="text-xs text-[var(--text-muted)]">{esperando.length} {esperando.length === 1 ? 'conversa' : 'conversas'}</span>} />
-            {esperando.length === 0 ? (
-              <Vazio tom="positivo" compacto icone={<MessageSquareText size={18} />} titulo="Tudo tranquilo por aqui ✨" texto="Nenhum cliente esperando: a última palavra é da equipe em todas as conversas abertas." />
+            <CabecalhoDoCartao
+              icone={<Clock size={14} />}
+              titulo={nomeFiltrado ? `Conversas de ${nomeFiltrado}` : 'Cliente esperando resposta'}
+              descricao={nomeFiltrado ? 'Tudo que está com essa pessoa agora' : 'Da espera mais longa para a mais curta'}
+              acoes={
+                <span className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                  {listaPrincipal.length} {listaPrincipal.length === 1 ? 'conversa' : 'conversas'}
+                  {nomeFiltrado && (
+                    <Botao tamanho="sm" variante="fantasma" icone={<X size={13} />} onClick={() => setPessoaFiltrada(null)}>
+                      Limpar filtro
+                    </Botao>
+                  )}
+                </span>
+              }
+            />
+            {listaPrincipal.length === 0 ? (
+              nomeFiltrado ? (
+                <Vazio compacto icone={<MessageSquareText size={18} />} titulo={`${nomeFiltrado} não está com nenhuma conversa aberta.`} />
+              ) : (
+                <Vazio tom="positivo" compacto icone={<MessageSquareText size={18} />} titulo="Tudo tranquilo por aqui ✨" texto="Nenhum cliente esperando: a última palavra é da equipe em todas as conversas abertas." />
+              )
             ) : (
               <ul className="mt-3 divide-y divide-[var(--border)]">
-                {esperando.slice(0, 30).map(({ c, espera }) => {
+                {listaPrincipal.slice(0, 30).map(({ c, espera }) => {
                   const atendente = c.atendente_id ? equipe.find((f) => f.id === c.atendente_id) : null;
                   const time = c.time_id ? times.find((t) => t.id === c.time_id)?.nome : null;
                   const alerta = espera >= ESPERA_ALERTA_MS;
@@ -118,7 +164,7 @@ export function Supervisao() {
                         </span>
                         <span className="block truncate text-xs text-[var(--text-muted)]">{[time, atendente ? `com ${atendente.nome}` : c.estado === 'na_fila' ? 'sem atendente' : null, c.assunto].filter(Boolean).join(' · ') || c.ultima_mensagem_texto}</span>
                       </span>
-                      <span className={`shrink-0 rounded-lg px-2 py-1 text-sm font-semibold tabular-nums ${alerta ? 'bg-rose-50 text-rose-700' : 'bg-[var(--bg-2)] text-[var(--text)]'}`}>{duracao(espera)}</span>
+                      {espera > 0 && <span className={`shrink-0 rounded-lg px-2 py-1 text-sm font-semibold tabular-nums ${alerta ? 'bg-rose-50 text-rose-700' : 'bg-[var(--bg-2)] text-[var(--text)]'}`}>{duracao(espera)}</span>}
                       {/* No celular, os botões descem para a linha de baixo, alinhados ao texto. */}
                       <span className="flex w-full shrink-0 gap-1 pl-[50px] sm:w-auto sm:pl-0">
                         <Botao tamanho="sm" variante="secundaria" icone={<Eye size={13} />} onClick={() => ir(TELAS.central, c.id)}>
@@ -127,6 +173,10 @@ export function Supervisao() {
                         {c.atendente_id !== sessao.id && <Botao tamanho="sm" variante="fantasma" quadrado icone={<Hand size={14} />} onClick={() => assumir(c)} aria-label="Assumir" />}
                         <Botao tamanho="sm" variante="fantasma" quadrado icone={<ArrowRightLeft size={14} />} onClick={() => setTransferindo(c)} aria-label="Transferir" />
                         {c.atendente_id && c.atendente_id !== sessao.id && <Botao tamanho="sm" variante="fantasma" quadrado icone={<MessageSquareText size={14} />} onClick={() => setOrientando(c)} aria-label="Orientar (nota interna)" />}
+                        {/* Chamar a atenção: só faz sentido quando a conversa está com outra pessoa. */}
+                        {c.atendente_id && c.atendente_id !== sessao.id && (
+                          <Botao tamanho="sm" variante="fantasma" quadrado carregando={cutucando === c.id} icone={<BellRing size={14} />} onClick={() => cutucar(c)} aria-label={`Chamar a atenção de ${equipe.find((f) => f.id === c.atendente_id)?.nome ?? 'quem está atendendo'}`} data-dica="Chamar a atenção (toca na tela dele)" />
+                        )}
                       </span>
                     </li>
                   );
@@ -143,7 +193,7 @@ export function Supervisao() {
               ) : (
                 <ul className="mt-3 space-y-0.5">
                   {[...pessoas].sort(porPresenca).map((p) => (
-                    <LinhaDaPessoa key={p.id} pessoa={p} estado={p.estado} conversas={abertas} agora={agora} eu={sessao.id} />
+                    <LinhaDaPessoa key={p.id} pessoa={p} estado={p.estado} conversas={abertas} agora={agora} eu={sessao.id} escolhida={pessoaFiltrada === p.id} aoEscolher={() => setPessoaFiltrada((atual) => (atual === p.id ? null : p.id))} />
                   ))}
                 </ul>
               )}
@@ -176,12 +226,20 @@ function porPresenca(a: { estado: Presenca; nome: string }, b: { estado: Presenc
   return ordem[a.estado] - ordem[b.estado] || a.nome.localeCompare(b.nome);
 }
 
-function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu }: { pessoa: Funcionario; estado: Presenca; conversas: Conversa[]; agora: number; eu: number }) {
+function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu, escolhida, aoEscolher }: { pessoa: Funcionario; estado: Presenca; conversas: Conversa[]; agora: number; eu: number; escolhida: boolean; aoEscolher: () => void }) {
   const minhas = conversas.filter((c) => c.atendente_id === pessoa.id);
   const esperando = minhas.filter((c) => c.ultima_mensagem_de === 'cliente' && c.ultima_mensagem_do_cliente_em);
   const maisEsperando = esperando.length ? Math.max(...esperando.map((c) => agora - Date.parse(c.ultima_mensagem_do_cliente_em!))) : 0;
   return (
-    <li className="flex items-center gap-3 rounded-xl px-2 py-2 transition-colors hover:bg-[var(--bg)]">
+    <li
+      onClick={aoEscolher}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), aoEscolher())}
+      aria-pressed={escolhida}
+      title={escolhida ? 'Mostrar todas de novo' : `Ver o que ${pessoa.nome} está atendendo`}
+      className={`flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 transition-colors ${escolhida ? 'bg-[var(--brand)]/10 ring-1 ring-[var(--brand)]/30' : 'hover:bg-[var(--bg)]'}`}
+    >
       <Avatar nome={pessoa.nome} tamanho={34} presenca={estado} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-[var(--text)]">
