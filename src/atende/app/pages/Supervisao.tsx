@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, ArrowRightLeft, BellRing, Clock, Eye, Hand, Inbox, MessageSquareText, Users, Wifi, X } from 'lucide-react';
+import { AlertTriangle, ArrowRightLeft, BellRing, Clock, Eye, Hand, Inbox, ListFilter, MessageSquareText, Users, Wifi, X } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
 import { Modal } from '../ui/Modal';
@@ -187,7 +187,12 @@ export function Supervisao() {
 
           <div className="space-y-4">
             <Cartao className="p-4 sm:p-5">
-              <CabecalhoDoCartao icone={<Users size={14} />} titulo="Equipe" acoes={<span className="text-xs text-[var(--text-muted)]">{online} online</span>} />
+              <CabecalhoDoCartao
+                icone={<Users size={14} />}
+                titulo="Equipe"
+                descricao={pessoaFiltrada === null ? 'Clique em alguém para ver o que está atendendo' : 'Clique de novo para ver todas'}
+                acoes={<span className="text-xs text-[var(--text-muted)]">{online} online</span>}
+              />
               {pessoas.length === 0 ? (
                 <Vazio compacto icone={<Users size={18} />} titulo="Nenhuma pessoa nos seus times." />
               ) : (
@@ -238,7 +243,7 @@ function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu, escolhida, aoEsco
       onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), aoEscolher())}
       aria-pressed={escolhida}
       title={escolhida ? 'Mostrar todas de novo' : `Ver o que ${pessoa.nome} está atendendo`}
-      className={`flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 transition-colors ${escolhida ? 'bg-[var(--brand)]/10 ring-1 ring-[var(--brand)]/30' : 'hover:bg-[var(--bg)]'}`}
+      className={`group flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 transition-colors ${escolhida ? 'bg-[var(--brand)]/10 ring-1 ring-[var(--brand)]/30' : 'hover:bg-[var(--bg)]'}`}
     >
       <Avatar nome={pessoa.nome} tamanho={34} presenca={estado} />
       <span className="min-w-0 flex-1">
@@ -254,6 +259,9 @@ function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu, escolhida, aoEsco
       <span className="text-right text-xs">
         <span className="block font-semibold tabular-nums text-[var(--text)]">{minhas.length}</span>
         <span className="block text-[10px] text-[var(--text-muted)]">{minhas.length === 1 ? 'conversa' : 'conversas'}</span>
+      </span>
+      <span aria-hidden className={`shrink-0 transition-opacity ${escolhida ? 'text-[var(--brand)] opacity-100' : 'text-[var(--text-muted)] opacity-0 group-hover:opacity-70'}`}>
+        <ListFilter size={14} />
       </span>
       <span className="w-16 text-right text-xs">
         {esperando.length ? (
