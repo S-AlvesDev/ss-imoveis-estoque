@@ -192,7 +192,13 @@ function Tique({ status }: { status: Mensagem['status'] }) {
 function Conteudo({ m, nossa, daIa }: { m: Mensagem; nossa: boolean; daIa: boolean }) {
   const fundoDaCaixinha = nossa && !daIa ? 'bg-white/15' : 'bg-[var(--bg-2)]';
   const texto = m.texto ? <p className="whitespace-pre-wrap wrap-anywhere leading-relaxed">{m.texto}</p> : null;
-  if (m.tipo === 'texto' || m.tipo === 'outro') return texto ?? <p className="italic opacity-70">(mensagem sem texto)</p>;
+  if (m.tipo === 'texto' || m.tipo === 'outro') {
+    if (texto) return texto;
+    // Formato que ainda não sabemos ler (menu de bot, enquete…). Dizer o que
+    // chegou é melhor que uma bolha vazia: o atendente entende que o cliente
+    // mandou algo e pode perguntar.
+    return <p className="italic opacity-70">{m.midia?.desconhecido ? 'Mensagem interativa (botão ou menu) — abra no WhatsApp para ver' : '(mensagem sem texto)'}</p>;
+  }
   if (m.tipo === 'localizacao') {
     const { latitude, longitude } = m.midia ?? {};
     const href = `https://www.google.com/maps?q=${latitude},${longitude}`;

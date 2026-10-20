@@ -299,6 +299,12 @@ export interface MidiaDaMensagem {
   contato?: { nome: string; telefone: string };
   /** A mídia ainda não foi baixada da Evolution (chegou a mensagem, o arquivo vem em seguida). */
   pendente?: boolean;
+  /**
+   * Chegou um formato de mensagem que ainda não sabemos ler (o nome da chave
+   * do WhatsApp, ex.: `interactiveMessage`). Fica gravado para a bolha não
+   * sumir em branco sem deixar pista de qual formato acrescentar.
+   */
+  desconhecido?: string;
 }
 
 export interface Mensagem {
