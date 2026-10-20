@@ -13,6 +13,7 @@ import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from
 import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa } from './whatsapp';
 import { listarConversas, conversaPorId, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, buscarClientes, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular, destravarTriagensParadas } from './triagem';
+import { consertarFotosVencidas } from './fotos';
 import { montarDashboard, PERIODOS } from './dashboard';
 import { situacao as situacaoDoPush, inscrever as inscreverPush, cancelar as cancelarPush, ErroDePush } from './push';
 import { carregarConta, negarLimiteAtende, negarRecursoAtende, situacaoDaAssinatura, pedirAssinatura, esquecerContaAtende, ErroDePlano, type RequisicaoComPlano } from './plano';
@@ -308,12 +309,14 @@ export function criarRouterAtende(): express.Router {
       const followups = await gerarFollowupsDeTodas(agora);
       // Conversas esquecidas em 'em_triagem' (a IA perguntou, o cliente sumiu) voltam para a fila de gente.
       const destravadas = await destravarTriagensParadas(agora).catch((e: any) => (console.warn('[atende cron] destravar triagem:', e.message), { destravadas: 0 }));
+      // Fotos de perfil que ainda apontam para o CDN do WhatsApp: a URL vence e o avatar quebra.
+      const fotos = await consertarFotosVencidas().catch((e: any) => (console.warn('[atende cron] fotos:', e.message), { olhadas: 0, trocadas: 0 }));
       // Os combos da SEVLA (Stok + Atende com desconto): quem ficou sozinho volta ao preço cheio.
       const combos = await acertarCombos().catch((e: any) => (console.warn('[atende cron] combos:', e.message), { empresas: 0, desfeitos: 0 }));
       // Rede de segurança: disparos em massa com a aba fechada no meio (o normal é a própria tela processar).
       const disparos = await processarLotesAbandonados().catch((e: any) => (console.warn('[atende cron] disparos:', e.message), { lotes: 0, enviados: 0, erros: 0 }));
-      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}, combos ${combos.desfeitos}/${combos.empresas}, disparos abandonados ${disparos.lotes}, triagens destravadas ${destravadas.destravadas}.`);
-      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, resumos, sla, followups, combos, disparos, triagens_destravadas: destravadas.destravadas });
+      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}, combos ${combos.desfeitos}/${combos.empresas}, disparos abandonados ${disparos.lotes}, triagens destravadas ${destravadas.destravadas}, fotos ${fotos.trocadas}/${fotos.olhadas}.`);
+      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, resumos, sla, followups, combos, disparos, triagens_destravadas: destravadas.destravadas, fotos });
     } catch (err: any) {
       console.error('[GET /api/atende/cron] erro:', err.message);
       res.status(500).json({ error: err.message });

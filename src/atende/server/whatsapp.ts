@@ -3,6 +3,7 @@ import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baix
 import { siteUrl } from '../../server/senha';
 import { lerEventoDoAtende, previaDe, type MensagemDoWhatsApp, type AtualizacaoDeStatus, type AtualizacaoDeConexao } from './eventos';
 import { caminhoDaMidia, guardarMidia } from './midias';
+import { guardarFotoDoCliente } from './fotos';
 import { triar, triagemAtiva } from './triagem';
 import { tratarRespostaDeAvaliacao } from './avaliacao';
 import { avisarSobreConversa } from './push';
@@ -182,14 +183,22 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   const { data: candidatos } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url, telefone, ia_ativa, ultimo_contato_em').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).order('ultimo_contato_em', { ascending: false, nullsFirst: false }).limit(5);
   let cliente = ((candidatos || []) as any[]).find((c) => c.telefone === e.telefone) ?? ((candidatos || []) as any[])[0] ?? null;
   if (!cliente) {
-    const foto = await fotoDoContato(e.telefone, conexao.instancia);
-    const { data: novo, error } = await supabaseServer.from('atende_clientes').insert({ empresa_id: empresaId, telefone: e.telefone, nome_whatsapp: e.nomeWhatsapp, foto_url: foto, primeiro_contato_em: agora, ultimo_contato_em: agora }).select('id, nome, nome_whatsapp, foto_url, ia_ativa').single();
+    const { data: novo, error } = await supabaseServer.from('atende_clientes').insert({ empresa_id: empresaId, telefone: e.telefone, nome_whatsapp: e.nomeWhatsapp, primeiro_contato_em: agora, ultimo_contato_em: agora }).select('id, nome, nome_whatsapp, foto_url, ia_ativa').single();
     if (error || !novo) {
       // Duas mensagens ao mesmo tempo do mesmo número novo: a segunda acha a primeira.
       const { data: existente } = await supabaseServer.from('atende_clientes').select('id, nome, nome_whatsapp, foto_url, ia_ativa').eq('empresa_id', empresaId).in('telefone', variantesDoTelefone(e.telefone)).limit(1).maybeSingle();
       if (!existente) throw error ?? new Error('não criou o cliente');
       cliente = existente;
-    } else cliente = novo;
+    } else {
+      cliente = novo;
+      // A foto só depois de existir o id: a URL da Evolution vence em horas, então
+      // guardamos a imagem e ficamos com uma URL nossa. Falhou, fica sem foto.
+      const foto = await guardarFotoDoCliente(empresaId, novo.id, await fotoDoContato(e.telefone, conexao.instancia));
+      if (foto) {
+        await supabaseServer.from('atende_clientes').update({ foto_url: foto }).eq('id', novo.id);
+        cliente = { ...novo, foto_url: foto };
+      }
+    }
   } else {
     const patch: Record<string, unknown> = { ultimo_contato_em: agora };
     if (e.nomeWhatsapp && e.nomeWhatsapp !== cliente.nome_whatsapp) patch.nome_whatsapp = e.nomeWhatsapp;
