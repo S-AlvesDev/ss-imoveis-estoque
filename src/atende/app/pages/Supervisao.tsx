@@ -124,18 +124,38 @@ export function Supervisao() {
           <Kpi rotulo="Sem resposta há 5+ min" valor={emAlerta.length} icone={<AlertTriangle size={16} />} tom={emAlerta.length ? 'vermelho' : 'cinza'} legenda={emAlerta.length ? `a mais antiga há ${duracao(emAlerta[0].espera)}` : 'todo mundo respondido'} />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[3fr_2fr]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[3fr_2fr]">
           <Cartao className="p-4 sm:p-5">
             <CabecalhoDoCartao
               icone={<Clock size={14} />}
               titulo={nomeFiltrado ? `Conversas de ${nomeFiltrado}` : 'Cliente esperando resposta'}
               descricao={nomeFiltrado ? 'Tudo que está com essa pessoa agora' : 'Da espera mais longa para a mais curta'}
               acoes={
-                <span className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                <span className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
                   {listaPrincipal.length} {listaPrincipal.length === 1 ? 'conversa' : 'conversas'}
+                  {/* O filtro vive aqui, e não só na lista "Equipe" ao lado: em
+                      tela de notebook aquela coluna desce para o fim da página,
+                      depois de uma lista longa, e ninguém a encontra. */}
+                  <span className="flex items-center gap-1.5">
+                    <ListFilter size={13} aria-hidden />
+                    <select
+                      aria-label="Ver conversas de"
+                      value={pessoaFiltrada ?? ''}
+                      onChange={(e) => setPessoaFiltrada(e.target.value ? Number(e.target.value) : null)}
+                      className="max-w-[11rem] rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs text-[var(--text)] outline-none hover:border-[var(--border-strong)] focus:border-[var(--brand)]"
+                    >
+                      <option value="">Todo mundo</option>
+                      {[...pessoas].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nome}
+                          {p.id === sessao.id ? ' (você)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
                   {nomeFiltrado && (
                     <Botao tamanho="sm" variante="fantasma" icone={<X size={13} />} onClick={() => setPessoaFiltrada(null)}>
-                      Limpar filtro
+                      Limpar
                     </Botao>
                   )}
                 </span>
