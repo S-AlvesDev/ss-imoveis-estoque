@@ -14,6 +14,17 @@ import { ModelosDoComposer } from './ModelosDoComposer';
  * equipe vê.
  */
 const MAX_BYTES = 20 * 1024 * 1024;
+/** Quantos arquivos por vez. Cada um vira uma mensagem no WhatsApp: muitos de uma vez viram enxurrada no cliente (e risco para o número). */
+const MAX_ANEXOS = 10;
+
+/**
+ * Quantos dos escolhidos cabem na fila. Fora do componente porque é só
+ * aritmética — e porque é o pedaço que vale um teste.
+ */
+export function encaixarAnexos<T>(atuais: T[], novos: T[], max: number): { fila: T[]; sobraram: number } {
+  const cabem = Math.max(0, max - atuais.length);
+  return { fila: [...atuais, ...novos.slice(0, cabem)], sobraram: Math.max(0, novos.length - cabem) };
+}
 
 /** Tela de toque/estreita: sem foco automático (abriria o teclado) e Enter quebra linha — o botão envia, como no WhatsApp. */
 const ehCelular = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches;
@@ -23,7 +34,9 @@ export function Composer({ conversa }: { conversa: Conversa }) {
   const [modoNota, setModoNota] = useState(false);
   const [mostrarModelos, setMostrarModelos] = useState(false);
   const [enviando, setEnviando] = useState(false);
-  const [anexo, setAnexo] = useState<File | null>(null);
+  const [anexos, setAnexos] = useState<File[]>([]);
+  /** Enviando vários: "2 de 5", para a pessoa não achar que travou. */
+  const [progresso, setProgresso] = useState<{ feito: number; total: number } | null>(null);
   const [gravando, setGravando] = useState(false);
   const [segundos, setSegundos] = useState(0);
   const campo = useRef<HTMLTextAreaElement>(null);
@@ -41,7 +54,7 @@ export function Composer({ conversa }: { conversa: Conversa }) {
   useEffect(() => {
     if (!ehCelular()) campo.current?.focus();
     setTexto('');
-    setAnexo(null);
+    setAnexos([]);
     setModoNota(false);
   }, [conversa.id]);
 
@@ -66,17 +79,32 @@ export function Composer({ conversa }: { conversa: Conversa }) {
 
   async function enviarTexto() {
     const t = texto.trim();
-    if ((!t && !anexo) || enviando) return;
+    if ((!t && !anexos.length) || enviando) return;
     setEnviando(true);
     try {
       if (modoNota) {
         const r = await api.post<{ mensagem: Mensagem }>(`/conversas/${conversa.id}/notas`, { texto: t });
         aplicarMensagem(r.mensagem);
         setTexto('');
-      } else if (anexo) {
-        await subirEEnviar(anexo, 'arquivo', t || undefined);
-        setAnexo(null);
-        setTexto('');
+      } else if (anexos.length) {
+        // Um de cada vez, na ordem escolhida: no WhatsApp as mensagens chegam na
+        // ordem em que saem, e subir em paralelo embaralharia a conversa.
+        const falharam: File[] = [];
+        for (const [i, arq] of anexos.entries()) {
+          setProgresso({ feito: i, total: anexos.length });
+          try {
+            // A legenda vai no primeiro, como no WhatsApp.
+            await subirEEnviar(arq, 'arquivo', i === 0 ? t || undefined : undefined);
+          } catch (err) {
+            console.error('[anexo]', arq.name, err);
+            falharam.push(arq);
+          }
+        }
+        setProgresso(null);
+        // Os que não foram continuam na caixa, para reenviar sem escolher de novo.
+        setAnexos(falharam);
+        if (falharam.length) toast.error(`${falharam.length} de ${anexos.length} não foram enviados. Os que faltaram continuam aqui.`);
+        else setTexto('');
       } else {
         const r = await api.post<{ mensagem: Mensagem }>(`/conversas/${conversa.id}/mensagens`, { tipo: 'texto', texto: t });
         setTexto('');
@@ -86,6 +114,7 @@ export function Composer({ conversa }: { conversa: Conversa }) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível enviar.');
     } finally {
       setEnviando(false);
+      setProgresso(null);
       campo.current?.focus();
     }
   }
@@ -100,6 +129,14 @@ export function Composer({ conversa }: { conversa: Conversa }) {
     if (!up.ok) throw new ErroDaApi(`O Storage recusou o arquivo (${up.status}).`);
     const r = await api.post<{ mensagem: Mensagem }>(`/conversas/${conversa.id}/mensagens`, { tipo, caminho: prep.caminho, mimetype, nome, texto: legenda });
     await depoisDeEnviar(r.mensagem);
+  }
+
+  /** O que veio do seletor entra na fila, sem derrubar o que já estava. */
+  function adicionarArquivos(lista: FileList | null) {
+    if (!lista?.length) return;
+    const { fila, sobraram } = encaixarAnexos(anexos, Array.from(lista), MAX_ANEXOS);
+    if (sobraram > 0) toast.info(fila.length === anexos.length ? `Dá para enviar ${MAX_ANEXOS} arquivos de cada vez.` : `Entraram ${fila.length - anexos.length}: dá para enviar ${MAX_ANEXOS} de cada vez.`);
+    setAnexos(fila);
   }
 
   function inserirModelo(textoDoModelo: string) {
@@ -163,15 +200,32 @@ export function Composer({ conversa }: { conversa: Conversa }) {
   return (
     <div className={`border-t px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:px-4 sm:pt-3 sm:pb-3 ${modoNota ? 'border-amber-200 bg-amber-50/70' : 'border-[var(--border)] bg-[var(--surface)]'}`}>
       <div className="mx-auto max-w-3xl">
-        {anexo && (
-          <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text)]">
-            <Paperclip size={13} className="text-[var(--text-muted)]" />
-            <span className="min-w-0 flex-1 truncate">
-              {anexo.name} <span className="text-[var(--text-muted)]">· {tamanhoBonito(anexo.size)}</span>
-            </span>
-            <button type="button" onClick={() => setAnexo(null)} className="rounded-md p-1 hover:bg-[var(--bg-2)]" aria-label="Remover anexo">
-              <X size={13} />
-            </button>
+        {anexos.length > 0 && (
+          <div className="mb-2 space-y-1">
+            {anexos.length > 1 && (
+              <p className="flex items-center justify-between px-1 text-[11px] text-[var(--text-muted)]">
+                <span>{anexos.length} arquivos · cada um vira uma mensagem, nesta ordem</span>
+                <button type="button" onClick={() => setAnexos([])} disabled={enviando} className="font-semibold underline disabled:opacity-40">
+                  Limpar
+                </button>
+              </p>
+            )}
+            {anexos.map((a, i) => (
+              <div key={`${a.name}-${a.size}-${i}`} className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text)]">
+                <Paperclip size={13} className="shrink-0 text-[var(--text-muted)]" />
+                <span className="min-w-0 flex-1 truncate">
+                  {a.name} <span className="text-[var(--text-muted)]">· {tamanhoBonito(a.size)}</span>
+                </span>
+                <button type="button" onClick={() => setAnexos(anexos.filter((_, j) => j !== i))} disabled={enviando} className="rounded-md p-1 hover:bg-[var(--bg-2)] disabled:opacity-40" aria-label={`Remover ${a.name}`}>
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+            {progresso && (
+              <p className="px-1 text-[11px] font-semibold text-[var(--brand)]">
+                Enviando {progresso.feito + 1} de {progresso.total}…
+              </p>
+            )}
           </div>
         )}
         {modoNota && <p className="mb-1.5 flex items-center gap-1.5 px-1 text-[11px] font-semibold text-amber-700"><StickyNote size={12} /> Nota interna — o cliente não vê.</p>}
@@ -182,7 +236,17 @@ export function Composer({ conversa }: { conversa: Conversa }) {
           </button>
           {!modoNota && (
             <>
-              <input ref={arquivo} type="file" className="hidden" onChange={(e) => setAnexo(e.target.files?.[0] ?? null)} />
+              <input
+                ref={arquivo}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  adicionarArquivos(e.target.files);
+                  // Limpa o valor: escolher o MESMO arquivo de novo tem que disparar o change.
+                  e.target.value = '';
+                }}
+              />
               <button type="button" onClick={() => arquivo.current?.click()} disabled={gravando} data-dica="Anexar arquivo" aria-label="Anexar arquivo" className={botaoDeIcone}>
                 <Paperclip size={18} />
               </button>
@@ -212,11 +276,11 @@ export function Composer({ conversa }: { conversa: Conversa }) {
               onKeyDown={aoTeclar}
               rows={1}
               maxLength={4000}
-              placeholder={modoNota ? 'Escreva a nota para a equipe…' : anexo ? 'Legenda (opcional)…' : ehCelular() ? 'Mensagem' : 'Escreva a resposta… (Enter envia, Shift+Enter quebra linha)'}
+              placeholder={modoNota ? 'Escreva a nota para a equipe…' : anexos.length ? 'Legenda (opcional, vai no primeiro)…' : ehCelular() ? 'Mensagem' : 'Escreva a resposta… (Enter envia, Shift+Enter quebra linha)'}
               className={`max-h-40 min-h-[40px] min-w-0 flex-1 resize-none rounded-xl border px-3.5 py-2.5 text-sm leading-5 outline-none transition-[border-color,box-shadow] placeholder:text-[var(--text-disable)] focus:ring-4 ${modoNota ? 'border-amber-300 bg-white text-amber-950 focus:border-amber-500 focus:ring-amber-500/10' : 'border-[var(--border)] bg-[var(--bg)] text-[var(--text)] focus:border-[var(--brand)] focus:bg-[var(--surface)] focus:ring-[var(--brand)]/10'}`}
             />
           )}
-          {!modoNota && !texto.trim() && !anexo ? (
+          {!modoNota && !texto.trim() && !anexos.length ? (
             gravando ? (
               <button type="button" onClick={() => pararGravacao(false)} data-dica="Parar e enviar" aria-label="Parar e enviar" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--brand)] text-white shadow-[0_8px_20px_-10px_rgba(124,58,237,0.7)]">
                 <Square size={18} />
@@ -227,7 +291,7 @@ export function Composer({ conversa }: { conversa: Conversa }) {
               </button>
             )
           ) : (
-            <button type="button" onClick={enviarTexto} disabled={enviando || (!texto.trim() && !anexo)} data-dica="Enviar" aria-label="Enviar" className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white transition-[background-color,transform] active:scale-95 disabled:opacity-40 ${modoNota ? 'bg-amber-500' : 'bg-[var(--brand)] shadow-[0_8px_20px_-10px_rgba(124,58,237,0.7)] hover:bg-[var(--brand-deep)]'}`}>
+            <button type="button" onClick={enviarTexto} disabled={enviando || (!texto.trim() && !anexos.length)} data-dica="Enviar" aria-label="Enviar" className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white transition-[background-color,transform] active:scale-95 disabled:opacity-40 ${modoNota ? 'bg-amber-500' : 'bg-[var(--brand)] shadow-[0_8px_20px_-10px_rgba(124,58,237,0.7)] hover:bg-[var(--brand-deep)]'}`}>
               <Send size={18} />
             </button>
           )}
