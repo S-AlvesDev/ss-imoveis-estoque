@@ -88,6 +88,22 @@ export function Supervisao() {
   const listaPrincipal = pessoaFiltrada === null ? esperando : daPessoa;
   const online = pessoas.filter((p) => p.estado === 'online').length;
 
+  /**
+   * Chamar alguém pela lista "Equipe" não aponta uma conversa — então a
+   * escolhida é a que mais precisa: a com o cliente esperando há mais tempo
+   * e, não havendo ninguém esperando, a mexida mais recentemente. É a
+   * conversa que o chamado abre na tela da pessoa.
+   */
+  function conversaParaChamar(pessoaId: number): Conversa | null {
+    const dela = abertas.filter((c) => c.atendente_id === pessoaId);
+    if (!dela.length) return null;
+    const esperandoDela = dela
+      .filter((c) => c.ultima_mensagem_de === 'cliente' && c.ultima_mensagem_do_cliente_em)
+      .sort((a, b) => Date.parse(a.ultima_mensagem_do_cliente_em!) - Date.parse(b.ultima_mensagem_do_cliente_em!));
+    if (esperandoDela.length) return esperandoDela[0];
+    return [...dela].sort((a, b) => Date.parse(b.ultima_mensagem_em) - Date.parse(a.ultima_mensagem_em))[0];
+  }
+
   /** Faz a tela de quem está com a conversa tocar. */
   async function cutucar(c: Conversa) {
     setCutucando(c.id);
@@ -218,7 +234,18 @@ export function Supervisao() {
               ) : (
                 <ul className="mt-3 space-y-0.5">
                   {[...pessoas].sort(porPresenca).map((p) => (
-                    <LinhaDaPessoa key={p.id} pessoa={p} estado={p.estado} conversas={abertas} agora={agora} eu={sessao.id} escolhida={pessoaFiltrada === p.id} aoEscolher={() => setPessoaFiltrada((atual) => (atual === p.id ? null : p.id))} />
+                    <LinhaDaPessoa
+                      key={p.id}
+                      pessoa={p}
+                      estado={p.estado}
+                      conversas={abertas}
+                      agora={agora}
+                      eu={sessao.id}
+                      escolhida={pessoaFiltrada === p.id}
+                      aoEscolher={() => setPessoaFiltrada((atual) => (atual === p.id ? null : p.id))}
+                      aoChamar={conversaParaChamar(p.id) ? () => cutucar(conversaParaChamar(p.id)!) : null}
+                      chamando={cutucando !== null && conversaParaChamar(p.id)?.id === cutucando}
+                    />
                   ))}
                 </ul>
               )}
@@ -251,7 +278,7 @@ function porPresenca(a: { estado: Presenca; nome: string }, b: { estado: Presenc
   return ordem[a.estado] - ordem[b.estado] || a.nome.localeCompare(b.nome);
 }
 
-function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu, escolhida, aoEscolher }: { pessoa: Funcionario; estado: Presenca; conversas: Conversa[]; agora: number; eu: number; escolhida: boolean; aoEscolher: () => void }) {
+function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu, escolhida, aoEscolher, aoChamar, chamando }: { pessoa: Funcionario; estado: Presenca; conversas: Conversa[]; agora: number; eu: number; escolhida: boolean; aoEscolher: () => void; aoChamar: (() => void) | null; chamando: boolean }) {
   const minhas = conversas.filter((c) => c.atendente_id === pessoa.id);
   const esperando = minhas.filter((c) => c.ultima_mensagem_de === 'cliente' && c.ultima_mensagem_do_cliente_em);
   const maisEsperando = esperando.length ? Math.max(...esperando.map((c) => agora - Date.parse(c.ultima_mensagem_do_cliente_em!))) : 0;
@@ -280,6 +307,23 @@ function LinhaDaPessoa({ pessoa, estado, conversas, agora, eu, escolhida, aoEsco
         <span className="block font-semibold tabular-nums text-[var(--text)]">{minhas.length}</span>
         <span className="block text-[10px] text-[var(--text-muted)]">{minhas.length === 1 ? 'conversa' : 'conversas'}</span>
       </span>
+      {/* Chamar a pessoa direto, sem precisar achar uma conversa dela na lista.
+          O clique não pode abrir o filtro junto, daí o stopPropagation. */}
+      {pessoa.id !== eu && (
+        <span onClick={(e) => e.stopPropagation()}>
+          <Botao
+            tamanho="sm"
+            variante="fantasma"
+            quadrado
+            carregando={chamando}
+            disabled={!aoChamar}
+            icone={<BellRing size={14} />}
+            onClick={() => aoChamar?.()}
+            aria-label={`Chamar a atenção de ${pessoa.nome}`}
+            data-dica={aoChamar ? `Chamar ${pessoa.nome.split(' ')[0]} (toca na tela dele)` : `${pessoa.nome.split(' ')[0]} não está com nenhuma conversa`}
+          />
+        </span>
+      )}
       <span aria-hidden className={`shrink-0 transition-opacity ${escolhida ? 'text-[var(--brand)] opacity-100' : 'text-[var(--text-muted)] opacity-0 group-hover:opacity-70'}`}>
         <ListFilter size={14} />
       </span>
