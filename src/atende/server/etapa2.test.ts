@@ -81,11 +81,11 @@ describe('Atende Aí — o leitor de eventos da Evolution', () => {
 describe('Atende Aí — quem vê qual conversa', () => {
   const T_VENDAS = '11111111-1111-4111-8111-111111111111';
   const T_ALUGUEL = '22222222-2222-4222-8222-222222222222';
-  const admin: Visao = { tudo: true, eu: 1, meusTimes: [], supervisiona: [] };
-  const supervisor: Visao = { tudo: false, eu: 2, meusTimes: [T_VENDAS], supervisiona: [T_VENDAS] };
-  const atendente: Visao = { tudo: false, eu: 3, meusTimes: [T_ALUGUEL], supervisiona: [] };
+  const admin: Visao = { tudo: true, eu: 1, meusTimes: [], supervisiona: [], filaGeral: true };
+  const supervisor: Visao = { tudo: false, eu: 2, meusTimes: [T_VENDAS], supervisiona: [T_VENDAS], filaGeral: true };
+  const atendente: Visao = { tudo: false, eu: 3, meusTimes: [T_ALUGUEL], supervisiona: [], filaGeral: false };
 
-  it('admin vê tudo; atendente vê as suas e a fila dos seus times (ou sem time)', () => {
+  it('admin vê tudo; atendente vê as suas e a fila do time dele — nunca a de um colega', () => {
     const minha = { atendente_id: 3, time_id: T_ALUGUEL, estado: 'em_atendimento' };
     const deOutro = { atendente_id: 2, time_id: T_ALUGUEL, estado: 'em_atendimento' };
     const filaAluguel = { atendente_id: null, time_id: T_ALUGUEL, estado: 'na_fila' };
@@ -96,10 +96,22 @@ describe('Atende Aí — quem vê qual conversa', () => {
     expect(podeVerConversa(atendente, deOutro)).toBe(false);
     expect(podeVerConversa(atendente, filaAluguel)).toBe(true);
     expect(podeVerConversa(atendente, filaVendas)).toBe(false);
-    expect(podeVerConversa(atendente, filaSemTime)).toBe(true);
+    // A fila geral é de quem distribui: o atendente não a vê mais.
+    expect(podeVerConversa(atendente, filaSemTime)).toBe(false);
   });
 
-  it('supervisor vê as dos times que supervisiona, mesmo com outro atendente', () => {
+  it('encerrada: o atendente vê a que era dele e a que ele mesmo encerrou', () => {
+    // Era dele e um supervisor fechou por cima: continua vendo o próprio trabalho.
+    expect(podeVerConversa(atendente, { atendente_id: 3, time_id: T_ALUGUEL, estado: 'encerrada', encerrada_por: 2 })).toBe(true);
+    // Foi ele que encerrou, mesmo sem ser o atendente da conversa.
+    expect(podeVerConversa(atendente, { atendente_id: 2, time_id: T_ALUGUEL, estado: 'encerrada', encerrada_por: 3 })).toBe(true);
+    // Encerrada de um colega, que ele não atendeu nem fechou: não.
+    expect(podeVerConversa(atendente, { atendente_id: 2, time_id: T_ALUGUEL, estado: 'encerrada', encerrada_por: 2 })).toBe(false);
+    // Sem ninguém marcado como quem encerrou, `eu` nunca pode casar com nulo.
+    expect(podeVerConversa(atendente, { atendente_id: 2, time_id: T_ALUGUEL, estado: 'encerrada', encerrada_por: null })).toBe(false);
+  });
+
+  it('supervisor vê as dos times que supervisiona, e a fila geral, que é dele distribuir', () => {
     expect(podeVerConversa(supervisor, { atendente_id: 3, time_id: T_VENDAS, estado: 'em_atendimento' })).toBe(true);
     expect(podeVerConversa(supervisor, { atendente_id: 3, time_id: T_ALUGUEL, estado: 'em_atendimento' })).toBe(false);
     expect(podeVerConversa(supervisor, { atendente_id: null, time_id: null, estado: 'na_fila' })).toBe(true);
@@ -107,7 +119,10 @@ describe('Atende Aí — quem vê qual conversa', () => {
 
   it('o filtro do PostgREST diz a mesma coisa que a regra', () => {
     expect(filtroDaVisao(admin)).toBeNull();
-    expect(filtroDaVisao(atendente)).toBe(`atendente_id.eq.3,and(estado.in.(na_fila,nova,em_triagem),time_id.is.null),and(estado.in.(na_fila,nova,em_triagem),time_id.in.(${T_ALUGUEL}))`);
+    // Sem a fila geral, e com as encerradas que ele fechou.
+    expect(filtroDaVisao(atendente)).toBe(`atendente_id.eq.3,encerrada_por.eq.3,and(estado.in.(na_fila,nova,em_triagem),time_id.in.(${T_ALUGUEL}))`);
+    expect(filtroDaVisao(atendente)).not.toContain('time_id.is.null');
+    expect(filtroDaVisao(supervisor)).toContain('time_id.is.null');
     expect(filtroDaVisao(supervisor)).toContain(`time_id.in.(${T_VENDAS})`);
   });
 

@@ -30,22 +30,40 @@ export interface Visao {
   meusTimes: string[];
   /** Times que a pessoa supervisiona (supervisor: os dele; admin: irrelevante). */
   supervisiona: string[];
+  /**
+   * Vê a fila geral — as conversas sem time, que é onde a triagem põe o que
+   * não soube encaixar. É de quem distribui: supervisor e admin. O atendente
+   * não, para só enxergar o que é dele e o que chega ao time dele.
+   */
+  filaGeral: boolean;
 }
+
+/** Os estados em que a conversa ainda não tem dono e está esperando alguém. */
+const ESTADOS_DE_FILA = ['na_fila', 'nova', 'em_triagem'];
 
 export async function visaoDe(req: RequisicaoAtende): Promise<Visao> {
   const s = req.sessao!;
-  if (s.papel === 'admin') return { tudo: true, eu: s.id, meusTimes: [], supervisiona: [] };
+  if (s.papel === 'admin') return { tudo: true, eu: s.id, meusTimes: [], supervisiona: [], filaGeral: true };
   const { data } = await req.dbAtende!.from('atende_time_membros').select('time_id, supervisiona').eq('usuario_id', s.id);
   const membros = (data || []) as Array<{ time_id: string; supervisiona: boolean }>;
-  return { tudo: false, eu: s.id, meusTimes: membros.map((m) => m.time_id), supervisiona: s.papel === 'supervisor' ? membros.map((m) => m.time_id) : [] };
+  return { tudo: false, eu: s.id, meusTimes: membros.map((m) => m.time_id), supervisiona: s.papel === 'supervisor' ? membros.map((m) => m.time_id) : [], filaGeral: s.papel === 'supervisor' };
 }
 
-/** A regra, em memória: minha, ou na fila de um time meu (ou sem time), ou de um time que supervisiono. */
-export function podeVerConversa(v: Visao, c: { atendente_id: number | null; time_id: string | null; estado: string }): boolean {
+/**
+ * A regra, em memória: é minha, fui eu que encerrei, está na fila de um time
+ * meu, ou é de um time que eu supervisiono.
+ *
+ * O atendente enxerga só o que é dele e o que chega ao time dele — nunca a
+ * conversa de um colega, nem a fila geral. Encerrada aparece quando ele era o
+ * atendente OU quando foi ele quem encerrou: fechar não apaga o próprio
+ * trabalho da vista, nem quando um supervisor fecha por cima.
+ */
+export function podeVerConversa(v: Visao, c: { atendente_id: number | null; time_id: string | null; estado: string; encerrada_por?: number | null }): boolean {
   if (v.tudo) return true;
   if (c.atendente_id === v.eu) return true;
-  if (c.estado === 'na_fila' || c.estado === 'nova' || c.estado === 'em_triagem') {
-    if (!c.time_id || v.meusTimes.includes(c.time_id)) return true;
+  if (c.encerrada_por != null && c.encerrada_por === v.eu) return true;
+  if (ESTADOS_DE_FILA.includes(c.estado)) {
+    if (c.time_id ? v.meusTimes.includes(c.time_id) : v.filaGeral) return true;
   }
   return Boolean(c.time_id && v.supervisiona.includes(c.time_id));
 }
@@ -53,8 +71,10 @@ export function podeVerConversa(v: Visao, c: { atendente_id: number | null; time
 /** A mesma regra como filtro do PostgREST (ids vêm do banco; nada vindo do navegador entra aqui). */
 export function filtroDaVisao(v: Visao): string | null {
   if (v.tudo) return null;
-  const partes = [`atendente_id.eq.${v.eu}`, `and(estado.in.(na_fila,nova,em_triagem),time_id.is.null)`];
-  if (v.meusTimes.length) partes.push(`and(estado.in.(na_fila,nova,em_triagem),time_id.in.(${v.meusTimes.join(',')}))`);
+  const fila = ESTADOS_DE_FILA.join(',');
+  const partes = [`atendente_id.eq.${v.eu}`, `encerrada_por.eq.${v.eu}`];
+  if (v.filaGeral) partes.push(`and(estado.in.(${fila}),time_id.is.null)`);
+  if (v.meusTimes.length) partes.push(`and(estado.in.(${fila}),time_id.in.(${v.meusTimes.join(',')}))`);
   if (v.supervisiona.length) partes.push(`time_id.in.(${v.supervisiona.join(',')})`);
   return partes.join(',');
 }
@@ -63,7 +83,7 @@ export function filtroDaVisao(v: Visao): string | null {
 //  Leitura
 // ---------------------------------------------------------------------------
 
-const CONVERSA_COLUNAS = 'id, cliente_id, conexao_id, estado, time_id, atendente_id, prioridade, assunto, intencao, resumo, aberta_em, primeira_resposta_em, ultima_mensagem_em, ultima_mensagem_do_cliente_em, ultima_mensagem_texto, ultima_mensagem_de, nao_lidas, encerrada_em, avaliacao_pedida_em, avaliacao_nota, atualizado_em';
+const CONVERSA_COLUNAS = 'id, cliente_id, conexao_id, estado, time_id, atendente_id, prioridade, assunto, intencao, resumo, aberta_em, primeira_resposta_em, ultima_mensagem_em, ultima_mensagem_do_cliente_em, ultima_mensagem_texto, ultima_mensagem_de, nao_lidas, encerrada_em, encerrada_por, avaliacao_pedida_em, avaliacao_nota, atualizado_em';
 const CLIENTE_COLUNAS = 'id, telefone, nome, nome_whatsapp, foto_url, email, observacoes, ia_ativa, primeiro_contato_em, ultimo_contato_em';
 const MENSAGEM_COLUNAS = 'id, conversa_id, direcao, autor_tipo, autor_id, tipo, texto, midia, wa_id, status, erro, respondendo_a, criado_em';
 const COM_CLIENTE = `${CONVERSA_COLUNAS}, cliente:atende_clientes(${CLIENTE_COLUNAS}), etiquetas:atende_conversa_etiquetas(etiqueta_id)`;
