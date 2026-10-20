@@ -558,3 +558,48 @@ export async function simular(empresaId: string, texto: string, nomeDoCliente?: 
   const { classificacao, uso } = await classificar({ empresa, times, historico: [{ role: 'user', content: texto }], nomeDoCliente: nomeDoCliente ?? null, rodada: 1 });
   return { classificacao, nomeDoTime: classificacao.time_id ? times.find((t) => t.id === classificacao.time_id)?.nome ?? null : null, uso, ia: claudeConfigurado() };
 }
+
+/**
+ * Horas que uma conversa pode ficar esperando o cliente responder a pergunta
+ * de esclarecimento da IA antes de ir para a fila de gente.
+ */
+export const HORAS_PARA_DESTRAVAR_TRIAGEM = 6;
+
+/**
+ * Conversas esquecidas em `em_triagem` voltam para a fila.
+ *
+ * `em_triagem` é um estado sem dono: não aparece na fila, não tem atendente e
+ * a tela mostra "IA lendo". Entra-se nele de duas formas, e as duas podem não
+ * sair sozinhas:
+ *
+ *  - a IA pediu esclarecimento (`desfecho: 'esclarecendo'`) e o cliente nunca
+ *    respondeu — não existe relógio que avance a rodada sem resposta dele;
+ *  - a função morreu no meio da chamada à IA (timeout, deploy), antes do
+ *    catch que devolveria a conversa para a fila.
+ *
+ * Em qualquer dos dois a conversa some: o SLA olha `em_triagem`, mas só
+ * quando a última mensagem é do cliente — e aqui a última é da IA. Ninguém
+ * mais passa por ela. Era o caso de uma conversa parada há 21 dias no
+ * ambiente de teste, com a pergunta da IA sem resposta.
+ *
+ * A varredura do cron é a rede: passado o prazo sem ninguém falar, a conversa
+ * vai para `na_fila` e alguém de carne e osso decide o que fazer com ela.
+ */
+export async function destravarTriagensParadas(agora: Date = new Date(), horas = HORAS_PARA_DESTRAVAR_TRIAGEM): Promise<{ destravadas: number }> {
+  const limite = new Date(agora.getTime() - horas * 3600_000).toISOString();
+  const { data, error } = await supabaseServer
+    .from('atende_conversas')
+    .update({ estado: 'na_fila', atualizado_em: agora.toISOString() })
+    .eq('estado', 'em_triagem')
+    .lt('ultima_mensagem_em', limite)
+    .select('id, empresa_id');
+  if (error) {
+    console.error('[atende triagem] destravar:', error.message);
+    return { destravadas: 0 };
+  }
+  const presas = (data || []) as Array<{ id: string; empresa_id: string }>;
+  for (const c of presas) {
+    await supabaseServer.from('atende_eventos').insert({ empresa_id: c.empresa_id, conversa_id: c.id, tipo: 'triagem', dados: { desfecho: 'falhou', erro: `sem resposta do cliente há mais de ${horas}h na triagem — devolvida à fila` } });
+  }
+  return { destravadas: presas.length };
+}
