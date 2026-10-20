@@ -17,8 +17,8 @@ describe('Jatobá do Atende Aí — o conhecimento vem do catálogo', () => {
       expect(CONHECIMENTO_DO_ATENDE).toContain(d.nome);
       expect(CONHECIMENTO_DO_ATENDE).toContain(d.preco!.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
     }
-    // Essencial anual = 10 × 299,90 (o espaço do Intl é o não separável)
-    expect(CONHECIMENTO_DO_ATENDE).toContain(`${(2999).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por ano`);
+    // Essencial anual = 10 × 99,90 (o espaço do Intl é o não separável)
+    expect(CONHECIMENTO_DO_ATENDE).toContain(`${(999).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por ano`);
   });
 
   it('diz o que ainda não existe, para o Jatobá não vender fumaça', () => {

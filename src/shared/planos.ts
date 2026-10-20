@@ -85,7 +85,7 @@ export const DEFINICOES: Record<Plano, DefinicaoDoPlano> = {
   empresarial: {
     id: 'empresarial',
     nome: 'Empresarial',
-    preco: 1200,
+    preco: 699.9,
     publico: 'Operações maiores',
     limites: { unidades: 4, depositosPorUnidade: null, usuarios: null },
     recursos: ['transferencia', 'identidade-visual', 'exportacoes', 'alertas-por-email', 'relatorios-automaticos', 'whatsapp', 'cotacoes', 'jatoba'],

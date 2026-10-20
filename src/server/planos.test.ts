@@ -28,7 +28,7 @@ describe('catálogo de planos', () => {
     expect(PLANOS).toEqual(['essencial', 'profissional', 'empresarial']);
     expect(DEFINICOES.essencial).toMatchObject({ preco: 199.9, limites: { unidades: 1, depositosPorUnidade: 1, usuarios: 3 } });
     expect(DEFINICOES.profissional).toMatchObject({ preco: 399.9, limites: { unidades: 2, depositosPorUnidade: 3, usuarios: 10 } });
-    expect(DEFINICOES.empresarial).toMatchObject({ preco: 1200, limites: { unidades: 4, depositosPorUnidade: null, usuarios: null } });
+    expect(DEFINICOES.empresarial).toMatchObject({ preco: 699.9, limites: { unidades: 4, depositosPorUnidade: null, usuarios: null } });
   });
 
   it('cada plano inclui tudo que o anterior inclui', () => {

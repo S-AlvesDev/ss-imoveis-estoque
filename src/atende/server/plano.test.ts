@@ -70,8 +70,8 @@ describe('Atende Aí — o catálogo', () => {
   });
 
   it('preço anual = 10 meses em 12, por mês', () => {
-    expect(precoAtende('essencial', 'mensal')).toBe(299.9);
-    expect(precoAtende('essencial', 'anual')).toBe(249.92);
+    expect(precoAtende('essencial', 'mensal')).toBe(99.9);
+    expect(precoAtende('essencial', 'anual')).toBe(83.25);
   });
 });
 
@@ -175,13 +175,13 @@ describe('Atende Aí — o pedido de plano', () => {
   it('registra a intenção com o preço do catálogo, sem cobrar', async () => {
     const db = dbFalso();
     const a = await pedirAssinatura(db, sessao, { plano: 'profissional', ciclo: 'anual' });
-    expect(a).toMatchObject({ plano: 'profissional', ciclo: 'anual', valor: 499.92, status: 'pendente', payer_email: 'ana@empresa.com' });
+    expect(a).toMatchObject({ plano: 'profissional', ciclo: 'anual', valor: 166.58, status: 'pendente', payer_email: 'ana@empresa.com' });
     expect(db.inseridos[0]).toMatchObject({ tabela: 'atende_assinaturas', empresa_id: EMPRESA, pedido_por: 1 });
     expect(db.inseridos[0].mp_preapproval_id).toBeUndefined();
   });
 
   it('com assinatura em vigor, não aceita outro pedido por aqui', async () => {
-    const db = dbFalso([{ id: 'x', plano: 'essencial', ciclo: 'mensal', valor: 299.9, status: 'autorizada', created_at: 'ontem' }]);
+    const db = dbFalso([{ id: 'x', plano: 'essencial', ciclo: 'mensal', valor: 99.9, status: 'autorizada', created_at: 'ontem' }]);
     await expect(pedirAssinatura(db, sessao, { plano: 'profissional' })).rejects.toThrow(/já tem uma assinatura em vigor/);
   });
 });

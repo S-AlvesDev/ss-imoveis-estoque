@@ -38,28 +38,28 @@ describe('os preços dos combos', () => {
 
   it('descontam 5% de cada produto e somam (mensal)', () => {
     const p = precosDoCombo(comboDe('profissional')!, 'mensal')!;
-    expect(p).toEqual({ stok: 379.9, atende: 569.9, total: 949.8, cheio: 999.8, economia: 50 });
+    expect(p).toEqual({ stok: 379.9, atende: 189.9, total: 569.8, cheio: 599.8, economia: 30 });
     const e = precosDoCombo(comboDe('essencial')!, 'mensal')!;
-    expect(e).toEqual({ stok: 189.9, atende: 284.9, total: 474.8, cheio: 499.8, economia: 25 });
+    expect(e).toEqual({ stok: 189.9, atende: 94.9, total: 284.8, cheio: 299.8, economia: 15 });
     const g = precosDoCombo(comboDe('empresarial')!, 'mensal')!;
-    expect(g).toEqual({ stok: 1140, atende: 1139.9, total: 2279.9, cheio: 2399.9, economia: 120 });
+    expect(g).toEqual({ stok: 664.9, atende: 379.9, total: 1044.8, cheio: 1099.8, economia: 55 });
   });
 
   it('no anual, o desconto vai por cima dos dois meses grátis de cada produto', () => {
     const p = precosDoCombo(comboDe('profissional')!, 'anual')!;
-    expect(p.cheio).toBe(9998); // 3.999 + 5.999
+    expect(p.cheio).toBe(5998); // 3.999 + 1.999
     expect(p.stok).toBe(3799.05); // 3.999 × 0,95
-    expect(p.atende).toBe(5699.05); // 5.999 × 0,95
-    expect(p.total).toBe(9498.1);
-    expect(p.economia).toBe(499.9);
+    expect(p.atende).toBe(1899.05); // 1.999 × 0,95
+    expect(p.total).toBe(5698.1);
+    expect(p.economia).toBe(299.9);
   });
 
   it('o catálogo leva o desconto e os dois ciclos para a tela', () => {
     const cat = catalogoDeCombos();
     expect(cat).toHaveLength(3);
     expect(cat[1]).toMatchObject({ id: 'profissional', desconto: 5, stok: 'profissional', atende: 'profissional' });
-    expect(cat[1].precos.mensal?.total).toBe(949.8);
-    expect(cat[1].precos.anual?.total).toBe(9498.1);
+    expect(cat[1].precos.mensal?.total).toBe(569.8);
+    expect(cat[1].precos.anual?.total).toBe(5698.1);
   });
 
   it('o motivo na fatura diz o produto, o plano e que é combo; o Pix único diz os dois', () => {

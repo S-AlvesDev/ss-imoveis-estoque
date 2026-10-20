@@ -177,14 +177,14 @@ describe('assinar o combo com cartão', () => {
     expect(doStok.auto_recurring.transaction_amount).toBe(379.9);
     expect(doStok.reason).toBe('Stok Aí — Profissional (mensal) · combo SEVLA');
     const doAtende = mp.preapprovals['pre-atende-1'];
-    expect(doAtende.auto_recurring.transaction_amount).toBe(569.9);
+    expect(doAtende.auto_recurring.transaction_amount).toBe(189.9);
     expect(doAtende.reason).toBe('Atende Aí — Profissional (mensal) · combo SEVLA');
     expect(doAtende.external_reference).toBe(`atende:${EMPRESA}`);
 
     expect(banco.tabelas.assinaturas).toHaveLength(1);
     expect(banco.tabelas.assinaturas[0]).toMatchObject({ plano: 'profissional', valor: 379.9, combo: 'profissional', status: 'pendente', mp_preapproval_id: 'pre-stok-0' });
     expect(banco.tabelas.atende_assinaturas).toHaveLength(1);
-    expect(banco.tabelas.atende_assinaturas[0]).toMatchObject({ plano: 'profissional', valor: 569.9, combo: 'profissional', status: 'pendente', mp_preapproval_id: 'pre-atende-1' });
+    expect(banco.tabelas.atende_assinaturas[0]).toMatchObject({ plano: 'profissional', valor: 189.9, combo: 'profissional', status: 'pendente', mp_preapproval_id: 'pre-atende-1' });
   });
 
   it('recusa quem não manda nos dois produtos, combo inválido e ciclo inválido', async () => {
@@ -198,25 +198,25 @@ describe('assinar o combo com Pix', () => {
   it('é um pagamento só com o total; cada produto guarda a própria parte com o mesmo id', async () => {
     const r = await assinarCombo(conta, { organization_id: ORG, combo: 'profissional', ciclo: 'mensal', metodo: 'pix', pagador });
     if (r.metodo !== 'pix') throw new Error('esperava pix');
-    expect(r.pagamento.valor).toBe(949.8);
+    expect(r.pagamento.valor).toBe(569.8);
     expect(r.pagamento.id).toBe('1000');
     expect(r.pagamento.dados?.qr_code).toBe('PIXCOPIA');
     expect(r.pagamento.stok.valor).toBe(379.9);
-    expect(r.pagamento.atende.valor).toBe(569.9);
+    expect(r.pagamento.atende.valor).toBe(189.9);
 
     const pay = mp.pagamentos['1000'];
-    expect(pay.transaction_amount).toBe(949.8);
+    expect(pay.transaction_amount).toBe(569.8);
     expect(pay.description).toBe('SEVLA — Combo Profissional: Stok Aí + Atende Aí (mensal)');
     expect(pay.external_reference).toMatch(/^sevla-combo:pagamentos-\d+:atende_pagamentos-\d+$/);
 
     expect(banco.tabelas.pagamentos[0]).toMatchObject({ mp_payment_id: '1000', valor: 379.9, combo: 'profissional', status: 'pendente', plano: 'profissional' });
     expect(banco.tabelas.pagamentos[0].descricao).toContain('o Pix é um só');
-    expect(banco.tabelas.atende_pagamentos[0]).toMatchObject({ mp_payment_id: '1000', valor: 569.9, combo: 'profissional', status: 'pendente', empresa_id: EMPRESA });
+    expect(banco.tabelas.atende_pagamentos[0]).toMatchObject({ mp_payment_id: '1000', valor: 189.9, combo: 'profissional', status: 'pendente', empresa_id: EMPRESA });
 
     // A tela da SEVLA acha o pendente pelo pedido do Stok e junta a parte do Atende.
     const pendente = await comboPendente(await avulsoPendente(ORG), EMPRESA);
     expect(pendente?.id).toBe('1000');
-    expect(pendente?.valor).toBe(949.8);
+    expect(pendente?.valor).toBe(569.8);
   });
 
   it('quando o Pix cai (webhook), os dois planos entram e os dois pedidos ficam aprovados', async () => {
@@ -246,7 +246,7 @@ describe('assinar o combo com Pix', () => {
     mp.pagamentos['1000'].status = 'approved';
     const c = await conferirCombo(conta, ORG, '1000');
     expect(c?.status).toBe('aprovado');
-    expect(c?.valor).toBe(9498.1);
+    expect(c?.valor).toBe(5698.1);
     expect(banco.tabelas.organizations[0].plano).toBe('profissional');
     expect(banco.tabelas.atende_empresas[0].plano).toBe('profissional');
     expect(await conferirCombo(conta, ORG, '999')).toBeNull();
@@ -257,7 +257,7 @@ describe('assinar o combo com Pix', () => {
 describe('acertar o combo', () => {
   it('cancelado o Atende, o Stok volta ao preço cheio no MP e aqui; nada muda quando os dois estão em vigor', async () => {
     banco.tabelas.assinaturas = [{ id: 's1', organization_id: ORG, plano: 'profissional', ciclo: 'mensal', valor: 379.9, status: 'autorizada', combo: 'profissional', mp_preapproval_id: 'pre-s', created_at: '2026-09-01T00:00:00Z' }];
-    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 569.9, status: 'autorizada', combo: 'profissional', mp_preapproval_id: 'pre-a', created_at: '2026-09-01T00:00:00Z' }];
+    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 189.9, status: 'autorizada', combo: 'profissional', mp_preapproval_id: 'pre-a', created_at: '2026-09-01T00:00:00Z' }];
     expect(await acertarCombo(ORG)).toEqual({ desfeitos: [] });
     expect(mp.valores).toEqual([]);
 
@@ -271,9 +271,9 @@ describe('acertar o combo', () => {
 
   it('cancelado o Stok, o Atende volta ao preço cheio (o do período no MP, o por mês na linha)', async () => {
     banco.tabelas.assinaturas = [{ id: 's1', organization_id: ORG, plano: 'profissional', ciclo: 'anual', valor: 3799.05, status: 'cancelada', combo: 'profissional', mp_preapproval_id: 'pre-s', created_at: '2026-09-01T00:00:00Z' }];
-    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'anual', valor: 474.92, status: 'autorizada', combo: 'profissional', mp_preapproval_id: 'pre-a', created_at: '2026-09-01T00:00:00Z' }];
+    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'anual', valor: 158.25, status: 'autorizada', combo: 'profissional', mp_preapproval_id: 'pre-a', created_at: '2026-09-01T00:00:00Z' }];
     expect(await acertarCombo(ORG)).toEqual({ desfeitos: ['atende'] });
-    expect(mp.valores).toEqual([{ id: 'pre-a', valor: 5999, reason: 'Atende Aí — Profissional (anual)' }]);
-    expect(banco.tabelas.atende_assinaturas[0]).toMatchObject({ valor: 499.92, combo: null });
+    expect(mp.valores).toEqual([{ id: 'pre-a', valor: 1999, reason: 'Atende Aí — Profissional (anual)' }]);
+    expect(banco.tabelas.atende_assinaturas[0]).toMatchObject({ valor: 166.58, combo: null });
   });
 });

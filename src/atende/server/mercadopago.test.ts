@@ -155,12 +155,12 @@ describe('Atende Aí no Mercado Pago — o carimbo e o corpo', () => {
 
   it('o corpo: mensal cobra o preço por mês; anual cobra 10 meses de uma vez, uma vez por ano', () => {
     const mensal = corpoDaAssinaturaAtende({ plano: 'essencial', ciclo: 'mensal', empresaId: EMPRESA, payerEmail: 'ana@empresa.com' });
-    expect(mensal.auto_recurring).toEqual({ frequency: 1, frequency_type: 'months', transaction_amount: 299.9, currency_id: 'BRL' });
+    expect(mensal.auto_recurring).toEqual({ frequency: 1, frequency_type: 'months', transaction_amount: 99.9, currency_id: 'BRL' });
     expect(mensal.back_url).toBe('https://stokai.app/atende/plano?retorno=1');
     expect(mensal.external_reference).toBe(`atende:${EMPRESA}`);
     const anual = corpoDaAssinaturaAtende({ plano: 'essencial', ciclo: 'anual', empresaId: EMPRESA, payerEmail: 'ana@empresa.com' });
     expect(anual.auto_recurring.frequency).toBe(12);
-    expect(anual.auto_recurring.transaction_amount).toBe(2999);
+    expect(anual.auto_recurring.transaction_amount).toBe(999);
   });
 
   it('status e validade', () => {
@@ -176,13 +176,13 @@ describe('Atende Aí no Mercado Pago — começar', () => {
   it('cria a assinatura no MP, guarda a linha com o id e devolve o checkout', async () => {
     const r = await iniciarAssinaturaAtende(dbDaEmpresa(), sessao, { plano: 'profissional', ciclo: 'mensal' });
     expect(r.url).toBe('https://mp.test/checkout/pre-novo');
-    expect(r.assinatura).toMatchObject({ plano: 'profissional', ciclo: 'mensal', valor: 599.9, status: 'pendente' });
+    expect(r.assinatura).toMatchObject({ plano: 'profissional', ciclo: 'mensal', valor: 199.9, status: 'pendente' });
     expect(mp.criados[0]).toMatchObject({ reason: 'Atende Aí — Profissional (mensal)', external_reference: `atende:${EMPRESA}`, payer_email: 'ana@empresa.com', status: 'pending' });
     expect(banco.tabelas.atende_assinaturas[0]).toMatchObject({ empresa_id: EMPRESA, mp_preapproval_id: 'pre-novo', pedido_por: 1 });
   });
 
   it('com assinatura em vigor, só com trocar — e a anterior é cancelada no MP', async () => {
-    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'essencial', ciclo: 'mensal', valor: 299.9, status: 'autorizada', mp_preapproval_id: 'pre-velho', created_at: 'ontem' }];
+    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'essencial', ciclo: 'mensal', valor: 99.9, status: 'autorizada', mp_preapproval_id: 'pre-velho', created_at: 'ontem' }];
     await expect(iniciarAssinaturaAtende(dbDaEmpresa(), sessao, { plano: 'profissional' })).rejects.toThrow(/já tem uma assinatura em vigor/);
     const r = await iniciarAssinaturaAtende(dbDaEmpresa(), sessao, { plano: 'profissional', trocar: true });
     expect(r.url).toContain('pre-novo');
@@ -192,7 +192,7 @@ describe('Atende Aí no Mercado Pago — começar', () => {
 });
 
 describe('Atende Aí no Mercado Pago — o que o MP conta', () => {
-  const pre = (extra: any = {}) => ({ id: 'pre-1', status: 'authorized', reason: 'Atende Aí — Profissional (mensal)', external_reference: `atende:${EMPRESA}`, payer_email: 'ana@empresa.com', next_payment_date: '2026-10-19T12:00:00.000Z', auto_recurring: { frequency: 1, transaction_amount: 599.9 }, ...extra });
+  const pre = (extra: any = {}) => ({ id: 'pre-1', status: 'authorized', reason: 'Atende Aí — Profissional (mensal)', external_reference: `atende:${EMPRESA}`, payer_email: 'ana@empresa.com', next_payment_date: '2026-10-19T12:00:00.000Z', auto_recurring: { frequency: 1, transaction_amount: 199.9 }, ...extra });
 
   it('assinatura que não é do Atende: nulo (segue para o Stok)', async () => {
     expect(await aplicarPreapprovalAtende(pre({ external_reference: ORG, reason: 'Stok Aí — Essencial (mensal)' }))).toBeNull();
@@ -202,7 +202,7 @@ describe('Atende Aí no Mercado Pago — o que o MP conta', () => {
   });
 
   it('autorizada com a nossa intenção: a linha ganha o id e a empresa ganha o plano até a próxima cobrança', async () => {
-    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 599.9, status: 'pendente', mp_preapproval_id: 'pre-1', payer_email: 'ana@empresa.com', created_at: 'agora' }];
+    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 199.9, status: 'pendente', mp_preapproval_id: 'pre-1', payer_email: 'ana@empresa.com', created_at: 'agora' }];
     const r = await aplicarPreapprovalAtende(pre());
     expect(r).toMatchObject({ casou: true, empresaId: EMPRESA, organizationId: ORG });
     expect(r!.assinatura).toMatchObject({ status: 'autorizada', proxima_cobranca: '2026-10-19T12:00:00.000Z' });
@@ -222,7 +222,7 @@ describe('Atende Aí no Mercado Pago — o que o MP conta', () => {
 
   it('cancelada: a linha muda, o plano da empresa fica até plano_ate', async () => {
     banco.tabelas.atende_empresas[0] = { ...banco.tabelas.atende_empresas[0], plano: 'profissional', plano_ate: '2026-10-19T12:00:00.000Z', cobranca: 'cartao' };
-    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 599.9, status: 'autorizada', mp_preapproval_id: 'pre-1', created_at: 'agora' }];
+    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 199.9, status: 'autorizada', mp_preapproval_id: 'pre-1', created_at: 'agora' }];
     const r = await aplicarPreapprovalAtende(pre({ status: 'cancelled' }));
     expect(r!.assinatura!.status).toBe('cancelada');
     expect(banco.tabelas.atende_assinaturas[0].cancelada_em).toBeTruthy();
@@ -236,7 +236,7 @@ describe('Atende Aí no Mercado Pago — o que o MP conta', () => {
   });
 
   it('cobrança aprovada estende o plano até a próxima; agendada não muda nada', async () => {
-    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 599.9, status: 'autorizada', mp_preapproval_id: 'pre-1', payer_email: 'ana@empresa.com', created_at: 'agora' }];
+    banco.tabelas.atende_assinaturas = [{ id: 'a1', empresa_id: EMPRESA, plano: 'profissional', ciclo: 'mensal', valor: 199.9, status: 'autorizada', mp_preapproval_id: 'pre-1', payer_email: 'ana@empresa.com', created_at: 'agora' }];
     mp.preapprovals['pre-1'] = pre({ next_payment_date: '2026-11-19T12:00:00.000Z' });
     mp.autorizados['ap-1'] = { id: 'ap-1', preapproval_id: 'pre-1', status: 'scheduled', payment: null };
     const agendado = await tratarEventoDoAtende('subscription_authorized_payment', 'ap-1');
@@ -268,7 +268,7 @@ describe('Atende Aí no Mercado Pago — o que o MP conta', () => {
 describe('Atende Aí no Mercado Pago — Pix e boleto', () => {
   it('gera o pedido com a referência do Atende e o QR Code; aprovado, aplica o período e vira cobrança', async () => {
     const pedido = await criarAvulsoAtende({ empresaId: EMPRESA, plano: 'essencial', ciclo: 'mensal', metodo: 'pix', pagador: { nome: 'Ana', email: 'ana@empresa.com', tipoDoc: 'CPF', doc: '12345678909' }, pedidoPor: 1 });
-    expect(pedido).toMatchObject({ status: 'pendente', metodo: 'pix', valor: 299.9, dados: { qr_code: 'PIXCOPIA' } });
+    expect(pedido).toMatchObject({ status: 'pendente', metodo: 'pix', valor: 99.9, dados: { qr_code: 'PIXCOPIA' } });
     const pay = mp.pagamentos[pedido.mp_payment_id!];
     expect(pay.external_reference).toBe(`atende-avulso:${pedido.id}`);
     // Um pagamento do Stok não é nosso: nulo, segue para o Stok.

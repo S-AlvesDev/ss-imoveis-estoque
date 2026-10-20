@@ -22,13 +22,13 @@ describe('o conhecimento do Jatobá da SEVLA', () => {
     expect(texto).toContain('Stok Aí');
     expect(texto).toContain('Atende Aí');
     expect(texto).toContain('R$ 199,90'.replace(' ', ' '));
-    expect(texto).toContain('R$ 299,90'.replace(' ', ' '));
+    expect(texto).toContain('R$ 99,90'.replace(' ', ' '));
   });
 
   it('sabe os combos com 5% e a regra de o desconto valer com os dois', () => {
     expect(texto).toContain('5% de desconto');
     expect(texto).toContain('Combo Profissional');
-    expect(texto).toContain('R$ 949,80'.replace(' ', ' '));
+    expect(texto).toContain('R$ 569,80'.replace(' ', ' '));
     expect(texto).toContain('volta ao preço normal');
   });
 
