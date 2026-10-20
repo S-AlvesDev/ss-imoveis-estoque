@@ -126,9 +126,7 @@ export function traduzirPagamento(ap: Pick<PagamentoAutorizadoMp, 'status' | 'pa
 /** Quando o plano passa a valer até: a próxima cobrança do MP; sem ela, um ciclo a partir de agora. */
 export function planoAteDe(pre: Pick<PreapprovalMp, 'next_payment_date'>, ciclo: Ciclo, agora: Date = new Date()): string {
   if (pre.next_payment_date) return new Date(pre.next_payment_date).toISOString();
-  const d = new Date(agora);
-  d.setMonth(d.getMonth() + (ciclo === 'anual' ? 12 : 1));
-  return d.toISOString();
+  return fimDoPeriodo(agora, ciclo).toISOString();
 }
 
 // ---------------------------------------------------------------------------

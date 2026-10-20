@@ -119,10 +119,19 @@ export type Metodo = 'cartao' | 'pix' | 'boleto';
 export const METODOS: readonly Metodo[] = ['cartao', 'pix', 'boleto'];
 export const NOME_DO_METODO: Record<Metodo, string> = { cartao: 'Cartão de crédito', pix: 'Pix', boleto: 'Boleto' };
 
-/** O fim de um período pago que começa em `de`. */
+/**
+ * O fim de um período pago que começa em `de`.
+ *
+ * O cuidado com o dia: `setMonth` transborda quando o mês de destino é mais
+ * curto que o de origem — 31 de janeiro + 1 mês vira 3 de março, não 28 de
+ * fevereiro, e o cliente ganha dias de brinde a cada renovação. Transbordou,
+ * volta para o último dia do mês certo (`setDate(0)`).
+ */
 export function fimDoPeriodo(de: Date, ciclo: Ciclo): Date {
   const d = new Date(de);
+  const dia = d.getDate();
   d.setMonth(d.getMonth() + (ciclo === 'anual' ? 12 : 1));
+  if (d.getDate() !== dia) d.setDate(0);
   return d;
 }
 

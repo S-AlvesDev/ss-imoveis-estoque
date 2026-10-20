@@ -68,7 +68,9 @@ describe('pagamento avulso no MP', () => {
 
 describe('período e renovação', () => {
   it('um mês ou um ano a partir do início', () => {
-    expect(fimDoPeriodo(new Date('2026-01-31T12:00:00Z'), 'mensal').toISOString().slice(0, 10)).toBe('2026-03-03');
+    // 31/01 + 1 mês é 28/02, não 03/03: fevereiro não tem dia 31, e o período
+    // fecha no último dia do mês — senão cada renovação anda alguns dias.
+    expect(fimDoPeriodo(new Date('2026-01-31T12:00:00Z'), 'mensal').toISOString().slice(0, 10)).toBe('2026-02-28');
     expect(fimDoPeriodo(new Date('2026-09-14T12:00:00Z'), 'anual').toISOString().slice(0, 10)).toBe('2027-09-14');
   });
   it('a conta sabe se renova sozinha ou à mão', () => {

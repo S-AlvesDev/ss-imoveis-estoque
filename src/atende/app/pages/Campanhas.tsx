@@ -67,13 +67,21 @@ export function Campanhas() {
   // Enquanto houver um lote "enviando", processa um pedaço a cada poucos segundos.
   useEffect(() => {
     if (!emAndamento) return;
+    // Uma chamada por vez: cada processamento envia algumas mensagens e pode
+    // demorar mais que o intervalo. Sem esta trava, o relógio empilha chamadas
+    // em cima da anterior e o mesmo contato recebe a mensagem repetida.
+    let processando = false;
     async function processar() {
+      if (processando) return;
+      processando = true;
       try {
         const r = await api.post<{ lote: Lote }>(`/disparos/${emAndamento}/processar`);
         setLotes((atual) => atual.map((l) => (l.id === r.lote.id ? r.lote : l)));
         if (r.lote.status !== 'enviando') setEmAndamento(null);
       } catch {
         // Um soluço de rede não pára a campanha — a próxima chamada tenta de novo.
+      } finally {
+        processando = false;
       }
     }
     void processar();

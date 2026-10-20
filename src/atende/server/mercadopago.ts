@@ -1,6 +1,6 @@
 import { supabaseServer } from '../../lib/supabaseServer';
 import { mpConfigurado, criarPreapproval, buscarAssinatura, cancelarAssinatura as cancelarNoMp, buscarPagamentoAutorizado, procurarAssinaturasRecentes, siteUrlDoMp, criarPagamentoAvulso, buscarPagamento, dadosParaPagar, type PreapprovalMp, type PagamentoAutorizadoMp, type AmbienteMp, type PagadorAvulso, type PagamentoMp } from '../../server/mercadopago';
-import { PIX_VALIDADE_HORAS, BOLETO_VALIDADE_DIAS } from '../../shared/planos';
+import { PIX_VALIDADE_HORAS, BOLETO_VALIDADE_DIAS, fimDoPeriodo } from '../../shared/planos';
 import { DEFINICOES_ATENDE, NOME_DO_CICLO_ATENDE, PLANOS_ATENDE, ehCicloAtende, ehPlanoAtende, precoAtende, precoDoPeriodoAtende, type CicloAtende, type PlanoAtende } from '../shared/planos';
 import type { AssinaturaAtende, SessaoAtende } from '../shared/tipos';
 import { ATENDE } from '../shared/produto';
@@ -131,9 +131,7 @@ export function traduzirStatus(s: string | undefined): StatusAssinatura {
 /** Quando o plano passa a valer até: a próxima cobrança do MP; sem ela, um ciclo a partir de agora. */
 export function planoAteDe(pre: Pick<PreapprovalMp, 'next_payment_date'>, ciclo: CicloAtende, agora: Date = new Date()): string {
   if (pre.next_payment_date) return new Date(pre.next_payment_date).toISOString();
-  const d = new Date(agora);
-  d.setMonth(d.getMonth() + (ciclo === 'anual' ? 12 : 1));
-  return d.toISOString();
+  return fimDoPeriodoAtende(agora, ciclo).toISOString();
 }
 
 /** Existe pagamento online? (Sem MP_ACCESS_TOKEN, o pedido por e-mail continua sendo o caminho.) */
@@ -376,10 +374,9 @@ export function traduzirStatusDePagamento(s: string | undefined): PagamentoAtend
   }
 }
 
+/** O mesmo fim de período do Stok Aí — inclusive o cuidado com o dia 31. */
 function fimDoPeriodoAtende(de: Date, ciclo: CicloAtende): Date {
-  const d = new Date(de);
-  d.setMonth(d.getMonth() + (ciclo === 'anual' ? 12 : 1));
-  return d;
+  return fimDoPeriodo(de, ciclo);
 }
 
 const PAG_COLUNAS = 'id, status, valor, moeda, detalhe, data, metodo, plano, ciclo, periodo_de, periodo_ate, mp_payment_id, nf_status, nf_numero, nf_url, recibo_enviado_em, vence_em, dados, combo';

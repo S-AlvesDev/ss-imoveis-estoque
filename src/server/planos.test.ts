@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 // O módulo do servidor importa o cliente do Supabase, que exige URL no import. Aqui só as regras puras interessam.
 vi.mock('../lib/supabaseServer', () => ({ supabaseServer: {} }));
-import { DEFINICOES, PLANOS, planoEfetivo, definicaoDe, planoLibera, limiteDo, cabeMaisUm, planoMinimoPara, planoMinimoParaLimite, descreverLimite, mensagemDeRecurso, mensagemDeLimite, formatarPreco, situacaoDaConta } from '../shared/planos';
+import { DEFINICOES, PLANOS, fimDoPeriodo, planoEfetivo, definicaoDe, planoLibera, limiteDo, cabeMaisUm, planoMinimoPara, planoMinimoParaLimite, descreverLimite, mensagemDeRecurso, mensagemDeLimite, formatarPreco, situacaoDaConta } from '../shared/planos';
 import { negarRecurso, negarLimite } from './planos';
 
 describe('conta encerrada', () => {
@@ -20,6 +20,27 @@ describe('conta encerrada', () => {
   });
   it('sem encerramento, nada muda', () => {
     expect(situacaoDaConta({ ...base, encerrada_em: null }, new Date('2026-09-20T12:00:00Z')).situacao).toBe('assinada');
+  });
+});
+
+describe('o fim de um período pago', () => {
+  const dia = (iso: string, ciclo: 'mensal' | 'anual' = 'mensal') => fimDoPeriodo(new Date(iso), ciclo).toISOString().slice(0, 10);
+
+  it('mês a mês, no dia certo', () => {
+    expect(dia('2026-01-15T12:00:00Z')).toBe('2026-02-15');
+    expect(dia('2026-01-15T12:00:00Z', 'anual')).toBe('2027-01-15');
+  });
+
+  it('dia 31 não transborda para o mês seguinte: fecha no último dia do mês certo', () => {
+    // 31/01 + 1 mês virava 03/03 — três dias de brinde em cada renovação.
+    expect(dia('2026-01-31T12:00:00Z')).toBe('2026-02-28');
+    expect(dia('2026-03-31T12:00:00Z')).toBe('2026-04-30');
+    expect(dia('2026-05-31T12:00:00Z')).toBe('2026-06-30');
+    expect(dia('2026-08-31T12:00:00Z')).toBe('2026-09-30');
+  });
+
+  it('29 de fevereiro do bissexto cai em 28 no ano seguinte', () => {
+    expect(dia('2028-02-29T12:00:00Z', 'anual')).toBe('2029-02-28');
   });
 });
 

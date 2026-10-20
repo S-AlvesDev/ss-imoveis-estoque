@@ -159,7 +159,7 @@ export async function processarLote(req: RequisicaoAtende, loteId: string, limit
 
   const { data: devidos, error: erroDevidos } = await supabaseServer
     .from('atende_disparos_item')
-    .select('id, cliente_id, mensagem_final')
+    .select('id')
     .eq('lote_id', loteId)
     .eq('status', 'pendente')
     .lte('enviar_apos', new Date().toISOString())
@@ -167,26 +167,55 @@ export async function processarLote(req: RequisicaoAtende, loteId: string, limit
     .limit(limite);
   if (erroDevidos) throw erroDevidos;
 
+  /**
+   * Reivindica os itens ANTES de enviar. Sem isto, dois processamentos ao
+   * mesmo tempo — a aba chama a cada 5 s e um envio demora mais que isso,
+   * duas abas abertas, ou o cron junto com a aba — escolhem os mesmos
+   * pendentes e o cliente recebe a mesma mensagem duas vezes.
+   *
+   * O update condicionado a `status = 'pendente'` é a trava: o Postgres
+   * serializa as duas escritas na mesma linha e só a primeira casa; a
+   * segunda volta de mãos vazias. Marcar como enviado ANTES de mandar troca
+   * "pelo menos uma vez" por "no máximo uma vez", de propósito: numa campanha,
+   * uma mensagem a menos é bem melhor que uma repetida (que irrita o cliente
+   * e arrisca o número no WhatsApp). Falhou no envio, a linha vira 'erro'.
+   */
+  const candidatos = ((devidos || []) as any[]).map((i) => i.id);
+  let meus: any[] = [];
+  // Sem nada vencido não há o que reivindicar — mas o fecho do lote lá embaixo
+  // ainda precisa rodar, senão um lote já todo enviado nunca vira 'concluido'
+  // e a tela fica chamando para sempre.
+  if (candidatos.length) {
+    const { data, error: erroReivindicar } = await supabaseServer
+      .from('atende_disparos_item')
+      .update({ status: 'enviado', enviado_em: new Date().toISOString() })
+      .in('id', candidatos)
+      .eq('status', 'pendente')
+      .select('id, cliente_id, mensagem_final');
+    if (erroReivindicar) throw erroReivindicar;
+    meus = (data || []) as any[];
+  }
+
   let enviados = 0;
   let erros = 0;
-  for (const item of (devidos || []) as any[]) {
+  for (const item of meus) {
     try {
       const { data: conversa } = await req.dbAtende!.from('atende_conversas').select('id').eq('cliente_id', item.cliente_id).maybeSingle();
       if (!conversa) {
-        await supabaseServer.from('atende_disparos_item').update({ status: 'erro', erro: 'Este contato não tem conversa aberta.' }).eq('id', item.id);
+        await supabaseServer.from('atende_disparos_item').update({ status: 'erro', enviado_em: null, erro: 'Este contato não tem conversa aberta.' }).eq('id', item.id);
         erros += 1;
         continue;
       }
       const mensagem = await enviarMensagem(req, conversa.id, { tipo: 'texto', texto: item.mensagem_final } as Envio);
+      // Já está gravado como enviado pela reivindicação: só o fracasso corrige a linha.
       if (mensagem.status === 'falhou') {
-        await supabaseServer.from('atende_disparos_item').update({ status: 'erro', erro: (mensagem.erro ?? 'Falha ao enviar.').slice(0, 300) }).eq('id', item.id);
+        await supabaseServer.from('atende_disparos_item').update({ status: 'erro', enviado_em: null, erro: (mensagem.erro ?? 'Falha ao enviar.').slice(0, 300) }).eq('id', item.id);
         erros += 1;
       } else {
-        await supabaseServer.from('atende_disparos_item').update({ status: 'enviado', enviado_em: new Date().toISOString() }).eq('id', item.id);
         enviados += 1;
       }
     } catch (e: any) {
-      await supabaseServer.from('atende_disparos_item').update({ status: 'erro', erro: String(e.message ?? 'Falha ao enviar.').slice(0, 300) }).eq('id', item.id);
+      await supabaseServer.from('atende_disparos_item').update({ status: 'erro', enviado_em: null, erro: String(e.message ?? 'Falha ao enviar.').slice(0, 300) }).eq('id', item.id);
       erros += 1;
     }
   }
