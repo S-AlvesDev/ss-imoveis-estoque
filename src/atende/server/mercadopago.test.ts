@@ -104,6 +104,7 @@ vi.mock('../../server/mercadopago', () => ({
 }));
 
 import { referenciaDe, empresaDaReferencia, motivoAtende, planoDoMotivo, corpoDaAssinaturaAtende, traduzirStatus, planoAteDe, aplicarPreapprovalAtende, tratarEventoDoAtende, iniciarAssinaturaAtende, sincronizarAtende, criarAvulsoAtende, aplicarPagamentoAvulsoAtende } from './mercadopago';
+import { avulsoPendenteDaEmpresa } from './cobrancas';
 import { limparCacheDeContasAtende, contaDaEmpresa } from './plano';
 import { supabaseServer } from '../../lib/supabaseServer';
 
@@ -280,5 +281,36 @@ describe('Atende Aí no Mercado Pago — Pix e boleto', () => {
     expect(emp).toMatchObject({ plano: 'essencial', cobranca: 'avulso' });
     expect(new Date(emp.plano_ate).getTime()).toBeGreaterThan(Date.now() + 27 * 86_400_000);
     expect(banco.tabelas.atende_pagamentos[0]).toMatchObject({ status: 'aprovado', nf_status: 'pendente', metodo: 'pix' });
+  });
+
+  it('no anual, o Pix cobra os dez meses de uma vez (não o valor por mês)', async () => {
+    const pedido = await criarAvulsoAtende({ empresaId: EMPRESA, plano: 'profissional', ciclo: 'anual', metodo: 'pix', pagador: { nome: 'Ana', email: 'ana@empresa.com', tipoDoc: 'CPF', doc: '12345678909' }, pedidoPor: 1 });
+    expect(pedido.valor).toBe(1999);
+  });
+});
+
+/**
+ * O Pix/boleto que a tela reabre: o pedido em aberto só serve enquanto vale.
+ * Vencido, a tela gera outro em vez de mostrar um QR Code morto.
+ */
+describe('Atende Aí — o Pix/boleto em aberto que a tela retoma', () => {
+  const linha = (extra: Record<string, unknown> = {}) => ({ id: 'pg1', status: 'pendente', metodo: 'pix', mp_payment_id: '1000', valor: 99.9, vence_em: new Date(Date.now() + 3600_000).toISOString(), dados: { qr_code: 'PIXCOPIA' }, ...extra });
+  const dbCom = (achada: any) => ({ from: () => { const b: any = { select: () => b, eq: () => b, neq: () => b, is: () => b, not: () => b, order: () => b, limit: () => b, maybeSingle: async () => ({ data: achada, error: null }) }; return b; } });
+
+  it('devolve o pedido enquanto está dentro da validade', async () => {
+    expect(await avulsoPendenteDaEmpresa(dbCom(linha()))).toMatchObject({ id: 'pg1', metodo: 'pix' });
+  });
+
+  it('vencido não serve para retomar: nulo, e a tela gera outro', async () => {
+    expect(await avulsoPendenteDaEmpresa(dbCom(linha({ vence_em: new Date(Date.now() - 1000).toISOString() })))).toBeNull();
+  });
+
+  it('sem pedido em aberto, nulo', async () => {
+    expect(await avulsoPendenteDaEmpresa(dbCom(null))).toBeNull();
+  });
+
+  it('sem a migração da tabela, nulo em vez de derrubar a tela', async () => {
+    const db = { from: () => { const b: any = { select: () => b, eq: () => b, neq: () => b, is: () => b, not: () => b, order: () => b, limit: () => b, maybeSingle: async () => ({ data: null, error: { message: 'relation atende_pagamentos does not exist' } }) }; return b; } };
+    expect(await avulsoPendenteDaEmpresa(db)).toBeNull();
   });
 });

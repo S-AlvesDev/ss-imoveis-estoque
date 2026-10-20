@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, Clock, CreditCard, Mail, Receipt, RefreshCw, ShieldAlert, Sparkles, XCircle } from 'lucide-react';
+import { Check, Clock, CreditCard, Mail, QrCode, Receipt, RefreshCw, ShieldAlert, Sparkles, XCircle } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao, CabecalhoDoCartao, Rotulo } from '../ui/Cartao';
 import { Etiqueta } from '../ui/Etiqueta';
@@ -8,13 +8,15 @@ import { Segmentado } from '../ui/Controles';
 import { Entrada } from '../ui/Campo';
 import { Pagina } from '../ui/Pagina';
 import { Alerta, Erro, Esqueleto, Vazio } from '../ui/Estados';
+import { Modal } from '../ui/Modal';
+import { FormularioPagador, PagamentoPendente } from './PagamentoAvulsoAtende';
 import { Tabela, type Coluna } from '../ui/Tabela';
 import { api, ErroDaApi } from '../lib/api';
 import { useDadosAtende } from '../store/dados';
-import { BASE_DE_TODO_PLANO, DEFINICOES_ATENDE, NOME_DO_CICLO_ATENDE, NOME_DO_PLANO_ATENDE, PLANOS_ATENDE, definicaoAtende, ehCicloAtende, ehPlanoAtende, precoFormatado, type CicloAtende, type PlanoAtende } from '../../shared/planos';
+import { BASE_DE_TODO_PLANO, DEFINICOES_ATENDE, NOME_DO_CICLO_ATENDE, NOME_DO_PLANO_ATENDE, PLANOS_ATENDE, definicaoAtende, ehCicloAtende, ehPlanoAtende, precoDoPeriodoAtende, precoFormatado, type CicloAtende, type PlanoAtende } from '../../shared/planos';
 import { ATENDE } from '../../shared/produto';
 import { linkWhatsApp } from '@/shared/produto';
-import type { FaturamentoAtende, PagamentoAtende, SituacaoDaAssinatura } from '../../shared/tipos';
+import type { FaturamentoAtende, PagamentoAtende, PagamentoAvulsoDaEmpresa, SituacaoDaAssinatura } from '../../shared/tipos';
 
 /**
  * O plano da empresa (administrador): a situação de hoje, o uso frente aos
@@ -53,6 +55,10 @@ function esquecerPlanoEscolhido() {
   }
 }
 
+/** Como a empresa paga: cartão assina e renova sozinho; Pix e boleto pagam o período. */
+type MetodoDeCobranca = 'cartao' | 'pix' | 'boleto';
+const NOME_DO_METODO: Record<MetodoDeCobranca, string> = { cartao: 'Cartão', pix: 'Pix', boleto: 'Boleto' };
+
 const dataCurta = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('pt-BR') : null);
 const brl = (v: number, moeda = 'BRL') => v.toLocaleString('pt-BR', { style: 'currency', currency: moeda });
 
@@ -63,12 +69,19 @@ export function Plano() {
   const [escolhido] = useState(() => lerPlanoEscolhido());
   const [ciclo, setCiclo] = useState<CicloAtende>(escolhido?.ciclo ?? 'mensal');
   const [pedindo, setPedindo] = useState<PlanoAtende | null>(null);
+  /** Como pagar: cartão (assina e renova sozinho) ou Pix/boleto (paga o período). */
+  const [metodo, setMetodo] = useState<MetodoDeCobranca>('cartao');
+  /** O plano escolhido para pagar por Pix/boleto, enquanto o formulário de quem paga está aberto. */
+  const [aPagar, setAPagar] = useState<PlanoAtende | null>(null);
+  /** O Pix/boleto gerado e ainda válido: o QR Code fica aberto até aprovar. */
+  const [avulso, setAvulso] = useState<PagamentoAvulsoDaEmpresa | null>(null);
 
   const [sincronizando, setSincronizando] = useState(false);
   const [cancelando, setCancelando] = useState(false);
 
   function receber(d: SituacaoDaAssinatura) {
     setDados(d);
+    setAvulso(d.pendente_avulso);
     aplicar({ conta: d.conta });
   }
 
@@ -92,6 +105,19 @@ export function Plano() {
       .catch((e) => setErro(e instanceof ErroDaApi ? e.message : 'Não foi possível carregar o plano.'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * O botão do cartão de cada plano. No Pix e no boleto, abre o formulário de
+   * quem paga; no cartão, segue para o checkout do Mercado Pago (ou, sem
+   * gateway, registra o pedido para a equipe).
+   */
+  async function escolher(plano: PlanoAtende, trocar = false) {
+    if (metodo !== 'cartao') {
+      setAPagar(plano);
+      return;
+    }
+    await pedir(plano, trocar);
+  }
 
   /** Com o Mercado Pago ligado, vai para o checkout dele; sem, registra o pedido para a equipe. */
   async function pedir(plano: PlanoAtende, trocar = false) {
@@ -163,7 +189,7 @@ export function Plano() {
     );
   }
 
-  const { conta, assinatura, uso, pagamento_online: online } = dados;
+  const { conta, assinatura, uso, pagamento_online: online, avulso_disponivel: avulsoDisponivel } = dados;
   const pendente = assinatura?.status === 'pendente' ? assinatura : null;
   const emVigor = assinatura && (assinatura.status === 'autorizada' || assinatura.status === 'pausada') ? assinatura : null;
   const def = definicaoAtende(conta.plano);
@@ -227,14 +253,40 @@ export function Plano() {
           )}
         </Cartao>
 
+        {/* ---- Um Pix/boleto gerado e ainda válido: o QR Code fica aqui até cair */}
+        {avulso && (
+          <Cartao className="p-4 sm:p-5">
+            <CabecalhoDoCartao titulo={avulso.metodo === 'pix' ? 'Pix em aberto' : 'Boleto em aberto'} descricao={avulso.plano ? `Plano ${NOME_DO_PLANO_ATENDE[avulso.plano]}${avulso.ciclo ? ` · ${NOME_DO_CICLO_ATENDE[avulso.ciclo].toLowerCase()}` : ''}` : undefined} />
+            <div className="mt-4">
+              <PagamentoPendente
+                pedido={avulso}
+                onAprovado={(d) => {
+                  receber(d);
+                  esquecerPlanoEscolhido();
+                  toast.success('Pagamento confirmado. O plano já está valendo.');
+                }}
+                onGerarOutro={() => setAvulso(null)}
+              />
+            </div>
+          </Cartao>
+        )}
+
         {/* ---- Os planos */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-base font-semibold tracking-tight text-[var(--text)]">Os planos</h2>
             <p className="text-xs text-[var(--text-muted)]">No anual, dois meses de desconto. Preços por mês.</p>
           </div>
-          <Segmentado valor={ciclo} onChange={setCiclo} opcoes={(['mensal', 'anual'] as const).map((c) => ({ valor: c, rotulo: NOME_DO_CICLO_ATENDE[c] }))} aria-label="Ciclo" />
+          <div className="flex flex-wrap items-center gap-2">
+            {avulsoDisponivel && <Segmentado valor={metodo} onChange={setMetodo} opcoes={(['cartao', 'pix', 'boleto'] as const).map((m) => ({ valor: m, rotulo: NOME_DO_METODO[m] }))} aria-label="Como pagar" />}
+            <Segmentado valor={ciclo} onChange={setCiclo} opcoes={(['mensal', 'anual'] as const).map((c) => ({ valor: c, rotulo: NOME_DO_CICLO_ATENDE[c] }))} aria-label="Ciclo" />
+          </div>
         </div>
+        {avulsoDisponivel && metodo !== 'cartao' && (
+          <p className="-mt-1 text-xs leading-5 text-[var(--text-muted)]">
+            No {NOME_DO_METODO[metodo]} você paga o período inteiro de uma vez ({ciclo === 'anual' ? 'dez meses' : 'um mês'}) e <strong className="text-[var(--text)]">não há renovação automática</strong> — avisamos antes de vencer. Para renovar sozinho, escolha Cartão.
+          </p>
+        )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {PLANOS_ATENDE.map((id) => {
@@ -263,8 +315,16 @@ export function Plano() {
                     </li>
                   ))}
                 </ul>
-                <Botao className="mt-5" largo variante={destaque ? 'primaria' : 'secundaria'} carregando={pedindo === id} disabled={pedindo !== null || (pedido && !online) || (Boolean(emVigor) && (atual || !online))} icone={<CreditCard size={15} />} onClick={() => pedir(id, Boolean(emVigor))}>
-                  {emVigor && atual ? 'Plano atual' : emVigor && online ? `Trocar para o ${p.nome}` : pedido && !online ? 'Pedido feito' : online ? `Assinar o ${p.nome}` : `Pedir o ${p.nome}`}
+                <Botao
+                  className="mt-5"
+                  largo
+                  variante={destaque ? 'primaria' : 'secundaria'}
+                  carregando={pedindo === id}
+                  disabled={pedindo !== null || (metodo === 'cartao' && ((pedido && !online) || (Boolean(emVigor) && (atual || !online))))}
+                  icone={metodo === 'pix' ? <QrCode size={15} /> : metodo === 'boleto' ? <Receipt size={15} /> : <CreditCard size={15} />}
+                  onClick={() => escolher(id, Boolean(emVigor))}
+                >
+                  {rotuloDoBotao({ plano: p.nome, metodo, online, atual, pedido, trocando: Boolean(emVigor) })}
                 </Botao>
               </Cartao>
             );
@@ -273,6 +333,25 @@ export function Plano() {
 
         {(dados.pagamentos.length > 0 || emVigor) && <Cobrancas pagamentos={dados.pagamentos} />}
         {(online || emVigor || dados.faturamento) && <Faturamento atual={dados.faturamento} aoSalvar={receber} />}
+
+        <Modal aberto={aPagar !== null && metodo !== 'cartao'} onFechar={() => setAPagar(null)} titulo={metodo === 'pix' ? 'Pagar com Pix' : 'Pagar com boleto'} descricao="Quem paga — é também o que vai no recibo e na nota fiscal.">
+          {aPagar && metodo !== 'cartao' && (
+            <FormularioPagador
+              metodo={metodo}
+              plano={aPagar}
+              ciclo={ciclo}
+              valor={precoDoPeriodoAtende(aPagar, ciclo) ?? 0}
+              emailInicial={dados.faturamento?.email ?? ''}
+              onCancelar={() => setAPagar(null)}
+              onGerado={(pedido) => {
+                setAPagar(null);
+                setAvulso(pedido);
+                esquecerPlanoEscolhido();
+                toast.success(pedido.metodo === 'pix' ? 'Pix gerado. Leia o QR Code para pagar.' : 'Boleto gerado.');
+              }}
+            />
+          )}
+        </Modal>
 
         <Cartao className="p-4 sm:p-5">
           <CabecalhoDoCartao titulo="Em todos os planos" />
@@ -285,7 +364,10 @@ export function Plano() {
             ))}
           </ul>
           <p className="mt-4 text-xs leading-5 text-[var(--text-muted)]">
-            {online ? 'Pagamento no cartão pelo Mercado Pago, renovado automaticamente a cada período. Cancele quando quiser: o plano vale até o fim do período pago.' : 'Como funciona a contratação hoje: você pede o plano aqui, a equipe da SEVLA INFINITY responde por e-mail para combinar o pagamento e ativa o plano na empresa.'} Dúvidas?{' '}
+            {online
+              ? `No cartão, a assinatura renova sozinha a cada período e você cancela quando quiser — o plano vale até o fim do período pago.${avulsoDisponivel ? ' No Pix e no boleto, você paga o período inteiro de uma vez e renova à mão: avisamos por e-mail antes de vencer.' : ''}`
+              : 'Como funciona a contratação hoje: você pede o plano aqui, a equipe da SEVLA INFINITY responde por e-mail para combinar o pagamento e ativa o plano na empresa.'}{' '}
+            Dúvidas?{' '}
             <a href={linkWhatsApp(`Olá! Tenho uma dúvida sobre os planos do ${ATENDE.nome}.`)} target="_blank" rel="noreferrer" className="font-semibold text-[var(--brand)] hover:underline">
               Fale com a gente no WhatsApp
             </a>
@@ -295,6 +377,20 @@ export function Plano() {
       </div>
     </Pagina>
   );
+}
+
+/**
+ * O que o botão de cada plano diz. No cartão ele muda com a situação
+ * (assinar, trocar, plano atual, pedido feito); no Pix e no boleto é sempre
+ * pagar o período, porque não existe assinatura para trocar.
+ */
+function rotuloDoBotao({ plano, metodo, online, atual, pedido, trocando }: { plano: string; metodo: MetodoDeCobranca; online: boolean; atual: boolean; pedido: boolean; trocando: boolean }): string {
+  if (metodo === 'pix') return `Pagar o ${plano} com Pix`;
+  if (metodo === 'boleto') return `Gerar boleto do ${plano}`;
+  if (trocando && atual) return 'Plano atual';
+  if (trocando && online) return `Trocar para o ${plano}`;
+  if (pedido && !online) return 'Pedido feito';
+  return online ? `Assinar o ${plano}` : `Pedir o ${plano}`;
 }
 
 function Uso({ rotulo, atual, max }: { rotulo: string; atual: number; max: number | null }) {

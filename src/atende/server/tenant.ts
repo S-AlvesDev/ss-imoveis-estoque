@@ -28,6 +28,7 @@ export const TABELAS_DO_ATENDE: ReadonlySet<string> = new Set([
   'atende_eventos',
   'atende_push_inscricoes',
   'atende_assinaturas',
+  'atende_pagamentos',
 ]);
 
 export const ESCOPO_DA_EMPRESA: Escopo = { coluna: 'empresa_id', claim: 'empresa_id', tabelas: TABELAS_DO_ATENDE };

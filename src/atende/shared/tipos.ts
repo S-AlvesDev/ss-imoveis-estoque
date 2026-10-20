@@ -156,6 +156,15 @@ export interface PagamentoAtende {
   combo?: string | null;
 }
 
+/** Um Pix/boleto em aberto: o que a tela precisa para mostrar o QR Code ou o boleto. */
+export interface PagamentoAvulsoDaEmpresa extends PagamentoAtende {
+  /** Até quando dá para pagar (24h no Pix, 3 dias no boleto). */
+  vence_em: string | null;
+  /** O que o Mercado Pago devolveu para pagar: QR Code, linha digitável, link do boleto. */
+  dados: { qr_code?: string | null; qr_code_base64?: string | null; ticket_url?: string | null; linha_digitavel?: string | null } | null;
+  descricao: string | null;
+}
+
 /** Quem aparece no recibo e na nota fiscal. */
 export interface FaturamentoAtende {
   nome: string;
@@ -178,6 +187,10 @@ export interface SituacaoDaAssinatura {
   pagamentos: PagamentoAtende[];
   /** Dados de faturamento cadastrados (nulo = recibo em nome de quem assinou; sem nota fiscal). */
   faturamento: FaturamentoAtende | null;
+  /** Um Pix/boleto gerado e ainda válido: a tela reabre o QR Code em vez de gerar outro. */
+  pendente_avulso: PagamentoAvulsoDaEmpresa | null;
+  /** Pix e boleto exigem o access token (é a API de pagamentos). */
+  avulso_disponivel: boolean;
 }
 
 // ---------------------------------------------------------------------------

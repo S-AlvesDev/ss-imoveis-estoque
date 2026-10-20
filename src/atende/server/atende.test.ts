@@ -96,6 +96,14 @@ describe('Atende Aí — isolamento por empresa (scopedDb com escopo)', () => {
     expect((lote.body as any[]).every((l) => l.empresa_id === EMPRESA)).toBe(true);
   });
 
+  it('as cobranças e os Pix/boletos também: a tela do plano nunca vê os de outra empresa', () => {
+    const db = dbDaEmpresa(EMPRESA);
+    // A lista de cobranças e a consulta de um pagamento pelo id vêm daqui: sem
+    // o filtro, um administrador leria o QR Code e o pagador de outra empresa.
+    expect(filtroDe(db.from('atende_pagamentos').select('*'), 'empresa_id')).toBe(`eq.${EMPRESA}`);
+    expect(filtroDe(db.from('atende_assinaturas').select('*'), 'empresa_id')).toBe(`eq.${EMPRESA}`);
+  });
+
   it('não confunde com organization_id, nem toca tabelas do estoque', () => {
     const db = dbDaEmpresa(EMPRESA);
     expect(filtroDe(db.from('atende_usuarios').select('*'), 'organization_id')).toBe('');

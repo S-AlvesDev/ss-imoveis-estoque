@@ -6,7 +6,7 @@ import type { AssinaturaAtende, ContaAtende, SessaoAtende, SituacaoDaAssinatura 
 import type { RequisicaoAtende } from './auth';
 import type { ScopedDb } from '../../server/tenant';
 import { mpConfigurado } from '../../server/mercadopago';
-import { pagamentosDaEmpresa } from './cobrancas';
+import { pagamentosDaEmpresa, avulsoPendenteDaEmpresa } from './cobrancas';
 
 /**
  * O plano da empresa do Atende Aí, do lado do servidor — o espelho de
@@ -140,8 +140,8 @@ export async function usoDaEmpresa(db: ScopedDb): Promise<{ atendentes: number; 
 }
 
 export async function situacaoDaAssinatura(db: ScopedDb, empresaId: string): Promise<SituacaoDaAssinatura> {
-  const [conta, assinatura, uso, pagamentos, { data: emp }] = await Promise.all([contaDaEmpresa(empresaId), assinaturaDaEmpresa(db), usoDaEmpresa(db), pagamentosDaEmpresa(db), db.from('atende_empresas').select('faturamento').eq('id', empresaId).maybeSingle()]);
-  return { conta, assinatura, uso, pagamento_online: mpConfigurado(), pagamentos, faturamento: (emp?.faturamento as SituacaoDaAssinatura['faturamento']) ?? null };
+  const [conta, assinatura, uso, pagamentos, pendenteAvulso, { data: emp }] = await Promise.all([contaDaEmpresa(empresaId), assinaturaDaEmpresa(db), usoDaEmpresa(db), pagamentosDaEmpresa(db), avulsoPendenteDaEmpresa(db), db.from('atende_empresas').select('faturamento').eq('id', empresaId).maybeSingle()]);
+  return { conta, assinatura, uso, pagamento_online: mpConfigurado(), pagamentos, faturamento: (emp?.faturamento as SituacaoDaAssinatura['faturamento']) ?? null, pendente_avulso: pendenteAvulso, avulso_disponivel: mpConfigurado() };
 }
 
 /**

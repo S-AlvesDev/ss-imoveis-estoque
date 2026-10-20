@@ -16,8 +16,10 @@ import { simular } from './triagem';
 import { montarDashboard, PERIODOS } from './dashboard';
 import { situacao as situacaoDoPush, inscrever as inscreverPush, cancelar as cancelarPush, ErroDePush } from './push';
 import { carregarConta, negarLimiteAtende, negarRecursoAtende, situacaoDaAssinatura, pedirAssinatura, esquecerContaAtende, ErroDePlano, type RequisicaoComPlano } from './plano';
+import { validarPagador } from '../../server/pagador';
+import { ehPlanoAtende, ehCicloAtende } from '../shared/planos';
 import { emailDePedidoDePlano, emailDePedidoDePlanoParaEquipe } from './email';
-import { pagamentoOnlineAtende, iniciarAssinaturaAtende, cancelarAssinaturaAtende, sincronizarAtende, avulsosPendentesAtende, atualizarAvulsoAtende } from './mercadopago';
+import { pagamentoOnlineAtende, iniciarAssinaturaAtende, cancelarAssinaturaAtende, sincronizarAtende, avulsosPendentesAtende, atualizarAvulsoAtende, criarAvulsoAtende, avulsoPendenteAtende, type PagamentoAvulsoAtende } from './mercadopago';
 import { acertarCombos } from '../../server/sevla/combos';
 import { ErroDoMercadoPago, mensagemParaOPagador } from '../../server/mercadopago';
 import { vigiarSlaSePassouUmMinuto, vigiarSlaDeTodas } from './sla';
@@ -1191,6 +1193,16 @@ export function criarRouterAtende(): express.Router {
   // ---- Plano e contratação (Fase 3 da SEVLA): ver a situação e pedir um plano. Sem cobrança ainda.
   r.get('/assinatura', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
     try {
+      // Um Pix/boleto pendente é conferido no MP antes de montar a resposta: se
+      // pagou com a tela fechada e o webhook atrasou, abrir a tela Plano resolve.
+      if (pagamentoOnlineAtende()) {
+        try {
+          const pendente = await avulsoPendenteAtende(req.sessao!.empresa_id);
+          if (pendente) await atualizarAvulsoAtende(pendente);
+        } catch (e: any) {
+          console.warn('[atende assinatura] não conferiu o avulso pendente:', e.message);
+        }
+      }
       res.json(await situacaoDaAssinatura(req.dbAtende!, req.sessao!.empresa_id));
     } catch (err: any) {
       tratar(res, err, 'GET /api/atende/assinatura', 'Não foi possível carregar o plano.');
@@ -1269,6 +1281,50 @@ export function criarRouterAtende(): express.Router {
       if (err instanceof ErroDePlano) return res.status(err.status).json({ error: err.message });
       if (err instanceof ErroDoMercadoPago) return res.status(502).json({ error: 'O Mercado Pago não respondeu como esperado. Tente de novo em instantes.' });
       tratar(res, err, 'POST /api/atende/assinatura/cancelar', 'Não foi possível cancelar a assinatura.');
+    }
+  });
+
+  /**
+   * Pix ou boleto do período inteiro (mês ou ano) — o mesmo desenho do Stok
+   * Aí. Devolve o pedido com o QR Code / boleto; a tela fica consultando
+   * GET .../avulso/:id até aprovar, sem depender do webhook.
+   */
+  r.post('/assinatura/avulso', exigir('empresa.gerir'), pedidoLimiter, async (req: RequisicaoAtende, res) => {
+    try {
+      if (!pagamentoOnlineAtende()) return res.status(503).json({ error: 'Pix e boleto ainda não configurados neste servidor.' });
+      const plano = req.body?.plano;
+      const ciclo = req.body?.ciclo ?? 'mensal';
+      const metodo = req.body?.metodo;
+      if (!ehPlanoAtende(plano)) return res.status(400).json({ error: 'Escolha o plano.' });
+      if (!ehCicloAtende(ciclo)) return res.status(400).json({ error: 'Ciclo inválido: mensal ou anual.' });
+      if (metodo !== 'pix' && metodo !== 'boleto') return res.status(400).json({ error: 'Meio de pagamento inválido: pix ou boleto.' });
+      const v = validarPagador(req.body?.pagador, metodo);
+      if (!v.ok) return res.status(400).json({ error: v.erro });
+      const pedido = await criarAvulsoAtende({ empresaId: req.sessao!.empresa_id, plano, ciclo, metodo, pagador: v.pagador, pedidoPor: req.sessao!.id });
+      console.info('[atende avulso] pedido', { empresa: req.sessao!.empresa_id, plano, ciclo, metodo, pedido: pedido.id, mp: pedido.mp_payment_id });
+      res.status(201).json({ pagamento: pedido });
+    } catch (err: any) {
+      if (err instanceof ErroDePlano) return res.status(err.status).json({ error: err.message });
+      if (err instanceof ErroDoMercadoPago) {
+        console.warn('[POST /api/atende/assinatura/avulso] MP recusou:', err.message);
+        return res.status(402).json({ error: mensagemParaOPagador(err) });
+      }
+      tratar(res, err, 'POST /api/atende/assinatura/avulso', 'Não foi possível gerar o pagamento.');
+    }
+  });
+
+  /** O pedido avulso — conferido no MP enquanto pendente, para a tela não esperar o webhook. */
+  r.get('/assinatura/avulso/:id', exigir('empresa.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      const { data } = await req.dbAtende!.from('atende_pagamentos').select('*').eq('id', req.params.id).maybeSingle();
+      if (!data) return res.status(404).json({ error: 'Pagamento não encontrado.' });
+      let pedido = data as PagamentoAvulsoAtende;
+      if (pedido.status === 'pendente' && pedido.mp_payment_id && pagamentoOnlineAtende()) pedido = await atualizarAvulsoAtende(pedido);
+      if (pedido.status === 'aprovado') esquecerContaAtende(req.sessao!.empresa_id);
+      res.json({ pagamento: pedido, ...(await situacaoDaAssinatura(req.dbAtende!, req.sessao!.empresa_id)) });
+    } catch (err: any) {
+      if (err instanceof ErroDoMercadoPago) return res.status(502).json({ error: 'O Mercado Pago não respondeu como esperado. Tente de novo em instantes.' });
+      tratar(res, err, 'GET /api/atende/assinatura/avulso/:id', 'Não foi possível consultar o pagamento.');
     }
   });
 

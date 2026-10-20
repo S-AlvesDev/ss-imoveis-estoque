@@ -12,7 +12,7 @@ import { layoutAtende, remetenteAtende } from './email';
 import { contaDaEmpresa } from './plano';
 import { NOME_DO_CICLO_ATENDE, NOME_DO_PLANO_ATENDE, type CicloAtende, type PlanoAtende } from '../shared/planos';
 import { ATENDE, atendeUrl } from '../shared/produto';
-import type { ContaAtende, PagamentoAtende } from '../shared/tipos';
+import type { ContaAtende, PagamentoAtende, PagamentoAvulsoDaEmpresa } from '../shared/tipos';
 
 /**
  * As cobranças do Atende Aí — o que o Stok Aí já fazia, reaproveitado:
@@ -23,6 +23,8 @@ import type { ContaAtende, PagamentoAtende } from '../shared/tipos';
 
 export const PRODUTO_DA_NOTA: ProdutoDaNota = { nome: ATENDE.nome, descricao: 'software de atendimento pelo WhatsApp' };
 const PAGAMENTO_COLUNAS = 'id, status, valor, moeda, detalhe, data, metodo, plano, ciclo, periodo_de, periodo_ate, mp_payment_id, nf_status, nf_numero, nf_url, recibo_enviado_em, combo';
+/** O mesmo, mais o que a tela precisa para mostrar o Pix/boleto em aberto. */
+const AVULSO_COLUNAS = `${PAGAMENTO_COLUNAS}, vence_em, dados, descricao`;
 
 /** Os dados de faturamento da empresa, quando cadastrados: quem aparece no recibo e na nota. */
 export interface Faturamento {
@@ -106,6 +108,22 @@ export async function registrarPagamentoAtende(args: { empresaId: string; assina
     throw error;
   }
   return (data as PagamentoAtende | null) ?? null;
+}
+
+/**
+ * O Pix/boleto gerado e ainda válido, para a tela reabrir o QR Code em vez
+ * de gerar outro. Só lê a tabela — quem confere no Mercado Pago é a rota.
+ */
+export async function avulsoPendenteDaEmpresa(db: { from: (t: string) => any }): Promise<PagamentoAvulsoDaEmpresa | null> {
+  const { data, error } = await db.from('atende_pagamentos').select(AVULSO_COLUNAS).eq('status', 'pendente').neq('metodo', 'cartao').not('mp_payment_id', 'is', null).order('data', { ascending: false }).limit(1).maybeSingle();
+  if (error) {
+    if (/atende_pagamentos/.test(error.message)) return null;
+    throw error;
+  }
+  const pg = (data as PagamentoAvulsoDaEmpresa | null) ?? null;
+  // Vencido não serve para retomar: a tela gera outro.
+  if (pg?.vence_em && new Date(pg.vence_em).getTime() < Date.now()) return null;
+  return pg;
 }
 
 /** As cobranças da empresa, mais recentes primeiro. Vazio sem a migração. */
