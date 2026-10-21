@@ -42,6 +42,15 @@ export function traduzirEstado(s: string): EstadoDaConexao {
 
 const CONEXAO_COLUNAS = 'id, empresa_id, instancia, numero, estado, conectado_em, ultimo_evento_em';
 
+/**
+ * A pessoa ainda pode receber conversa? Usuário desativado não recebe — e
+ * apagado nem chega aqui, porque o banco zera o `atendente_id` junto.
+ */
+export async function atendenteAtivo(empresaId: string, usuarioId: number): Promise<boolean> {
+  const { data } = await supabaseServer.from('atende_usuarios').select('id').eq('id', usuarioId).eq('empresa_id', empresaId).eq('ativo', true).maybeSingle();
+  return Boolean(data);
+}
+
 export async function conexaoDaEmpresa(empresaId: string): Promise<(Conexao & { empresa_id: string }) | null> {
   const { data } = await supabaseServer.from('atende_conexoes').select(CONEXAO_COLUNAS).eq('empresa_id', empresaId).maybeSingle();
   return (data as any) ?? null;
@@ -225,12 +234,26 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   const iaDoContato = cliente.ia_ativa !== false;
   const estadoInicial = async () => (e.fromMe ? 'em_atendimento' : iaDoContato && (await triagemAtiva(empresaId)) ? 'nova' : 'na_fila');
   if (conversa?.estado === 'encerrada') {
-    // Reabre: novo atendimento (contadores do zero), mesmo fio. Quem atendia antes não é
-    // dono de novo automaticamente — a triagem/fila decide; pelo celular, fica sem dono como antes.
-    // A conversa passa a andar pela conexão de agora (a empresa pode ter trocado de número).
+    /**
+     * Reabre: novo atendimento (contadores do zero), mesmo fio. A conversa
+     * passa a andar pela conexão de agora (a empresa pode ter trocado de
+     * número).
+     *
+     * Quem atendia antes CONTINUA dono. O cliente que volta costuma voltar
+     * pelo mesmo assunto, e quem já conhece o caso atende melhor do que a
+     * fila — então não há triagem nem sorteio: cai direto na lista da
+     * pessoa. Ela só perde a conversa se não puder mais atender (usuário
+     * desativado, ou apagado — aí o banco já zera o atendente_id). Se o
+     * assunto for outro, quem recebe transfere, que é um clique.
+     */
+    const donoDeAntes = conversa.atendente_id === null || conversa.atendente_id === undefined ? null : Number(conversa.atendente_id);
+    const continua = donoDeAntes !== null && (await atendenteAtivo(empresaId, donoDeAntes));
+    const volta = continua
+      ? { estado: 'em_atendimento', atendente_id: donoDeAntes, time_id: conversa.time_id ?? null }
+      : { estado: await estadoInicial(), atendente_id: null, time_id: null };
     const { data: atualizada, error } = await supabaseServer
       .from('atende_conversas')
-      .update({ estado: await estadoInicial(), conexao_id: conexao.id, aberta_em: agora, ultima_mensagem_em: agora, primeira_resposta_em: null, encerrada_em: null, encerrada_por: null, motivo_encerramento: null, atendente_id: null, time_id: null, nao_lidas: 0 })
+      .update({ ...volta, conexao_id: conexao.id, aberta_em: agora, ultima_mensagem_em: agora, primeira_resposta_em: null, encerrada_em: null, encerrada_por: null, motivo_encerramento: null, nao_lidas: 0 })
       .eq('id', conversa.id)
       .eq('estado', 'encerrada')
       .select(COLUNAS)
@@ -310,7 +333,11 @@ async function registrarMensagem(conexao: ConexaoPorInstancia, e: MensagemDoWhat
   await supabaseServer.from('atende_conversas').update(patch).eq('id', conversa.id);
   if (nova || reaberta) await supabaseServer.from('atende_eventos').insert({ empresa_id: empresaId, conversa_id: conversa.id, tipo: reaberta ? 'reaberta' : 'aberta', dados: { por: e.fromMe ? 'aparelho' : 'cliente' } });
   // Na linha do tempo, a reabertura aparece entre o "encerrada por…" e a mensagem nova.
-  if (reaberta) await supabaseServer.from('atende_mensagens').insert({ empresa_id: empresaId, conversa_id: conversa.id, direcao: 'sistema', autor_tipo: 'sistema', tipo: 'texto', texto: e.fromMe ? 'Conversa reaberta pela empresa (pelo celular).' : 'Conversa reaberta pelo cliente.', status: 'entregue', criado_em: new Date(Date.parse(agora) - 1).toISOString() });
+  if (reaberta) {
+    const base = e.fromMe ? 'Conversa reaberta pela empresa (pelo celular).' : 'Conversa reaberta pelo cliente.';
+    const destino = conversa.atendente_id ? ' Voltou para quem atendia antes.' : ' Quem atendia antes não está mais ativo: voltou para a fila.';
+    await supabaseServer.from('atende_mensagens').insert({ empresa_id: empresaId, conversa_id: conversa.id, direcao: 'sistema', autor_tipo: 'sistema', tipo: 'texto', texto: `${base}${destino}`, status: 'entregue', criado_em: new Date(Date.parse(agora) - 1).toISOString() });
+  }
 
   // ---- O arquivo: a mensagem já existe mesmo que o download falhe.
   if (e.temArquivo) await baixarArquivoDaMensagem(conexao, empresaId, conversa.id, mensagem.id, e);
