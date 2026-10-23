@@ -48,36 +48,38 @@ describe('calcularMovimento — as operações do dia a dia', () => {
 
   it('entrada soma na Central', () => {
     const r = calcularMovimento(atuais, pedido('ENTRADA_CENTRAL', 25));
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 125, [OBRA]: 30 } });
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 125, [OBRA]: 30 }, tocados: [CENTRAL] });
   });
 
   it('saída tira da Central', () => {
     const r = calcularMovimento(atuais, pedido('SAIDA', 40));
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 60, [OBRA]: 30 } });
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 60, [OBRA]: 30 }, tocados: [CENTRAL] });
   });
 
   it('remessa move da Central para a Obra sem mudar o total', () => {
     const r = calcularMovimento(atuais, pedido('REMESSA_OBRA', 50));
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 50, [OBRA]: 80 } });
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 50, [OBRA]: 80 }, tocados: [CENTRAL, OBRA] });
     if (r.ok) expect(totalDosDepositos(r.novos)).toBe(totalDosDepositos(atuais));
   });
 
   it('consumo tira da Obra', () => {
     const r = calcularMovimento(atuais, pedido('CONSUMO_OBRA', 10));
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 100, [OBRA]: 20 } });
+    // A Central aparece em `novos` (é o saldo dela), mas NÃO em `tocados`: o
+    // consumo na Obra não pode escrever nela.
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 100, [OBRA]: 20 }, tocados: [OBRA] });
   });
 
   it('devolução move da Obra para a Central', () => {
     const r = calcularMovimento(atuais, pedido('DEVOLUCAO_CENTRAL', 30));
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 130, [OBRA]: 0 } });
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 130, [OBRA]: 0 }, tocados: [OBRA, CENTRAL] });
   });
 
   it('ajuste soma um delta com sinal — negativo inclusive', () => {
     expect(calcularMovimento(atuais, pedido('AJUSTE_CENTRAL', -7))).toEqual({
-      ok: true, novos: { [CENTRAL]: 93, [OBRA]: 30 },
+      ok: true, novos: { [CENTRAL]: 93, [OBRA]: 30 }, tocados: [CENTRAL],
     });
     expect(calcularMovimento(atuais, pedido('AJUSTE_OBRA', 12.5))).toEqual({
-      ok: true, novos: { [CENTRAL]: 100, [OBRA]: 42.5 },
+      ok: true, novos: { [CENTRAL]: 100, [OBRA]: 42.5 }, tocados: [OBRA],
     });
   });
 });
@@ -95,7 +97,7 @@ describe('calcularMovimento — o que ela recusa', () => {
 
   it('tirar exatamente o que existe é permitido (zera, não fica negativo)', () => {
     const r = calcularMovimento(atuais, pedido('CONSUMO_OBRA', 30));
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 100, [OBRA]: 0 } });
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 100, [OBRA]: 0 }, tocados: [OBRA] });
   });
 
   it('quantidade negativa numa entrada é recusada — seria saída disfarçada', () => {
@@ -127,12 +129,12 @@ describe('calcularMovimento — o que ela recusa', () => {
     // desta operação.
     const comNegativo: SaldosPorDeposito = { [CENTRAL]: 10, [OBRA]: -2 };
     const r = calcularMovimento(comNegativo, pedido('ENTRADA_CENTRAL', 5));
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 15, [OBRA]: -2 } });
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 15, [OBRA]: -2 }, tocados: [CENTRAL] });
   });
 
   it('depósito ainda sem linha de saldo conta como zero', () => {
     const r = calcularMovimento({}, pedido('ENTRADA_CENTRAL', 5));
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 5 } });
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 5 }, tocados: [CENTRAL] });
     expect(calcularMovimento({}, pedido('SAIDA', 1))).toMatchObject({ ok: false });
   });
 });
@@ -141,7 +143,7 @@ describe('calcularMovimento — arredondamento', () => {
   it('grava com 2 casas, como a coluna do banco', () => {
     const r = calcularMovimento({ [CENTRAL]: 0.1 }, pedido('ENTRADA_CENTRAL', 0.2));
     // Sem arredondar, 0.1 + 0.2 = 0.30000000000000004 — e o banco guardaria 0.30.
-    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 0.3 } });
+    expect(r).toEqual({ ok: true, novos: { [CENTRAL]: 0.3 }, tocados: [CENTRAL] });
   });
 
   it('arredondar', () => {

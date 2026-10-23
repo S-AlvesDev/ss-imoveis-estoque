@@ -294,7 +294,7 @@ export async function executarProposta(falante: Falante, proposta: Proposta): Pr
     const lados = { origem_id: d.origem_id ?? undefined, destino_id: d.destino_id ?? undefined };
     const calculo = calcularMovimento(atuais, { ...lados, quantidade: Number(d.quantidade), rotulo: NOME_DA_OPERACAO_WHATSAPP[d.operacao as OperacaoWhatsapp], nomeDe: (id) => (id === d.origem_id ? d.origem_nome : d.destino_nome) ?? id });
     if (!calculo.ok) return `❌ ${proposta.resumo}: ${calculo.erro}`;
-    await gravarSaldos(db, Number(d.material_id), calculo.novos);
+    await gravarSaldos(db, Number(d.material_id), calculo.novos, calculo.tocados);
     await db.from('material_movements').insert({
       material_id: d.material_id,
       tipo_operacao: d.operacao,
@@ -316,7 +316,7 @@ export async function executarProposta(falante: Falante, proposta: Proposta): Pr
     if (!calculo.ok) return `❌ ${proposta.resumo}: ${calculo.erro}`;
     const agora = new Date().toISOString();
     await db.from('loans').update({ quantidade_devolvida: Number(emp.quantidade), devolvido_em: agora, devolucao_matricula: falante.matricula }).eq('id', emp.id);
-    await gravarSaldos(db, emp.material_id, calculo.novos);
+    await gravarSaldos(db, emp.material_id, calculo.novos, calculo.tocados);
     await db.from('material_movements').insert({ material_id: emp.material_id, tipo_operacao: 'DEVOLUCAO_EMPRESTIMO', quantidade: falta, warehouse_origem_id: null, warehouse_destino_id: emp.warehouse_id, funcionario_matricula: falante.matricula, justificativa: `Devolução de ${emp.tomador_nome} (via WhatsApp)` });
     return `✅ ${proposta.resumo}. Saldo em ${await nomeDe(emp.warehouse_id)}: ${calculo.novos[emp.warehouse_id]}.`;
   }

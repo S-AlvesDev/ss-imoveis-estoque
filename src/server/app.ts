@@ -1491,7 +1491,9 @@ export function createApp() {
       // Zero explícito nos outros estoques: o saldo é sempre uma consulta,
       // nunca uma ausência a interpretar.
       const saldos: SaldosPorDeposito = Object.fromEntries(daUnidade.map((d) => [d.id, d.id === destino.id ? saldoInicial : 0]));
-      await gravarSaldos(req.db!, material.id, saldos);
+      // Material acabou de nascer: inicializar todos os estoques da unidade é o
+      // objetivo, não um efeito colateral — não há o que outra operação desfaça.
+      await gravarSaldos(req.db!, material.id, saldos, Object.keys(saldos));
 
       if (saldoInicial > 0) {
         await req.db!.from('material_movements').insert({
@@ -1726,7 +1728,10 @@ export function createApp() {
       for (const [depositoId, soma] of Object.entries(somaPorDeposito)) {
         novosSaldos[depositoId] = arredondar((novosSaldos[depositoId] ?? 0) + soma);
       }
-      await gravarSaldos(req.db!, targetId, novosSaldos);
+      // Só os estoques que receberam saldo dos doadores mudam; os demais de
+      // `saldosAlvo` vieram da leitura e regravá-los desfaria o que outra
+      // operação fizesse neles no meio do caminho.
+      await gravarSaldos(req.db!, targetId, novosSaldos, Object.keys(somaPorDeposito));
 
       const somaTotal = totalDosDepositos(somaPorDeposito);
       const nomeDo = (id: string) => depositos.find((d) => d.id === id)?.nome ?? id;
@@ -1951,7 +1956,7 @@ export function createApp() {
       }
 
       for (const gravar of gravacoesDeLote) await gravar();
-      await gravarSaldos(req.db!, Number(material_id), calculo.novos);
+      await gravarSaldos(req.db!, Number(material_id), calculo.novos, calculo.tocados);
       await req.db!.from('material_movements').insert({
         material_id,
         tipo_operacao: operacao,
@@ -2030,7 +2035,7 @@ export function createApp() {
         .single();
       if (error) throw error;
 
-      await gravarSaldos(req.db!, r.material_id, calculo.novos);
+      await gravarSaldos(req.db!, r.material_id, calculo.novos, calculo.tocados);
       await req.db!.from('material_movements').insert({
         material_id: r.material_id,
         tipo_operacao: 'EMPRESTIMO',
@@ -2077,7 +2082,7 @@ export function createApp() {
         .single();
       if (error) throw error;
 
-      await gravarSaldos(req.db!, emp.material_id, calculo.novos);
+      await gravarSaldos(req.db!, emp.material_id, calculo.novos, calculo.tocados);
       await req.db!.from('material_movements').insert({
         material_id: emp.material_id,
         tipo_operacao: 'DEVOLUCAO_EMPRESTIMO',
@@ -2146,7 +2151,7 @@ export function createApp() {
       .single();
     if (error) throw error;
 
-    await gravarSaldos(req.db!, e.material_id, calculo.novos);
+    await gravarSaldos(req.db!, e.material_id, calculo.novos, calculo.tocados);
     await req.db!.from('material_movements').insert({
       material_id: e.material_id,
       tipo_operacao: 'ENTREGA',
@@ -2200,7 +2205,7 @@ export function createApp() {
         if (!calculo.ok) return res.status(400).json({ error: calculo.erro });
         const { data: atualizado, error } = await req.db!.from('loans').update({ quantidade_devolvida: Number(ent.quantidade), devolvido_em: agora, devolucao_matricula: req.user!.matricula }).eq('id', ent.id).select(selecionarEntrega).single();
         if (error) throw error;
-        await gravarSaldos(req.db!, ent.material_id, calculo.novos);
+        await gravarSaldos(req.db!, ent.material_id, calculo.novos, calculo.tocados);
         await req.db!.from('material_movements').insert({
           material_id: ent.material_id, tipo_operacao: 'DEVOLUCAO_ENTREGA', quantidade: falta, warehouse_origem_id: null, warehouse_destino_id: ent.warehouse_id,
           funcionario_matricula: req.user!.matricula, justificativa: `Devolução de ${ent.tomador_nome}${req.body?.detalhe ? ` — ${String(req.body.detalhe).slice(0, 200)}` : ''}`,
@@ -2249,7 +2254,7 @@ export function createApp() {
   async function sincronizarSaldoDoModelo(req: express.Request, warehouseId: string, materialId: number) {
     const { count } = await req.db!.from('assets').select('*', { count: 'exact', head: true }).eq('warehouse_id', warehouseId).eq('material_id', materialId).neq('estado', 'baixado');
     const atuais = await saldosDoMaterial(req.db!, materialId);
-    await gravarSaldos(req.db!, materialId, { ...atuais, [warehouseId]: count ?? 0 });
+    await gravarSaldos(req.db!, materialId, { ...atuais, [warehouseId]: count ?? 0 }, [warehouseId]);
   }
 
   app.get('/api/estoques/:id/patrimonio', authenticate, withTenant, requireRole(ALL_INVENTORY_ROLES), withAcessos, async (req, res) => {
@@ -2855,7 +2860,7 @@ export function createApp() {
         // Recontagem não é um delta: é "o físico diz que tem X". Grava X.
         const novos: SaldosPorDeposito = { ...atuais, [deposito.id]: contagem };
         try {
-          await gravarSaldos(req.db!, Number(materialId), novos);
+          await gravarSaldos(req.db!, Number(materialId), novos, [deposito.id]);
         } catch (e: any) {
           console.error(`[bulk-recount] material ${materialId}:`, e.message);
           continue;
@@ -3464,7 +3469,8 @@ export function createApp() {
             .single();
           if (error) throw error;
           const saldoInicial = aceitaSaldo ? arredondar(m.quantidade) : 0;
-          await gravarSaldos(req.db!, material.id, Object.fromEntries(daUnidade.map((d) => [d.id, d.id === destino.id ? saldoInicial : 0])));
+          const saldosNovos = Object.fromEntries(daUnidade.map((d) => [d.id, d.id === destino.id ? saldoInicial : 0]));
+          await gravarSaldos(req.db!, material.id, saldosNovos, Object.keys(saldosNovos));
           if (saldoInicial > 0) {
             await req.db!.from('material_movements').insert({
               material_id: material.id,

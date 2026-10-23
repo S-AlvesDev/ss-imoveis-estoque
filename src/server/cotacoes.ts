@@ -368,7 +368,7 @@ export async function darEntradaDoPedido(organizationId: string, cotacaoId: stri
       ignorados.push(`${item.descricao} (${calculo.erro})`);
       continue;
     }
-    await gravarSaldos(db, item.material_id, calculo.novos);
+    await gravarSaldos(db, item.material_id, calculo.novos, calculo.tocados);
     await db.from('material_movements').insert({
       material_id: item.material_id,
       tipo_operacao: 'ENTRADA',

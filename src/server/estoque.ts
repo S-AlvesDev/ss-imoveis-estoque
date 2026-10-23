@@ -181,7 +181,17 @@ export interface MovimentoPedido {
 
 export type Calculo =
   | { ok: false; erro: string }
-  | { ok: true; novos: SaldosPorDeposito };
+  | {
+      ok: true;
+      /** Todos os saldos do material depois da operação — para a tela e os alertas. */
+      novos: SaldosPorDeposito;
+      /**
+       * Só os depósitos que esta operação moveu. É o que pode ser gravado:
+       * `novos` carrega também os que não mudaram, e regravá-los desfaz o que
+       * outra operação tiver feito neles entre a leitura e a gravação.
+       */
+      tocados: string[];
+    };
 
 /**
  * Calcula os saldos depois da operação, ou recusa dizendo por quê.
@@ -236,7 +246,7 @@ export function calcularMovimento(atuais: SaldosPorDeposito, p: MovimentoPedido)
     if (novos[id] < 0) return { ok: false, erro: 'A operação resultaria em saldo negativo.' };
   }
 
-  return { ok: true, novos };
+  return { ok: true, novos, tocados };
 }
 
 /**
@@ -401,13 +411,19 @@ export async function saldosDoMaterial(db: ScopedDb, materialId: number): Promis
  * Não encosta em `materials`: o saldo tem o próprio carimbo de data em
  * `stock_balances`, e o catálogo só muda quando o cadastro muda.
  */
-export async function gravarSaldos(db: ScopedDb, materialId: number, novos: SaldosPorDeposito): Promise<void> {
-  const linhas = Object.entries(novos).map(([warehouse_id, saldo]) => ({
-    material_id: materialId,
-    warehouse_id,
-    saldo: arredondar(saldo),
-    updated_at: new Date().toISOString(),
-  }));
+export async function gravarSaldos(db: ScopedDb, materialId: number, novos: SaldosPorDeposito, tocados: string[]): Promise<void> {
+  // Só o que a operação moveu. Gravar o mapa inteiro escrevia por cima de
+  // depósitos que ela nem encostou, com os valores lidos no começo da
+  // requisição — e assim uma saída na obra desfazia uma entrada no central
+  // feita no meio do caminho.
+  const linhas = [...new Set(tocados)]
+    .filter((warehouse_id) => Number.isFinite(Number(novos[warehouse_id])))
+    .map((warehouse_id) => ({
+      material_id: materialId,
+      warehouse_id,
+      saldo: arredondar(Number(novos[warehouse_id])),
+      updated_at: new Date().toISOString(),
+    }));
   if (linhas.length === 0) return;
 
   const { error } = await db
