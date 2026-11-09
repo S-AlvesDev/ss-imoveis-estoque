@@ -62,6 +62,46 @@ export function telefoneDoJid(jid: unknown): string | null {
   return /^\d{10,15}$/.test(d) ? d : null;
 }
 
+/** Grupo, status, transmissão e canal: de propósito não viram conversa. */
+export function ehJidQueIgnoramos(jid: unknown): boolean {
+  const s = String(jid ?? '');
+  return s.endsWith('@g.us') || s.endsWith('@broadcast') || s.endsWith('@newsletter') || s === 'status@broadcast';
+}
+
+/**
+ * O telefone de quem escreveu, olhando todos os lugares onde ele pode vir.
+ *
+ * O WhatsApp passou a identificar parte dos contatos por LID — um número
+ * interno em `123@lid`, que NÃO é telefone. Quando o contato vem assim, o
+ * telefone de verdade viaja num campo ao lado (`remoteJidAlt`, `senderPn`,
+ * `participantPn`, conforme a versão). Lendo só o `remoteJid`, a mensagem
+ * desses contatos era descartada: aparecia no celular da empresa e nunca
+ * chegava ao Atende — e sem deixar registro de que havia sido descartada.
+ */
+export function telefoneDaChave(chave: any, dados?: any): string | null {
+  const candidatos = [
+    chave?.remoteJid,
+    chave?.remoteJidAlt,
+    chave?.senderPn,
+    chave?.participantPn,
+    chave?.participantAlt,
+    chave?.participant,
+    dados?.senderPn,
+    dados?.sender,
+    dados?.participantPn,
+  ];
+  for (const c of candidatos) {
+    const t = telefoneDoJid(c);
+    if (t) return t;
+  }
+  // Último recurso: um campo que já venha só com os dígitos.
+  for (const c of [dados?.senderPn, dados?.sender, chave?.senderPn]) {
+    const d = String(c ?? '').replace(/\D/g, '');
+    if (/^\d{10,15}$/.test(d)) return d;
+  }
+  return null;
+}
+
 /** Os códigos de status do WhatsApp (Baileys) e os nomes que a Evolution usa. */
 export function traduzirStatus(s: unknown): StatusDaMensagem | null {
   const v = String(s ?? '').toUpperCase();
@@ -136,8 +176,16 @@ export function lerMensagem(body: any): MensagemDoWhatsApp | null {
   const dados = Array.isArray(body?.data) ? body.data[0] : body?.data;
   const chave = dados?.key;
   if (!chave?.remoteJid || !chave?.id) return null;
-  const telefone = telefoneDoJid(chave.remoteJid);
-  if (!telefone) return null;
+  // Grupo e status não viram conversa — é escolha, não falha: sai quieto.
+  if (ehJidQueIgnoramos(chave.remoteJid)) return null;
+  const telefone = telefoneDaChave(chave, dados);
+  if (!telefone) {
+    // Mensagem de gente que não conseguimos identificar. Antes sumia sem
+    // deixar rastro; agora fica no log com o formato que chegou, para saber
+    // qual campo acrescentar — nunca mais um descarte invisível.
+    console.warn('[atende webhook] mensagem descartada: não achei o telefone em', JSON.stringify({ remoteJid: chave.remoteJid, campos: Object.keys(chave ?? {}) }));
+    return null;
+  }
   const m = dados.message ?? {};
   // Mensagem "efêmera" ou "view once" embrulha a de verdade.
   const real = m.ephemeralMessage?.message ?? m.viewOnceMessage?.message ?? m.viewOnceMessageV2?.message ?? m.documentWithCaptionMessage?.message ?? m;
