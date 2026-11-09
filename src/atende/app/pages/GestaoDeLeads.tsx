@@ -1,11 +1,12 @@
 import { useEffect, useState, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Check, FileCheck2, Inbox, Kanban, MessageCircle, Plus, RefreshCw, Search, Sparkles, UserPlus, X, XCircle } from 'lucide-react';
+import { Check, FileCheck2, Inbox, Info as IconeInfo, Kanban, MessageCircle, Plus, RefreshCw, Search, Sparkles, TriangleAlert, UserPlus, X, XCircle } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao } from '../ui/Cartao';
 import { Etiqueta } from '../ui/Etiqueta';
 import { Modal } from '../ui/Modal';
-import { Entrada, Selecao } from '../ui/Campo';
+import { Entrada, RotuloDoCampo, Selecao } from '../ui/Campo';
+import { DDDS_BR, DDD_PADRAO, DDI_PADRAO, PAISES, analisarTelefone, formatarNumeroBr } from '../../shared/telefone';
 import { Pagina } from '../ui/Pagina';
 import { Abas } from '../ui/Controles';
 import { Vazio, Esqueleto } from '../ui/Estados';
@@ -503,14 +504,24 @@ function ModalDoLead({ item, onFechar, onSalvo }: { item: ItemDoFunilDeLeads; on
 
 function NovoLeadModal({ onFechar, onCriado }: { onFechar: () => void; onCriado: (conversaId: string) => void }) {
   const [nome, setNome] = useState('');
-  const [telefone, setTelefone] = useState('');
+  const [ddi, setDdi] = useState(DDI_PADRAO);
+  const [ddd, setDdd] = useState(DDD_PADRAO);
+  const [numero, setNumero] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const ehBrasil = ddi === '55';
+  const analise = analisarTelefone(ddi, ddd, numero);
 
   async function criar(e: FormEvent) {
     e.preventDefault();
+    if (!analise.valido) {
+      toast.error(analise.recado ?? 'Confira o telefone.');
+      return;
+    }
     setEnviando(true);
     try {
-      const r = await api.post<{ conversa_id: string; reaproveitado: boolean }>('/leads', { nome, telefone });
+      // Vai com DDI: é assim que o WhatsApp identifica, e é o que faz este
+      // lead reencontrar a pessoa quando ela escrever.
+      const r = await api.post<{ conversa_id: string; reaproveitado: boolean }>('/leads', { nome, telefone: analise.completo });
       toast.success(r.reaproveitado ? 'Esse telefone já é um contato — abrindo o lead existente.' : `${nome} cadastrado.`);
       onCriado(r.conversa_id);
     } catch (err) {
@@ -540,7 +551,54 @@ function NovoLeadModal({ onFechar, onCriado }: { onFechar: () => void; onCriado:
     >
       <form id="form-novo-lead" onSubmit={criar} className="space-y-4">
         <Entrada rotulo="Nome" required value={nome} onChange={(e) => setNome(e.target.value)} maxLength={80} autoFocus />
-        <Entrada rotulo="Telefone" ajuda="Com DDD — vira o WhatsApp deste contato, mesmo que ele nunca tenha escrito." required value={telefone} onChange={(e) => setTelefone(e.target.value)} placeholder="(84) 99999-9999" />
+
+        <div>
+          <RotuloDoCampo obrigatorio>Telefone</RotuloDoCampo>
+          <div className={`grid gap-2 ${ehBrasil ? 'grid-cols-[auto_auto_1fr]' : 'grid-cols-[auto_1fr]'}`}>
+            <Selecao aria-label="País" value={ddi} onChange={(e) => setDdi(e.target.value)} className="w-auto">
+              {PAISES.map((p) => (
+                <option key={p.ddi} value={p.ddi}>
+                  {p.bandeira} +{p.ddi}
+                </option>
+              ))}
+            </Selecao>
+            {ehBrasil && (
+              <Selecao aria-label="DDD" value={ddd} onChange={(e) => setDdd(e.target.value)} className="w-auto">
+                {DDDS_BR.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </Selecao>
+            )}
+            <Entrada
+              aria-label="Número"
+              required
+              inputMode="numeric"
+              value={ehBrasil ? formatarNumeroBr(numero) : numero}
+              onChange={(e) => setNumero(e.target.value)}
+              placeholder={ehBrasil ? '99999-9999' : 'Número'}
+            />
+          </div>
+
+          {/* O esquecimento mais comum de quem cadastra, dito antes de errar. */}
+          {ehBrasil && (
+            <p className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold leading-4 text-rose-600">
+              <TriangleAlert size={13} className="mt-px shrink-0" />
+              Celular tem 9 dígitos: não esqueça o 9 na frente, senão o WhatsApp não encontra o contato.
+            </p>
+          )}
+
+          {analise.recado && (
+            <p className={`mt-1.5 flex items-start gap-1.5 text-[11px] leading-4 ${analise.tom === 'erro' ? 'font-semibold text-rose-600' : analise.tom === 'aviso' ? 'text-amber-600' : 'font-semibold text-emerald-600'}`}>
+              {analise.tom === 'ok' ? <Check size={13} className="mt-px shrink-0" /> : analise.tom === 'erro' ? <XCircle size={13} className="mt-px shrink-0" /> : <IconeInfo size={13} className="mt-px shrink-0" />}
+              <span>
+                {analise.recado}
+                {analise.valido && <span className="block font-normal text-[var(--text-muted)]">Será salvo como +{analise.completo}.</span>}
+              </span>
+            </p>
+          )}
+        </div>
       </form>
     </Modal>
   );
