@@ -133,7 +133,7 @@ export function criarRouterSevla(): express.Router {
       tratar(res, err, 'GET /api/sevla/assinaturas', 'Não foi possível carregar as assinaturas.');
     }
   });
-  const assinarLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `c:${(req as RequisicaoSevla).contaSevla?.id ?? req.ip}`, message: { error: 'Muitos pedidos nesta hora. Aguarde um pouco.' } });
+  const assinarLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 20, standardHeaders: 'draft-7', legacyHeaders: false, keyGenerator: (req) => `c:${(req as RequisicaoSevla).contaSevla?.id ?? ipKeyGenerator(req.ip ?? '')}`, message: { error: 'Muitos pedidos nesta hora. Aguarde um pouco.' } });
   r.post('/assinar', assinarLimiter, async (req: RequisicaoSevla, res) => {
     try {
       const r2 = await assinarPelaSevla(req.contaSevla!, req.body);
