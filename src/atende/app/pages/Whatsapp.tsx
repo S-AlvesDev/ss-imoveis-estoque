@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, QrCode, RefreshCw, Smartphone, Stethoscope, Unplug, Wifi, Wrench, X } from 'lucide-react';
+import { Check, QrCode, RefreshCw, RotateCw, Smartphone, Stethoscope, Unplug, Wifi, Wrench, X } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
 import { Etiqueta, type TomDaEtiqueta } from '../ui/Etiqueta';
@@ -60,6 +60,22 @@ export function Whatsapp() {
       setDiag(await api.get<Diagnostico>('/whatsapp/diagnostico'));
     } catch (e) {
       toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível diagnosticar.');
+    } finally {
+      setDiagnosticando(false);
+    }
+  }
+
+  /**
+   * Sacode a sessão. Para o caso em que o diagnóstico dá tudo verde e mesmo
+   * assim nada chega: a conexão existe no papel, mas parou de entregar.
+   */
+  async function reiniciar() {
+    setDiagnosticando(true);
+    try {
+      setDiag(await api.post<Diagnostico>('/whatsapp/reiniciar'));
+      toast.success('Sessão reiniciada. Mande uma mensagem de teste: deve chegar em segundos.');
+    } catch (e) {
+      toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível reiniciar a sessão.');
     } finally {
       setDiagnosticando(false);
     }
@@ -231,6 +247,13 @@ export function Whatsapp() {
             {!tudoCerto(diag) && (
               <Alerta tom="aviso" className="mt-4" titulo="Dá para consertar daqui" acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<Wrench size={14} />} onClick={reconfigurar}>Reconfigurar</Botao>}>
                 Regrava o endereço e a senha do webhook com os de agora. Não desconecta o WhatsApp, não pede QR e não perde mensagem.
+              </Alerta>
+            )}
+            {/* Tudo verde e mesmo assim nada chega: a conexão existe no papel,
+                mas parou de entregar. É o único caminho que resolve isso. */}
+            {tudoCerto(diag) && (
+              <Alerta tom="ia" className="mt-4" titulo="Está tudo certo e mesmo assim não chega mensagem?" acao={<Botao tamanho="sm" variante="secundaria" carregando={diagnosticando} icone={<RotateCw size={14} />} onClick={reiniciar}>Reiniciar sessão</Botao>}>
+                A conexão pode estar viva no papel e ter parado de entregar. Reiniciar refaz a ligação com o WhatsApp e traz o que ficou para trás — sem desconectar o aparelho, sem QR e sem perder mensagem.
               </Alerta>
             )}
             {diag.ultimo_evento_em && <p className="mt-3 text-[11px] text-[var(--text-muted)]">Última vez que algo chegou por aqui: {new Date(diag.ultimo_evento_em).toLocaleString('pt-BR')}.</p>}

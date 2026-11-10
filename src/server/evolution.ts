@@ -293,6 +293,23 @@ export async function webhookDaInstancia(nome: string, env: AmbienteEvolution = 
   }
 }
 
+/**
+ * Reinicia o socket da instância sem deslogar o aparelho.
+ *
+ * É o remédio da sessão zumbi: a Evolution diz "conectada", o webhook está
+ * certo, e mesmo assim nada chega. Reiniciar faz o Baileys refazer a
+ * conexão e sincronizar o que ficou para trás. Não apaga a instância, não
+ * desvincula o aparelho e não pede QR — por isso é seguro apertar.
+ */
+export async function reiniciarInstancia(nome: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<void> {
+  try {
+    await evo(`/instance/restart/${encodeURIComponent(nome)}`, { method: 'PUT' }, env);
+  } catch {
+    // Versões mais antigas expõem o mesmo em POST.
+    await evo(`/instance/restart/${encodeURIComponent(nome)}`, { method: 'POST' }, env);
+  }
+}
+
 /** O QR code atual para conectar a instância (só faz sentido enquanto não está `open`). */
 export async function qrDaInstancia(nome: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<QrCode> {
   return lerQr(await evo(`/instance/connect/${encodeURIComponent(nome)}`, {}, env));

@@ -10,7 +10,7 @@ import { emailDeBoasVindasAtende, emailDeConviteAtende, emailDeRecuperacaoAtende
 import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, validarEdicaoDeFuncionario, validarEmail, validarSenha } from '../shared/validacao';
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
-import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa, diagnosticoDoWhatsapp, reconfigurarWebhook } from './whatsapp';
+import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa, diagnosticoDoWhatsapp, reconfigurarWebhook, reiniciarSessao } from './whatsapp';
 import { listarConversas, conversaPorId, cutucar, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, buscarClientes, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular, destravarTriagensParadas } from './triagem';
 import { consertarFotosVencidas } from './fotos';
@@ -672,6 +672,17 @@ export function criarRouterAtende(): express.Router {
       res.json(await diagnosticoDoWhatsapp(req.sessao!.empresa_id));
     } catch (err: any) {
       tratar(res, err, 'POST /api/atende/whatsapp/reconfigurar', 'Não foi possível reconfigurar o webhook.');
+    }
+  });
+
+  /** Reinicia o socket da instância sem deslogar: o remédio da sessão que diz estar viva e não entrega. */
+  r.post('/whatsapp/reiniciar', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      await reiniciarSessao(req.sessao!.empresa_id);
+      console.info('[atende whatsapp] sessão reiniciada', { empresa: req.sessao!.empresa_id });
+      res.json(await diagnosticoDoWhatsapp(req.sessao!.empresa_id));
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/whatsapp/reiniciar', 'Não foi possível reiniciar a sessão.');
     }
   });
 

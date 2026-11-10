@@ -1,5 +1,5 @@
 import { supabaseServer } from '../../lib/supabaseServer';
-import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baixarMidia, fotoDoContato, evolutionConfigurada, variantesDoTelefone, webhookDaInstancia, configurarWebhook, type QrCode } from '../../server/evolution';
+import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baixarMidia, fotoDoContato, evolutionConfigurada, variantesDoTelefone, webhookDaInstancia, configurarWebhook, reiniciarInstancia, type QrCode } from '../../server/evolution';
 import { siteUrl } from '../../server/senha';
 import { lerEventoDoAtende, previaDe, type MensagemDoWhatsApp, type AtualizacaoDeStatus, type AtualizacaoDeConexao } from './eventos';
 import { caminhoDaMidia, guardarMidia } from './midias';
@@ -143,6 +143,17 @@ export async function diagnosticoDoWhatsapp(empresaId: string): Promise<Record<s
 /** Regrava o webhook da instância com a URL e o token de agora. Conserta instância que ficou com token velho. */
 export async function reconfigurarWebhook(empresaId: string): Promise<void> {
   await configurarWebhook(nomeDaInstancia(empresaId), urlDoWebhook(), process.env as any, EVENTOS_DO_ATENDE);
+}
+
+/**
+ * Sacode a sessão: reinicia o socket e regrava o webhook. Para quando a
+ * Evolution diz que está tudo certo e mesmo assim nada chega.
+ */
+export async function reiniciarSessao(empresaId: string): Promise<void> {
+  const instancia = nomeDaInstancia(empresaId);
+  await reiniciarInstancia(instancia);
+  // Depois de reiniciar, garante que o webhook continua apontando para nós.
+  await configurarWebhook(instancia, urlDoWebhook(), process.env as any, EVENTOS_DO_ATENDE);
 }
 
 export async function desconectar(empresaId: string): Promise<void> {
