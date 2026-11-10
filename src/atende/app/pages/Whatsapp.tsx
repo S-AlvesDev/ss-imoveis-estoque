@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { QrCode, RefreshCw, Smartphone, Unplug, Wifi } from 'lucide-react';
+import { Check, QrCode, RefreshCw, Smartphone, Stethoscope, Unplug, Wifi, Wrench, X } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
 import { Etiqueta, type TomDaEtiqueta } from '../ui/Etiqueta';
@@ -28,10 +28,55 @@ const NOME_DO_ESTADO_DA_CONEXAO: Record<Conexao['estado'], { texto: string; tom:
   desconectada: { texto: 'Desconectado', tom: 'vermelho' },
 };
 
+/** O que o servidor responde sobre a conexão — sem segredo nenhum: do token só se confere. */
+interface Diagnostico {
+  instancia: string;
+  evolution_configurada: boolean;
+  estado_na_evolution?: string | null;
+  estado_que_guardamos?: string | null;
+  ultimo_evento_em?: string | null;
+  webhook?: {
+    registrado: boolean;
+    ligado: boolean | null;
+    url: string | null;
+    aponta_para_nos: boolean;
+    token_confere: boolean;
+    eventos: string[] | null;
+    recebe_mensagens: boolean | null;
+  };
+}
+
 export function Whatsapp() {
   const [situacao, setSituacao] = useState<Situacao | null>(null);
   const [agindo, setAgindo] = useState(false);
   const [confirmarDesconexao, setConfirmarDesconexao] = useState(false);
+  const [diag, setDiag] = useState<Diagnostico | null>(null);
+  const [diagnosticando, setDiagnosticando] = useState(false);
+
+  /** Por que as mensagens não estão chegando: o que a Evolution tem registrado. */
+  async function diagnosticar() {
+    setDiagnosticando(true);
+    try {
+      setDiag(await api.get<Diagnostico>('/whatsapp/diagnostico'));
+    } catch (e) {
+      toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível diagnosticar.');
+    } finally {
+      setDiagnosticando(false);
+    }
+  }
+
+  /** Regrava o webhook com o endereço e o token de agora. Não desconecta o WhatsApp. */
+  async function reconfigurar() {
+    setDiagnosticando(true);
+    try {
+      setDiag(await api.post<Diagnostico>('/whatsapp/reconfigurar'));
+      toast.success('Webhook reconfigurado. As mensagens devem voltar a chegar na hora.');
+    } catch (e) {
+      toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível reconfigurar.');
+    } finally {
+      setDiagnosticando(false);
+    }
+  }
 
   const consultar = useCallback(async () => {
     try {
@@ -116,9 +161,14 @@ export function Whatsapp() {
                   </p>
                 </div>
               </div>
-              <Botao tamanho="sm" variante="perigo" icone={<Unplug size={14} />} onClick={() => setConfirmarDesconexao(true)}>
-                Desconectar
-              </Botao>
+              <span className="flex gap-2">
+                <Botao tamanho="sm" variante="secundaria" carregando={diagnosticando} icone={<Stethoscope size={14} />} onClick={diagnosticar}>
+                  Diagnosticar
+                </Botao>
+                <Botao tamanho="sm" variante="perigo" icone={<Unplug size={14} />} onClick={() => setConfirmarDesconexao(true)}>
+                  Desconectar
+                </Botao>
+              </span>
             </div>
           ) : (
             <div className="mt-4 grid gap-5 sm:grid-cols-[220px_1fr]">
@@ -161,6 +211,31 @@ export function Whatsapp() {
             </div>
           )}
         </Cartao>
+
+        {/* O resultado do diagnóstico: por que mensagem pode não estar chegando. */}
+        {diag && (
+          <Cartao className="p-4 sm:p-5">
+            <CabecalhoDoCartao
+              icone={<Stethoscope size={14} />}
+              titulo="Diagnóstico da entrega"
+              descricao="Conexão aberta não garante que a mensagem chega até aqui — quem traz é o webhook."
+              acoes={<Etiqueta tom={tudoCerto(diag) ? 'verde' : 'vermelho'} ponto tamanho="md">{tudoCerto(diag) ? 'Tudo certo' : 'Há problema'}</Etiqueta>}
+            />
+            <ul className="mt-3 divide-y divide-[var(--border)] text-sm">
+              <Conferencia ok={diag.estado_na_evolution === 'conectada'} titulo="Sessão do WhatsApp aberta" detalhe={`${diag.estado_na_evolution ?? '—'}${diag.estado_que_guardamos && diag.estado_que_guardamos !== diag.estado_na_evolution ? ` (o painel mostrava "${diag.estado_que_guardamos}")` : ''}`} />
+              <Conferencia ok={Boolean(diag.webhook?.registrado && diag.webhook?.ligado)} titulo="Webhook registrado e ligado" detalhe={diag.webhook?.url ?? 'nenhum endereço registrado'} />
+              <Conferencia ok={Boolean(diag.webhook?.aponta_para_nos)} titulo="Aponta para o Atende Aí" detalhe={diag.webhook?.aponta_para_nos ? 'endereço correto' : 'está apontando para outro lugar'} />
+              <Conferencia ok={Boolean(diag.webhook?.token_confere)} titulo="Senha do webhook confere" detalhe={diag.webhook?.token_confere ? 'igual à do servidor' : 'DIFERENTE da do servidor — as entregas estão sendo recusadas'} />
+              <Conferencia ok={Boolean(diag.webhook?.recebe_mensagens)} titulo="Recebe o evento de mensagem" detalhe={(diag.webhook?.eventos ?? []).join(', ') || 'nenhum evento'} />
+            </ul>
+            {!tudoCerto(diag) && (
+              <Alerta tom="aviso" className="mt-4" titulo="Dá para consertar daqui" acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<Wrench size={14} />} onClick={reconfigurar}>Reconfigurar</Botao>}>
+                Regrava o endereço e a senha do webhook com os de agora. Não desconecta o WhatsApp, não pede QR e não perde mensagem.
+              </Alerta>
+            )}
+            {diag.ultimo_evento_em && <p className="mt-3 text-[11px] text-[var(--text-muted)]">Última vez que algo chegou por aqui: {new Date(diag.ultimo_evento_em).toLocaleString('pt-BR')}.</p>}
+          </Cartao>
+        )}
       </div>
 
       <Modal
@@ -183,5 +258,22 @@ export function Whatsapp() {
         <span />
       </Modal>
     </Pagina>
+  );
+}
+
+/** Verde só quando nada falta: é o que diz se a mensagem chega. */
+function tudoCerto(d: Diagnostico): boolean {
+  return d.estado_na_evolution === 'conectada' && Boolean(d.webhook?.registrado && d.webhook?.ligado && d.webhook?.aponta_para_nos && d.webhook?.token_confere && d.webhook?.recebe_mensagens);
+}
+
+function Conferencia({ ok, titulo, detalhe }: { ok: boolean; titulo: string; detalhe: string }) {
+  return (
+    <li className="flex items-start gap-2.5 py-2.5">
+      {ok ? <Check size={15} className="mt-0.5 shrink-0 text-emerald-600" /> : <X size={15} className="mt-0.5 shrink-0 text-rose-600" />}
+      <span className="min-w-0">
+        <span className={`block font-medium ${ok ? 'text-[var(--text)]' : 'text-rose-700'}`}>{titulo}</span>
+        <span className="block wrap-anywhere text-xs text-[var(--text-muted)]">{detalhe}</span>
+      </span>
+    </li>
   );
 }
