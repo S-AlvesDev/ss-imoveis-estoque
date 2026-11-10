@@ -83,7 +83,7 @@ describe('Atende Aí — quem vê qual conversa', () => {
   const T_ALUGUEL = '22222222-2222-4222-8222-222222222222';
   const admin: Visao = { tudo: true, eu: 1, meusTimes: [], supervisiona: [], filaGeral: true };
   const supervisor: Visao = { tudo: false, eu: 2, meusTimes: [T_VENDAS], supervisiona: [T_VENDAS], filaGeral: true };
-  const atendente: Visao = { tudo: false, eu: 3, meusTimes: [T_ALUGUEL], supervisiona: [], filaGeral: false };
+  const atendente: Visao = { tudo: false, eu: 3, meusTimes: [T_ALUGUEL], supervisiona: [], filaGeral: true };
 
   it('admin vê tudo; atendente vê as suas e a fila do time dele — nunca a de um colega', () => {
     const minha = { atendente_id: 3, time_id: T_ALUGUEL, estado: 'em_atendimento' };
@@ -96,8 +96,11 @@ describe('Atende Aí — quem vê qual conversa', () => {
     expect(podeVerConversa(atendente, deOutro)).toBe(false);
     expect(podeVerConversa(atendente, filaAluguel)).toBe(true);
     expect(podeVerConversa(atendente, filaVendas)).toBe(false);
-    // A fila geral é de quem distribui: o atendente não a vê mais.
-    expect(podeVerConversa(atendente, filaSemTime)).toBe(false);
+    // A fila geral é trabalho esperando dono, não conversa de colega: o
+    // atendente vê. Com a triagem desligada ela é a ÚNICA fila que existe,
+    // porque nenhuma conversa recebe setor — escondê-la deixava a pessoa
+    // sem enxergar nada.
+    expect(podeVerConversa(atendente, filaSemTime)).toBe(true);
   });
 
   it('encerrada: o atendente vê a que era dele e a que ele mesmo encerrou', () => {
@@ -111,6 +114,19 @@ describe('Atende Aí — quem vê qual conversa', () => {
     expect(podeVerConversa(atendente, { atendente_id: 2, time_id: T_ALUGUEL, estado: 'encerrada', encerrada_por: null })).toBe(false);
   });
 
+  it('com a triagem desligada, toda conversa nasce na fila geral — e o atendente precisa vê-la', () => {
+    // Sem triagem o sistema não atribui setor: `time_id` fica nulo em tudo.
+    // Era o caso de um cliente real, e por isso os atendentes dele pararam
+    // de enxergar conversa nova.
+    const semTriagem = [
+      { atendente_id: null, time_id: null, estado: 'na_fila' },
+      { atendente_id: null, time_id: null, estado: 'nova' },
+    ];
+    for (const c of semTriagem) expect(podeVerConversa(atendente, c)).toBe(true);
+    // E continua sem ver a conversa que já é de um colega.
+    expect(podeVerConversa(atendente, { atendente_id: 2, time_id: null, estado: 'em_atendimento' })).toBe(false);
+  });
+
   it('supervisor vê as dos times que supervisiona, e a fila geral, que é dele distribuir', () => {
     expect(podeVerConversa(supervisor, { atendente_id: 3, time_id: T_VENDAS, estado: 'em_atendimento' })).toBe(true);
     expect(podeVerConversa(supervisor, { atendente_id: 3, time_id: T_ALUGUEL, estado: 'em_atendimento' })).toBe(false);
@@ -119,9 +135,8 @@ describe('Atende Aí — quem vê qual conversa', () => {
 
   it('o filtro do PostgREST diz a mesma coisa que a regra', () => {
     expect(filtroDaVisao(admin)).toBeNull();
-    // Sem a fila geral, e com as encerradas que ele fechou.
-    expect(filtroDaVisao(atendente)).toBe(`atendente_id.eq.3,encerrada_por.eq.3,and(estado.in.(na_fila,nova,em_triagem),time_id.in.(${T_ALUGUEL}))`);
-    expect(filtroDaVisao(atendente)).not.toContain('time_id.is.null');
+    // Com a fila geral e com as encerradas que ele fechou.
+    expect(filtroDaVisao(atendente)).toBe(`atendente_id.eq.3,encerrada_por.eq.3,and(estado.in.(na_fila,nova,em_triagem),time_id.is.null),and(estado.in.(na_fila,nova,em_triagem),time_id.in.(${T_ALUGUEL}))`);
     expect(filtroDaVisao(supervisor)).toContain('time_id.is.null');
     expect(filtroDaVisao(supervisor)).toContain(`time_id.in.(${T_VENDAS})`);
   });

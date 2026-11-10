@@ -31,9 +31,13 @@ export interface Visao {
   /** Times que a pessoa supervisiona (supervisor: os dele; admin: irrelevante). */
   supervisiona: string[];
   /**
-   * Vê a fila geral — as conversas sem time, que é onde a triagem põe o que
-   * não soube encaixar. É de quem distribui: supervisor e admin. O atendente
-   * não, para só enxergar o que é dele e o que chega ao time dele.
+   * Vê a fila geral — as conversas sem time.
+   *
+   * Todo mundo que atende vê. Já foi só de supervisor, e isso quebrou a
+   * operação de quem trabalha com a triagem DESLIGADA: sem triagem nenhuma
+   * conversa recebe setor, então todas nascem na fila geral e o atendente
+   * ficava sem enxergar nada. Fila não é conversa de ninguém — é trabalho à
+   * espera de dono, e esconder isso não protege privacidade alguma.
    */
   filaGeral: boolean;
 }
@@ -46,15 +50,15 @@ export async function visaoDe(req: RequisicaoAtende): Promise<Visao> {
   if (s.papel === 'admin') return { tudo: true, eu: s.id, meusTimes: [], supervisiona: [], filaGeral: true };
   const { data } = await req.dbAtende!.from('atende_time_membros').select('time_id, supervisiona').eq('usuario_id', s.id);
   const membros = (data || []) as Array<{ time_id: string; supervisiona: boolean }>;
-  return { tudo: false, eu: s.id, meusTimes: membros.map((m) => m.time_id), supervisiona: s.papel === 'supervisor' ? membros.map((m) => m.time_id) : [], filaGeral: s.papel === 'supervisor' };
+  return { tudo: false, eu: s.id, meusTimes: membros.map((m) => m.time_id), supervisiona: s.papel === 'supervisor' ? membros.map((m) => m.time_id) : [], filaGeral: true };
 }
 
 /**
  * A regra, em memória: é minha, fui eu que encerrei, está na fila de um time
  * meu, ou é de um time que eu supervisiono.
  *
- * O atendente enxerga só o que é dele e o que chega ao time dele — nunca a
- * conversa de um colega, nem a fila geral. Encerrada aparece quando ele era o
+ * O atendente enxerga o que é dele e o que está na fila esperando dono —
+ * nunca a conversa de um colega. Encerrada aparece quando ele era o
  * atendente OU quando foi ele quem encerrou: fechar não apaga o próprio
  * trabalho da vista, nem quando um supervisor fecha por cima.
  */
