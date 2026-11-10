@@ -244,13 +244,19 @@ export function Whatsapp() {
               <Conferencia ok={Boolean(diag.webhook?.token_confere)} titulo="Senha do webhook confere" detalhe={diag.webhook?.token_confere ? 'igual à do servidor' : 'DIFERENTE da do servidor — as entregas estão sendo recusadas'} />
               <Conferencia ok={Boolean(diag.webhook?.recebe_mensagens)} titulo="Recebe o evento de mensagem" detalhe={(diag.webhook?.eventos ?? []).join(', ') || 'nenhum evento'} />
             </ul>
-            {!tudoCerto(diag) && (
-              <Alerta tom="aviso" className="mt-4" titulo="Dá para consertar daqui" acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<Wrench size={14} />} onClick={reconfigurar}>Reconfigurar</Botao>}>
+            {/* O remédio tem que combinar com o defeito: webhook torto se
+                reconfigura, sessão caída se reinicia. Oferecer o botão errado
+                faz a pessoa apertar e nada mudar. */}
+            {!webhookOk(diag) && (
+              <Alerta tom="aviso" className="mt-4" titulo="O webhook está torto" acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<Wrench size={14} />} onClick={reconfigurar}>Reconfigurar</Botao>}>
                 Regrava o endereço e a senha do webhook com os de agora. Não desconecta o WhatsApp, não pede QR e não perde mensagem.
               </Alerta>
             )}
-            {/* Tudo verde e mesmo assim nada chega: a conexão existe no papel,
-                mas parou de entregar. É o único caminho que resolve isso. */}
+            {webhookOk(diag) && diag.estado_na_evolution !== 'conectada' && (
+              <Alerta tom="aviso" className="mt-4" titulo={`A sessão está "${diag.estado_na_evolution ?? 'indefinida'}"`} acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<RotateCw size={14} />} onClick={reiniciar}>Reiniciar sessão</Botao>}>
+                O webhook está certo — o que não está de pé é a ligação com o WhatsApp. Acabou de reiniciar? Espere um minuto e consulte de novo: reconectar leva alguns segundos. Se não voltar, reinicie de novo.
+              </Alerta>
+            )}
             {tudoCerto(diag) && (
               <Alerta tom="ia" className="mt-4" titulo="Está tudo certo e mesmo assim não chega mensagem?" acao={<Botao tamanho="sm" variante="secundaria" carregando={diagnosticando} icone={<RotateCw size={14} />} onClick={reiniciar}>Reiniciar sessão</Botao>}>
                 A conexão pode estar viva no papel e ter parado de entregar. Reiniciar refaz a ligação com o WhatsApp e traz o que ficou para trás — sem desconectar o aparelho, sem QR e sem perder mensagem.
@@ -282,6 +288,11 @@ export function Whatsapp() {
       </Modal>
     </Pagina>
   );
+}
+
+/** O webhook está em ordem? (separado da sessão: cada defeito tem o seu remédio) */
+function webhookOk(d: Diagnostico): boolean {
+  return Boolean(d.webhook?.registrado && d.webhook?.ligado && d.webhook?.aponta_para_nos && d.webhook?.token_confere && d.webhook?.recebe_mensagens);
 }
 
 /** Verde só quando nada falta: é o que diz se a mensagem chega. */
