@@ -274,6 +274,25 @@ export async function configurarWebhook(nome: string, webhookUrl: string, env: A
   }
 }
 
+/**
+ * O webhook que está registrado NA INSTÂNCIA, como a Evolution o guarda.
+ *
+ * Importa porque a URL (com o token dentro) é gravada quando a instância é
+ * criada e só muda quando alguém reconecta. Se o token do ambiente mudar, as
+ * instâncias antigas seguem chamando o endereço velho e tomam 401 — em
+ * silêncio, porque ninguém é avisado de entrega recusada.
+ */
+export async function webhookDaInstancia(nome: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<{ enabled?: boolean; url?: string; events?: string[] } | null> {
+  try {
+    const r = await evo<any>(`/webhook/find/${encodeURIComponent(nome)}`, {}, env);
+    const w = r?.webhook ?? r;
+    if (!w || typeof w !== 'object') return null;
+    return { enabled: w.enabled ?? w.webhook_enabled, url: w.url ?? w.webhook_url, events: w.events ?? w.webhook_events };
+  } catch {
+    return null;
+  }
+}
+
 /** O QR code atual para conectar a instância (só faz sentido enquanto não está `open`). */
 export async function qrDaInstancia(nome: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<QrCode> {
   return lerQr(await evo(`/instance/connect/${encodeURIComponent(nome)}`, {}, env));

@@ -1,5 +1,5 @@
 import { supabaseServer } from '../../lib/supabaseServer';
-import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baixarMidia, fotoDoContato, evolutionConfigurada, variantesDoTelefone, type QrCode } from '../../server/evolution';
+import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baixarMidia, fotoDoContato, evolutionConfigurada, variantesDoTelefone, webhookDaInstancia, configurarWebhook, type QrCode } from '../../server/evolution';
 import { siteUrl } from '../../server/senha';
 import { lerEventoDoAtende, previaDe, type MensagemDoWhatsApp, type AtualizacaoDeStatus, type AtualizacaoDeConexao } from './eventos';
 import { caminhoDaMidia, guardarMidia } from './midias';
@@ -102,6 +102,49 @@ export async function situacaoDaConexao(empresaId: string): Promise<{ conexao: C
 }
 
 /** Desconecta o número e apaga a instância na Evolution; a linha fica, desconectada (o histórico aponta para ela). */
+/**
+ * Por que as mensagens não estão chegando: o que a Evolution tem registrado
+ * para esta empresa, conferido contra o que deveria estar.
+ *
+ * Nenhum segredo sai daqui. O token não é devolvido — só se ele CONFERE com
+ * o do ambiente, que é o que interessa para diagnosticar. A URL vem com o
+ * token mascarado.
+ */
+export async function diagnosticoDoWhatsapp(empresaId: string): Promise<Record<string, unknown>> {
+  const instancia = nomeDaInstancia(empresaId);
+  const conexao = await conexaoDaEmpresa(empresaId);
+  if (!evolutionConfigurada()) return { instancia, evolution_configurada: false };
+
+  const estado = await estadoDaInstancia(instancia).then(traduzirEstado).catch(() => null);
+  const w = await webhookDaInstancia(instancia);
+  const tokenAtual = process.env.EVOLUTION_WEBHOOK_TOKEN ?? '';
+  const registrada = String(w?.url ?? '');
+  const tokenRegistrado = /[?&]token=([^&]*)/.exec(registrada)?.[1] ?? '';
+
+  return {
+    instancia,
+    evolution_configurada: true,
+    estado_na_evolution: estado,
+    estado_que_guardamos: conexao?.estado ?? null,
+    ultimo_evento_em: conexao?.ultimo_evento_em ?? null,
+    webhook: {
+      registrado: Boolean(w),
+      ligado: w?.enabled ?? null,
+      // O token nunca sai; só se bate com o de agora.
+      url: registrada ? registrada.replace(/([?&]token=)[^&]*/, '$1***') : null,
+      aponta_para_nos: registrada.startsWith(siteUrl()),
+      token_confere: Boolean(tokenAtual) && tokenRegistrado === decodeURIComponent(tokenAtual),
+      eventos: w?.events ?? null,
+      recebe_mensagens: Array.isArray(w?.events) ? w!.events!.some((e) => String(e).toUpperCase() === 'MESSAGES_UPSERT') : null,
+    },
+  };
+}
+
+/** Regrava o webhook da instância com a URL e o token de agora. Conserta instância que ficou com token velho. */
+export async function reconfigurarWebhook(empresaId: string): Promise<void> {
+  await configurarWebhook(nomeDaInstancia(empresaId), urlDoWebhook(), process.env as any, EVENTOS_DO_ATENDE);
+}
+
 export async function desconectar(empresaId: string): Promise<void> {
   const conexao = await conexaoDaEmpresa(empresaId);
   if (!conexao) return;

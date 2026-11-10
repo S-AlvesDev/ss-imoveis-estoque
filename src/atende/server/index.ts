@@ -10,7 +10,7 @@ import { emailDeBoasVindasAtende, emailDeConviteAtende, emailDeRecuperacaoAtende
 import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, validarEdicaoDeFuncionario, validarEmail, validarSenha } from '../shared/validacao';
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
-import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa } from './whatsapp';
+import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa, diagnosticoDoWhatsapp, reconfigurarWebhook } from './whatsapp';
 import { listarConversas, conversaPorId, cutucar, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, buscarClientes, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular, destravarTriagensParadas } from './triagem';
 import { consertarFotosVencidas } from './fotos';
@@ -651,6 +651,30 @@ export function criarRouterAtende(): express.Router {
       res.status(500).json({ error: 'Não foi possível consultar o WhatsApp.' });
     }
   });
+  /**
+   * Por que o WhatsApp não está entregando: o que a Evolution tem registrado
+   * para esta empresa, conferido contra o que deveria estar. Só administrador,
+   * e nenhum segredo sai na resposta.
+   */
+  r.get('/whatsapp/diagnostico', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      res.json(await diagnosticoDoWhatsapp(req.sessao!.empresa_id));
+    } catch (err: any) {
+      tratar(res, err, 'GET /api/atende/whatsapp/diagnostico', 'Não foi possível diagnosticar a conexão.');
+    }
+  });
+
+  /** Regrava o webhook da instância com a URL e o token de agora, sem desconectar o WhatsApp. */
+  r.post('/whatsapp/reconfigurar', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      await reconfigurarWebhook(req.sessao!.empresa_id);
+      console.info('[atende whatsapp] webhook reconfigurado', { empresa: req.sessao!.empresa_id });
+      res.json(await diagnosticoDoWhatsapp(req.sessao!.empresa_id));
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/whatsapp/reconfigurar', 'Não foi possível reconfigurar o webhook.');
+    }
+  });
+
   r.post('/whatsapp/conectar', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
     try {
       res.json(await conectar(req.sessao!.empresa_id));
