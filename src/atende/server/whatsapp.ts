@@ -8,6 +8,7 @@ import { triar, triagemAtiva } from './triagem';
 import { tratarRespostaDeAvaliacao } from './avaliacao';
 import { avisarSobreConversa } from './push';
 import type { Conexao, EstadoDaConexao, StatusDaMensagem } from '../shared/tipos';
+import { horasUteisEntre, limiteDeSilencio, DIA_MS } from '../shared/silencio';
 
 /**
  * O WhatsApp de cada empresa do Atende Aí: uma instância da Evolution por
@@ -110,6 +111,28 @@ export async function situacaoDaConexao(empresaId: string): Promise<{ conexao: C
  * o do ambiente, que é o que interessa para diagnosticar. A URL vem com o
  * token mascarado.
  */
+/**
+ * Há quanto tempo nada chega, e se isso já é demais para esta empresa.
+ *
+ * É o item que faltava no diagnóstico: a sessão pode jurar "conectada" e
+ * não entregar nada. O estado mente; o silêncio, não. Mesmas contas do
+ * vigia que manda o e-mail, para a tela e o alerta nunca se contradizerem.
+ */
+async function medirSilencio(empresaId: string, ultimoEventoEm: string | null): Promise<{ horas_uteis: number; limite: number | null; calado: boolean } | null> {
+  if (!ultimoEventoEm) return null;
+  const desde = new Date(ultimoEventoEm);
+  const horas = horasUteisEntre(desde, new Date());
+  const { count } = await supabaseServer
+    .from('atende_mensagens')
+    .select('id', { count: 'exact', head: true })
+    .eq('empresa_id', empresaId)
+    .eq('direcao', 'entrada')
+    .gte('criado_em', new Date(desde.getTime() - 14 * DIA_MS).toISOString())
+    .lt('criado_em', desde.toISOString());
+  const limite = limiteDeSilencio(count ?? 0);
+  return { horas_uteis: Number(horas.toFixed(2)), limite: Number.isFinite(limite) ? limite : null, calado: horas >= limite };
+}
+
 export async function diagnosticoDoWhatsapp(empresaId: string): Promise<Record<string, unknown>> {
   const instancia = nomeDaInstancia(empresaId);
   const conexao = await conexaoDaEmpresa(empresaId);
@@ -127,6 +150,7 @@ export async function diagnosticoDoWhatsapp(empresaId: string): Promise<Record<s
     estado_na_evolution: estado,
     estado_que_guardamos: conexao?.estado ?? null,
     ultimo_evento_em: conexao?.ultimo_evento_em ?? null,
+    silencio: await medirSilencio(empresaId, conexao?.ultimo_evento_em ?? null),
     webhook: {
       registrado: Boolean(w),
       ligado: w?.enabled ?? null,
@@ -185,10 +209,32 @@ export interface ResultadoDoWebhook {
   ignorados: number;
 }
 
+/**
+ * Carimba que a Evolution falou conosco por esta instância. Qualquer evento
+ * serve — mensagem, status de entrega, atualização de conexão.
+ *
+ * Até aqui `ultimo_evento_em` só andava no CONNECTION_UPDATE. O painel dizia
+ * "última vez que algo chegou por aqui" e mostrava um campo que ignorava
+ * justamente o que mais chega: mensagem. Uma instância entregando o dia
+ * inteiro parecia muda; uma que tinha parado de entregar parecia viva.
+ * Com o carimbo em todo evento o campo passa a dizer o que promete — e é
+ * dele que o vigia do silêncio depende.
+ */
+async function ouvimosAEvolution(conexaoId: string): Promise<void> {
+  const agora = new Date().toISOString();
+  // O aviso de silêncio se apaga sozinho: chegou evento, o problema passou.
+  const { error } = await supabaseServer.from('atende_conexoes').update({ ultimo_evento_em: agora, aviso_silencio_em: null }).eq('id', conexaoId);
+  // A coluna pode ainda não existir (migração 057 não aplicada): carimba o resto.
+  if (error && /aviso_silencio_em/.test(error.message)) {
+    await supabaseServer.from('atende_conexoes').update({ ultimo_evento_em: agora }).eq('id', conexaoId);
+  }
+}
+
 /** Processa um corpo de webhook inteiro. Nunca lança: cada evento que falha vira log, o resto segue. */
 export async function processarWebhook(body: any): Promise<ResultadoDoWebhook> {
   const eventos = lerEventoDoAtende(body);
   const r: ResultadoDoWebhook = { eventos: eventos.length, mensagens: 0, ignorados: 0 };
+  const ouvidas = new Set<string>();
   for (const e of eventos) {
     try {
       const conexao = await conexaoPelaInstancia(e.instancia);
@@ -196,6 +242,7 @@ export async function processarWebhook(body: any): Promise<ResultadoDoWebhook> {
         r.ignorados++;
         continue;
       }
+      ouvidas.add(conexao.id);
       if (e.tipoDeEvento === 'mensagem') {
         if (await registrarMensagem(conexao, e)) r.mensagens++;
         else r.ignorados++;
@@ -205,6 +252,10 @@ export async function processarWebhook(body: any): Promise<ResultadoDoWebhook> {
       console.error('[atende webhook]', e.tipoDeEvento, err.message);
     }
   }
+  // Depois dos eventos: um carimbo por instância, mesmo que tudo tenha sido
+  // ignorado (grupo, status de mensagem que não é nossa). O que importa aqui
+  // não é o conteúdo — é que a Evolution ainda está falando conosco.
+  for (const id of ouvidas) await ouvimosAEvolution(id).catch((err: any) => console.error('[atende webhook] carimbo:', err.message));
   return r;
 }
 

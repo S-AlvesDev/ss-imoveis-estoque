@@ -35,6 +35,8 @@ interface Diagnostico {
   estado_na_evolution?: string | null;
   estado_que_guardamos?: string | null;
   ultimo_evento_em?: string | null;
+  /** Há quanto tempo nada chega, e se isso já é demais para o movimento desta empresa. */
+  silencio?: { horas_uteis: number; limite: number | null; calado: boolean } | null;
   webhook?: {
     registrado: boolean;
     ligado: boolean | null;
@@ -243,6 +245,7 @@ export function Whatsapp() {
               <Conferencia ok={Boolean(diag.webhook?.aponta_para_nos)} titulo="Aponta para o Atende Aí" detalhe={diag.webhook?.aponta_para_nos ? 'endereço correto' : 'está apontando para outro lugar'} />
               <Conferencia ok={Boolean(diag.webhook?.token_confere)} titulo="Senha do webhook confere" detalhe={diag.webhook?.token_confere ? 'igual à do servidor' : 'DIFERENTE da do servidor — as entregas estão sendo recusadas'} />
               <Conferencia ok={Boolean(diag.webhook?.recebe_mensagens)} titulo="Recebe o evento de mensagem" detalhe={(diag.webhook?.eventos ?? []).join(', ') || 'nenhum evento'} />
+              {diag.silencio && <Conferencia ok={!diag.silencio.calado} titulo="Está chegando mensagem" detalhe={diag.silencio.calado ? `nada há ${duracaoCurta(diag.silencio.horas_uteis)} de expediente — demais para o movimento de vocês` : `a última chegou há ${duracaoCurta(diag.silencio.horas_uteis)} de expediente`} />}
             </ul>
             {/* O remédio tem que combinar com o defeito: webhook torto se
                 reconfigura, sessão caída se reinicia. Oferecer o botão errado
@@ -255,6 +258,13 @@ export function Whatsapp() {
             {webhookOk(diag) && diag.estado_na_evolution !== 'conectada' && (
               <Alerta tom="aviso" className="mt-4" titulo={`A sessão está "${diag.estado_na_evolution ?? 'indefinida'}"`} acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<RotateCw size={14} />} onClick={reiniciar}>Reiniciar sessão</Botao>}>
                 O webhook está certo — o que não está de pé é a ligação com o WhatsApp. Acabou de reiniciar? Espere um minuto e consulte de novo: reconectar leva alguns segundos. Se não voltar, reinicie de novo.
+              </Alerta>
+            )}
+            {/* O zumbi: sessão e webhook impecáveis, e mesmo assim nada entra.
+                Era o caso que a tela não enxergava — dava tudo verde. */}
+            {webhookOk(diag) && diag.estado_na_evolution === 'conectada' && diag.silencio?.calado && (
+              <Alerta tom="erro" className="mt-4" titulo="A conexão diz estar de pé, mas parou de entregar" acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<RotateCw size={14} />} onClick={reiniciar}>Reiniciar sessão</Botao>}>
+                Está tudo certo no papel e nada chega há {duracaoCurta(diag.silencio.horas_uteis)} de expediente — mais do que o normal para o movimento de vocês. É a ligação com o aparelho que caiu sem avisar. Reiniciar religa sem QR e sem perder mensagem; se depois de duas tentativas não voltar, reconecte pelo QR.
               </Alerta>
             )}
             {tudoCerto(diag) && (
@@ -290,14 +300,25 @@ export function Whatsapp() {
   );
 }
 
+/** "2,5 h", "40 min" — horas de expediente, do jeito que se fala. */
+function duracaoCurta(h: number): string {
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`;
+  if (h < 24) return `${h.toFixed(1).replace('.', ',')} h`;
+  return `mais de um dia`;
+}
+
 /** O webhook está em ordem? (separado da sessão: cada defeito tem o seu remédio) */
 function webhookOk(d: Diagnostico): boolean {
   return Boolean(d.webhook?.registrado && d.webhook?.ligado && d.webhook?.aponta_para_nos && d.webhook?.token_confere && d.webhook?.recebe_mensagens);
 }
 
-/** Verde só quando nada falta: é o que diz se a mensagem chega. */
+/**
+ * Verde só quando nada falta — e "nada falta" inclui estar chegando
+ * mensagem. Sem isso a tela dava tudo certo para uma instância que havia
+ * parado de entregar horas antes, que foi exatamente o que aconteceu.
+ */
 function tudoCerto(d: Diagnostico): boolean {
-  return d.estado_na_evolution === 'conectada' && Boolean(d.webhook?.registrado && d.webhook?.ligado && d.webhook?.aponta_para_nos && d.webhook?.token_confere && d.webhook?.recebe_mensagens);
+  return d.estado_na_evolution === 'conectada' && !d.silencio?.calado && webhookOk(d);
 }
 
 function Conferencia({ ok, titulo, detalhe }: { ok: boolean; titulo: string; detalhe: string }) {

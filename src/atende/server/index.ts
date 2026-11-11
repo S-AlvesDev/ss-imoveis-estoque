@@ -26,7 +26,7 @@ import { ErroDoMercadoPago, mensagemParaOPagador } from '../../server/mercadopag
 import { vigiarSlaSePassouUmMinuto, vigiarSlaDeTodas } from './sla';
 import { gerarFollowupsSePassouUmaHora, gerarFollowupsDeTodas } from './followup';
 import { lembretesDoAtende, cobrancasPendentes, validarFaturamento } from './cobrancas';
-import { resumosSemanaisDoAtende, vigiarConexoesDoAtende } from './rotinas';
+import { resumosSemanaisDoAtende, vigiarConexoesDoAtende, vigiarSilenciosDoAtende, vigiarSilencioSePassouDezMinutos } from './rotinas';
 import { enviarFollowup, descartarFollowup, encerrarComAvaliacao, fundirClientes, contatosParecidos } from './conversas';
 import { resumoDeAvaliacoes } from './avaliacao';
 import { sanearHistorico, responderNaHomeDoAtende, responderNoPainelDoAtende, registrarJatobaDoAtende, perguntasHoje, LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM } from './jatoba';
@@ -257,6 +257,8 @@ export function criarRouterAtende(): express.Router {
     try {
       const r2 = await processarWebhook(req.body);
       res.json({ ok: true, ...r2 });
+      // Carona: o movimento de uma empresa é o que descobre o silêncio da outra.
+      vigiarSilencioSePassouDezMinutos();
     } catch (err: any) {
       console.error('[atende webhook] erro:', err.message);
       res.status(500).json({ error: 'Falha ao processar.' });
@@ -303,6 +305,8 @@ export function criarRouterAtende(): express.Router {
       }
       const cobrancas = await cobrancasPendentes();
       const conexoes = await vigiarConexoesDoAtende();
+      // Piso: se ninguém abriu o painel e nenhum webhook chegou, o cron varre.
+      const caladas = await vigiarSilenciosDoAtende(agora).catch((e: any) => (console.warn('[atende cron] silêncio:', e.message), [] as Array<{ empresa: string; horas: number; estado: string }>));
       const segunda = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Sao_Paulo' }).format(agora) === 'Mon';
       const resumos = segunda ? await resumosSemanaisDoAtende(agora) : { empresas: 0, enviados: 0 };
       const sla = await vigiarSlaDeTodas(agora);
@@ -315,8 +319,8 @@ export function criarRouterAtende(): express.Router {
       const combos = await acertarCombos().catch((e: any) => (console.warn('[atende cron] combos:', e.message), { empresas: 0, desfeitos: 0 }));
       // Rede de segurança: disparos em massa com a aba fechada no meio (o normal é a própria tela processar).
       const disparos = await processarLotesAbandonados().catch((e: any) => (console.warn('[atende cron] disparos:', e.message), { lotes: 0, enviados: 0, erros: 0 }));
-      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}, combos ${combos.desfeitos}/${combos.empresas}, disparos abandonados ${disparos.lotes}, triagens destravadas ${destravadas.destravadas}, fotos ${fotos.trocadas}/${fotos.olhadas}.`);
-      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, resumos, sla, followups, combos, disparos, triagens_destravadas: destravadas.destravadas, fotos });
+      console.info(`[atende cron] lembretes ${lembretes.enviados}/${lembretes.empresas}, cobranças ${cobrancas}, conexões caídas ${conexoes.length}, caladas ${caladas.length}, resumos ${resumos.enviados}, SLA ${sla.avisadas}/${sla.escalonadas}, follow-ups ${followups.sugeridos}, combos ${combos.desfeitos}/${combos.empresas}, disparos abandonados ${disparos.lotes}, triagens destravadas ${destravadas.destravadas}, fotos ${fotos.trocadas}/${fotos.olhadas}.`);
+      res.json({ lembretes, avulsos_aprovados: avulsos, cobrancas, conexoes, caladas, resumos, sla, followups, combos, disparos, triagens_destravadas: destravadas.destravadas, fotos });
     } catch (err: any) {
       console.error('[GET /api/atende/cron] erro:', err.message);
       res.status(500).json({ error: err.message });
@@ -727,6 +731,8 @@ export function criarRouterAtende(): express.Router {
       // Enquanto alguém está online, o SLA e o follow-up rodam por aqui (sem segurar a resposta).
       vigiarSlaSePassouUmMinuto(req.sessao!.empresa_id);
       gerarFollowupsSePassouUmaHora(req.sessao!.empresa_id);
+      // E o vigia do silêncio, que precisa de alguém acordado para rodar.
+      vigiarSilencioSePassouDezMinutos();
       res.json(await delta(req, desde));
     } catch (err: any) {
       tratar(res, err, 'GET /api/atende/sync', 'Erro ao sincronizar.');

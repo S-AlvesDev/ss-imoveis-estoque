@@ -8,6 +8,7 @@ import { montarDashboard } from './dashboard';
 import { situacaoDaConexao } from './whatsapp';
 import { dbDaEmpresa } from './tenant';
 import { NOME_DO_ESTADO_DO_LEAD } from '../shared/tipos';
+import { horasUteisEntre, limiteDeSilencio, DIA_MS, MENSAGENS_QUE_FALTARAM, SILENCIO_MINIMO_H } from '../shared/silencio';
 import type { Dashboard, EstadoDoLead } from '../shared/tipos';
 import type { RequisicaoAtende } from './auth';
 import { ATENDE, atendeUrl } from '../shared/produto';
@@ -139,4 +140,154 @@ export async function vigiarConexoesDoAtende(): Promise<Array<{ empresa: string;
     }
   }
   return caidas;
+}
+
+// ---------------------------------------------------------------------------
+//  O vigia do silêncio
+//
+//  O vigia de cima pergunta "a conexão está de pé?". Serve para a queda
+//  honesta — o aparelho desligou, o QR venceu, a sessão caiu e avisou.
+//
+//  Não serve para a pior das falhas, que foi a que aconteceu: a sessão
+//  continua dizendo "conectada", a Evolution continua respondendo, e
+//  simplesmente nada mais chega. Para esse caso o estado mente, e o único
+//  sinal honesto é o silêncio — uma instância que recebia e parou de
+//  receber está quebrada, jure ela o que jurar.
+//
+//  Duas dificuldades, e o que se faz com cada uma:
+//
+//  1. Silêncio normal existe. Ninguém escreve para a imobiliária às 3h da
+//     manhã, nem no domingo. Por isso não se conta o relógio, contam-se as
+//     HORAS ÚTEIS — e de madrugada o contador simplesmente não anda.
+//
+//  2. Empresa movimentada e empresa parada têm silêncios normais muito
+//     diferentes. Três horas caladas numa que recebe de dez em dez minutos
+//     é uma emergência; na que recebe duas mensagens por semana é terça-
+//     feira. Então o limite não é fixo: sai do próprio movimento de cada
+//     uma, medido nas duas semanas anteriores ao silêncio.
+// ---------------------------------------------------------------------------
+
+const fmtDataHora = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' });
+
+function horas(h: number): string {
+  return h < 1 ? `${Math.round(h * 60)} min` : `${h.toFixed(1).replace('.', ',')} h`;
+}
+
+export function emailDoSilencio(empresa: string, args: { desde: Date; horasUteis: number; limite: number; estado: string }): { subject: string; html: string } {
+  const deAcordo = args.estado === 'conectada';
+  return {
+    subject: `${ATENDE.nome}: o WhatsApp da ${empresa} parou de receber mensagens`,
+    html: layoutAtende({
+      titulo: 'O WhatsApp parou de receber.',
+      corpo:
+        p(`Nada chega pelo WhatsApp da <strong>${escapeHtml(empresa)}</strong> desde <strong>${fmtDataHora.format(args.desde)}</strong> — ${escapeHtml(horas(args.horasUteis))} de expediente em silêncio, quando o normal para vocês é algo chegar a cada ${escapeHtml(horas(args.limite / MENSAGENS_QUE_FALTARAM))}.`) +
+        tabela([
+          ['Última coisa que chegou', fmtDataHora.format(args.desde)],
+          ['Silêncio (horário comercial)', horas(args.horasUteis)],
+          ['A conexão diz estar', args.estado],
+        ]) +
+        (deAcordo
+          ? p('A conexão <strong>diz que está de pé</strong>, e é justamente esse o problema: a ligação com o aparelho caiu sem avisar. Quem escreve para vocês vê a mensagem sair normalmente, mas ela não chega à central.')
+          : p('A conexão também já não se diz conectada, então as mensagens dos clientes não estão chegando à central.')) +
+        p('<strong>O que fazer:</strong> abra o Atende Aí em <strong>WhatsApp</strong> e clique em <strong>Diagnosticar</strong>. A tela diz qual é o problema e oferece o botão certo — quase sempre <strong>Reiniciar sessão</strong>, que religa sem QR e sem perder mensagem. Se depois de duas tentativas não voltar, é reconectar pelo QR com o celular da empresa.'),
+      botao: { texto: 'Abrir o diagnóstico', href: `${atendeUrl(siteUrl())}/whatsapp` },
+    }),
+  };
+}
+
+interface ConexaoCalada {
+  id: string;
+  empresa_id: string;
+  ultimo_evento_em: string;
+  aviso_silencio_em: string | null;
+}
+
+/** Quantas mensagens de cliente entraram nas duas semanas ANTES do silêncio começar. */
+async function entradasAntesDoSilencio(empresaId: string, ate: Date): Promise<number> {
+  const de = new Date(ate.getTime() - 14 * DIA_MS);
+  const { count } = await supabaseServer
+    .from('atende_mensagens')
+    .select('id', { count: 'exact', head: true })
+    .eq('empresa_id', empresaId)
+    .eq('direcao', 'entrada')
+    .gte('criado_em', de.toISOString())
+    .lt('criado_em', ate.toISOString());
+  return count ?? 0;
+}
+
+/**
+ * Procura instâncias que pararam de receber e avisa os administradores —
+ * uma vez por episódio. O aviso se apaga sozinho quando qualquer evento
+ * volta a chegar (ver `ouvimosAEvolution`, no webhook).
+ */
+export async function vigiarSilenciosDoAtende(agora: Date = new Date()): Promise<Array<{ empresa: string; horas: number; estado: string }>> {
+  if (!evolutionConfigurada()) return [];
+  const caladas: Array<{ empresa: string; horas: number; estado: string }> = [];
+
+  const { data, error } = await supabaseServer
+    .from('atende_conexoes')
+    .select('id, empresa_id, ultimo_evento_em, aviso_silencio_em')
+    .not('conectado_em', 'is', null)
+    .not('ultimo_evento_em', 'is', null)
+    .is('aviso_silencio_em', null)
+    .lt('ultimo_evento_em', new Date(agora.getTime() - SILENCIO_MINIMO_H * 3600_000).toISOString());
+  if (error) {
+    // Migração 057 ainda não aplicada: o vigia fica quieto em vez de quebrar o cron.
+    if (/aviso_silencio_em/.test(error.message)) return [];
+    throw error;
+  }
+  const candidatas = ((data || []) as ConexaoCalada[]).map((c) => ({ c, horasUteis: horasUteisEntre(new Date(c.ultimo_evento_em), agora) })).filter((x) => x.horasUteis >= SILENCIO_MINIMO_H);
+  if (!candidatas.length) return [];
+
+  const t = await getTransporter();
+  const empresas = await empresasComAdmins();
+  for (const { c, horasUteis } of candidatas) {
+    const empresa = empresas.find((e) => e.id === c.empresa_id);
+    if (!empresa) continue;
+    try {
+      const desde = new Date(c.ultimo_evento_em);
+      const limite = limiteDeSilencio(await entradasAntesDoSilencio(c.empresa_id, desde));
+      if (horasUteis < limite) continue;
+
+      // Só agora se pergunta à Evolution — para contar no e-mail o que ela acha
+      // que está acontecendo, que é metade do diagnóstico.
+      let estado = 'não respondeu';
+      try {
+        estado = (await situacaoDaConexao(c.empresa_id)).conexao?.estado ?? 'desconectada';
+      } catch {
+        /* a Evolution não respondeu; o e-mail sai assim mesmo */
+      }
+
+      caladas.push({ empresa: empresa.nome, horas: horasUteis, estado });
+      console.warn(`[atende silêncio] ${empresa.nome}: nada desde ${c.ultimo_evento_em} (${horasUteis.toFixed(1)}h úteis, limite ${limite.toFixed(1)}h, conexão "${estado}").`);
+      if (!t || !empresa.emails.length) continue;
+
+      const { subject, html } = emailDoSilencio(empresa.nome, { desde, horasUteis, limite, estado });
+      await t.sendMail({ from: remetenteAtende(), to: empresa.emails.join(', '), subject, html });
+      // Marca depois de enviar: falhou o e-mail, a próxima varredura tenta de novo.
+      await supabaseServer.from('atende_conexoes').update({ aviso_silencio_em: new Date().toISOString() }).eq('id', c.id);
+    } catch (err: any) {
+      console.error(`[atende silêncio] ${empresa.nome}:`, err.message);
+    }
+  }
+  return caladas;
+}
+
+/**
+ * De onde o vigia é chamado no dia a dia: o cron roda uma vez por dia, e
+ * esperar até amanhã para descobrir que hoje ninguém foi atendido não serve.
+ * Então a varredura pega carona em dois movimentos que acontecem o tempo
+ * todo — o webhook de qualquer empresa e o sync de quem está com o painel
+ * aberto — com um teto de uma varredura a cada dez minutos.
+ *
+ * Carona é de propósito: a empresa calada, por definição, não gera tráfego
+ * próprio. Quem a encontra é o movimento das outras.
+ */
+const VARREDURA_MS = 10 * 60 * 1000;
+let ultimaVarredura = 0;
+
+export function vigiarSilencioSePassouDezMinutos(agora = Date.now()): void {
+  if (agora - ultimaVarredura < VARREDURA_MS) return;
+  ultimaVarredura = agora;
+  void vigiarSilenciosDoAtende(new Date(agora)).catch((err: any) => console.error('[atende silêncio]', err.message));
 }
