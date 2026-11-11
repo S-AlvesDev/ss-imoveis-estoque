@@ -5881,13 +5881,13 @@ async function conectar(empresaId) {
   const { data: data3 } = await supabaseServer.from("atende_conexoes").update({ estado, ...estado === "conectada" && !conexao.conectado_em ? { conectado_em: (/* @__PURE__ */ new Date()).toISOString() } : {} }).eq("id", conexao.id).select(CONEXAO_COLUNAS).single();
   return { conexao: data3 ?? conexao, qr };
 }
-async function situacaoDaConexao(empresaId) {
+async function situacaoDaConexao(empresaId, opcoes = {}) {
   const conexao = await conexaoDaEmpresa(empresaId);
   if (!conexao) return { conexao: null, qr: null, evolution: evolutionConfigurada() };
   if (!evolutionConfigurada()) return { conexao, qr: null, evolution: false };
   const estado = traduzirEstado(await estadoDaInstancia(conexao.instancia).catch(() => "close"));
   let qr = null;
-  if (estado !== "conectada") {
+  if (opcoes.comQr && estado !== "conectada") {
     try {
       qr = await qrDaInstancia(conexao.instancia);
     } catch {
@@ -8372,7 +8372,7 @@ function criarRouterAtende() {
   });
   r.get("/whatsapp", exigir("whatsapp.gerir"), async (req, res) => {
     try {
-      res.json(await situacaoDaConexao(req.sessao.empresa_id));
+      res.json(await situacaoDaConexao(req.sessao.empresa_id, { comQr: req.query.qr === "1" }));
     } catch (err) {
       console.error("[GET /api/atende/whatsapp] erro:", err.message);
       res.status(500).json({ error: "N\xE3o foi poss\xEDvel consultar o WhatsApp." });

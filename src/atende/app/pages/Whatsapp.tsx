@@ -96,9 +96,15 @@ export function Whatsapp() {
     }
   }
 
-  const consultar = useCallback(async () => {
+  /**
+   * Consultar é LER. Só pede o QR (`comQr`) quando a pessoa está de fato
+   * pareando, porque pedir QR manda a Evolution recomeçar a ligação — e foi
+   * assim que sessões boas morreram: a tela consultava, a sessão estava num
+   * 'conectando' passageiro, e a consulta derrubava o que funcionava.
+   */
+  const consultar = useCallback(async (comQr = false) => {
     try {
-      setSituacao(await api.get<Situacao>('/whatsapp'));
+      setSituacao(await api.get<Situacao>(`/whatsapp${comQr ? '?qr=1' : ''}`));
     } catch (err) {
       toast.error(err instanceof ErroDaApi ? err.message : 'Não foi possível consultar o WhatsApp.');
     }
@@ -108,13 +114,22 @@ export function Whatsapp() {
     void consultar();
   }, [consultar]);
 
-  // Com QR na tela, renova a cada 20 s até conectar.
+  // Com o QR na tela, renova a cada 20 s até conectar. Só aqui, e só porque a
+  // pessoa está parada diante do QR esperando parear: o QR vence em ~1 min.
+  const pareando = Boolean(situacao?.qr) && situacao?.conexao?.estado !== 'conectada';
+  useEffect(() => {
+    if (!pareando) return;
+    const t = setInterval(() => void consultar(true), 20_000);
+    return () => clearInterval(t);
+  }, [pareando, consultar]);
+
+  // Sem QR na tela, ainda vale acompanhar o estado — lendo, sem mexer nele.
   const aguardando = Boolean(situacao?.conexao && situacao.conexao.estado !== 'conectada' && situacao.conexao.estado !== 'desconectada');
   useEffect(() => {
-    if (!aguardando) return;
-    const t = setInterval(consultar, 20_000);
+    if (!aguardando || pareando) return;
+    const t = setInterval(() => void consultar(false), 20_000);
     return () => clearInterval(t);
-  }, [aguardando, consultar]);
+  }, [aguardando, pareando, consultar]);
 
   async function conectar() {
     setAgindo(true);
@@ -147,7 +162,7 @@ export function Whatsapp() {
   const estado = c ? NOME_DO_ESTADO_DA_CONEXAO[c.estado] : null;
 
   return (
-    <Pagina titulo="WhatsApp da empresa" descricao="O número que os clientes usam. Conecte pelo QR, como no WhatsApp Web — a central passa a receber e responder por ele." largura="md" acoes={situacao ? <Botao tamanho="sm" variante="secundaria" icone={<RefreshCw size={14} />} onClick={consultar}>Atualizar</Botao> : undefined}>
+    <Pagina titulo="WhatsApp da empresa" descricao="O número que os clientes usam. Conecte pelo QR, como no WhatsApp Web — a central passa a receber e responder por ele." largura="md" acoes={situacao ? <Botao tamanho="sm" variante="secundaria" icone={<RefreshCw size={14} />} onClick={() => void consultar()}>Atualizar</Botao> : undefined}>
       <div className="space-y-4">
         {situacao && !situacao.evolution && (
           <Alerta tom="aviso" titulo="Infraestrutura do WhatsApp não configurada">
@@ -219,7 +234,7 @@ export function Whatsapp() {
                     {c ? 'Gerar novo QR' : 'Conectar WhatsApp'}
                   </Botao>
                   {c && (
-                    <Botao variante="secundaria" icone={<RefreshCw size={14} />} onClick={consultar}>
+                    <Botao variante="secundaria" icone={<RefreshCw size={14} />} onClick={() => void consultar()}>
                       Já escaneei
                     </Botao>
                   )}

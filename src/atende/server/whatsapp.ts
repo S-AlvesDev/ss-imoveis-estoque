@@ -81,14 +81,34 @@ export async function conectar(empresaId: string): Promise<{ conexao: Conexao; q
   return { conexao: (data as any) ?? conexao!, qr };
 }
 
-/** Como está agora: o que a Evolution diz, gravado de volta. QR só enquanto não conectou. */
-export async function situacaoDaConexao(empresaId: string): Promise<{ conexao: Conexao | null; qr: QrCode | null; evolution: boolean }> {
+/**
+ * Como está agora: o que a Evolution diz, gravado de volta.
+ *
+ * O QR só sai quando ALGUÉM PEDIU — e esse detalhe custou dias de
+ * investigação, porque era o defeito.
+ *
+ * `qrDaInstancia` chama `GET /instance/connect`, que não é leitura de
+ * estado: é o endereço que MANDA PAREAR DE NOVO. Antes, esta função pedia
+ * o QR sempre que o estado não fosse 'conectada' — e 'conectando' é o
+ * estado normal e passageiro por onde a sessão passa toda vez que
+ * reconecta sozinha.
+ *
+ * Então bastava um soluço de alguns segundos coincidir com alguém abrindo
+ * a tela do WhatsApp, ou com o cron diário passando, para mandarmos a
+ * Evolution recomeçar o pareamento e jogar fora as credenciais que estavam
+ * funcionando. O soluço virava morte permanente, que só um QR novo
+ * desfazia — e que voltava a acontecer dias depois, pelo mesmo caminho.
+ *
+ * Uma função que se chama "situação da conexão" não pode derrubar a
+ * conexão. Ler estado é `/instance/connectionState`, e só.
+ */
+export async function situacaoDaConexao(empresaId: string, opcoes: { comQr?: boolean } = {}): Promise<{ conexao: Conexao | null; qr: QrCode | null; evolution: boolean }> {
   const conexao = await conexaoDaEmpresa(empresaId);
   if (!conexao) return { conexao: null, qr: null, evolution: evolutionConfigurada() };
   if (!evolutionConfigurada()) return { conexao, qr: null, evolution: false };
   const estado = traduzirEstado(await estadoDaInstancia(conexao.instancia).catch(() => 'close'));
   let qr: QrCode | null = null;
-  if (estado !== 'conectada') {
+  if (opcoes.comQr && estado !== 'conectada') {
     try {
       qr = await qrDaInstancia(conexao.instancia);
     } catch {

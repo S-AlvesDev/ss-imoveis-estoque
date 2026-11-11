@@ -649,7 +649,9 @@ export function criarRouterAtende(): express.Router {
   // ---- WhatsApp da empresa
   r.get('/whatsapp', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
     try {
-      res.json(await situacaoDaConexao(req.sessao!.empresa_id));
+      // `qr=1` só vem da tela do QR, com a pessoa pareando. Sem isso, esta
+      // rota é leitura pura: pedir QR reinicia o pareamento e derruba a sessão.
+      res.json(await situacaoDaConexao(req.sessao!.empresa_id, { comQr: req.query.qr === '1' }));
     } catch (err: any) {
       console.error('[GET /api/atende/whatsapp] erro:', err.message);
       res.status(500).json({ error: 'Não foi possível consultar o WhatsApp.' });
