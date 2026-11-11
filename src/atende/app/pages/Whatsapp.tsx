@@ -245,7 +245,7 @@ export function Whatsapp() {
               <Conferencia ok={Boolean(diag.webhook?.aponta_para_nos)} titulo="Aponta para o Atende Aí" detalhe={diag.webhook?.aponta_para_nos ? 'endereço correto' : 'está apontando para outro lugar'} />
               <Conferencia ok={Boolean(diag.webhook?.token_confere)} titulo="Senha do webhook confere" detalhe={diag.webhook?.token_confere ? 'igual à do servidor' : 'DIFERENTE da do servidor — as entregas estão sendo recusadas'} />
               <Conferencia ok={Boolean(diag.webhook?.recebe_mensagens)} titulo="Recebe o evento de mensagem" detalhe={(diag.webhook?.eventos ?? []).join(', ') || 'nenhum evento'} />
-              {diag.silencio && <Conferencia ok={!diag.silencio.calado} titulo="Está chegando mensagem" detalhe={diag.silencio.calado ? `nada há ${duracaoCurta(diag.silencio.horas_uteis)} de expediente — demais para o movimento de vocês` : `a última chegou há ${duracaoCurta(diag.silencio.horas_uteis)} de expediente`} />}
+              {diag.silencio && <Conferencia ok={!diag.silencio.calado} titulo="Está chegando mensagem" detalhe={diag.silencio.calado ? `nada desde as ${horaCurta(diag.ultimo_evento_em)} · ${duracaoCurta(diag.silencio.horas_uteis)} de expediente, demais para o movimento de vocês` : `última às ${horaCurta(diag.ultimo_evento_em)} · ${duracaoCurta(diag.silencio.horas_uteis)} de expediente desde então`} />}
             </ul>
             {/* O remédio tem que combinar com o defeito: webhook torto se
                 reconfigura, sessão caída se reinicia. Oferecer o botão errado
@@ -272,7 +272,12 @@ export function Whatsapp() {
                 A conexão pode estar viva no papel e ter parado de entregar. Reiniciar refaz a ligação com o WhatsApp e traz o que ficou para trás — sem desconectar o aparelho, sem QR e sem perder mensagem.
               </Alerta>
             )}
-            {diag.ultimo_evento_em && <p className="mt-3 text-[11px] text-[var(--text-muted)]">Última vez que algo chegou por aqui: {new Date(diag.ultimo_evento_em).toLocaleString('pt-BR')}.</p>}
+            {diag.ultimo_evento_em && (
+              <p className="mt-3 text-[11px] leading-4 text-[var(--text-muted)]">
+                Última vez que algo chegou por aqui: {new Date(diag.ultimo_evento_em).toLocaleString('pt-BR')}.
+                {' '}O tempo de silêncio conta só o expediente (segunda a sábado, 8h às 20h) — fora dele o contador não anda, porque ninguém escrever de madrugada é normal.
+              </p>
+            )}
           </Cartao>
         )}
       </div>
@@ -300,11 +305,23 @@ export function Whatsapp() {
   );
 }
 
-/** "2,5 h", "40 min" — horas de expediente, do jeito que se fala. */
+/**
+ * "2,5 h", "40 min", "0 min" — horas de EXPEDIENTE, do jeito que se fala.
+ *
+ * O zero é dito como zero. Havia aqui um piso de 1 minuto que, às dez da
+ * noite, transformava "nenhum minuto útil se passou" em "chegou há 1 min" —
+ * exatamente a informação contrária, e justo na hora em que se olha a tela
+ * para saber se algo chegou.
+ */
 function duracaoCurta(h: number): string {
-  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min`;
+  if (h < 1) return `${Math.round(h * 60)} min`;
   if (h < 24) return `${h.toFixed(1).replace('.', ',')} h`;
-  return `mais de um dia`;
+  return 'mais de um dia';
+}
+
+/** "21:39" — o relógio, para quem está olhando a tela agora. */
+function horaCurta(iso: string | null | undefined): string {
+  return iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—';
 }
 
 /** O webhook está em ordem? (separado da sessão: cada defeito tem o seu remédio) */
