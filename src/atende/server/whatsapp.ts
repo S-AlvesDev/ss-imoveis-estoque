@@ -234,6 +234,13 @@ async function ouvimosAEvolution(conexaoId: string): Promise<void> {
 export async function processarWebhook(body: any): Promise<ResultadoDoWebhook> {
   const eventos = lerEventoDoAtende(body);
   const r: ResultadoDoWebhook = { eventos: eventos.length, mensagens: 0, ignorados: 0 };
+  // Uma linha por chamada, sempre — sem conteúdo e sem telefone, só a
+  // contagem. Existe porque a pergunta "a Evolution está nos chamando?" não
+  // tinha resposta: o handler só falava quando quebrava, então silêncio no
+  // log podia ser "não chegou" ou "chegou e deu tudo certo", e passamos
+  // horas sem saber qual dos dois era.
+  const instancia = String(body?.instance ?? '—');
+  const nomeDoEvento = String(body?.event ?? '—');
   const ouvidas = new Set<string>();
   for (const e of eventos) {
     try {
@@ -256,6 +263,7 @@ export async function processarWebhook(body: any): Promise<ResultadoDoWebhook> {
   // ignorado (grupo, status de mensagem que não é nossa). O que importa aqui
   // não é o conteúdo — é que a Evolution ainda está falando conosco.
   for (const id of ouvidas) await ouvimosAEvolution(id).catch((err: any) => console.error('[atende webhook] carimbo:', err.message));
+  console.info(`[atende webhook] ${instancia} ${nomeDoEvento}: ${r.eventos} evento(s), ${r.mensagens} mensagem(ns), ${r.ignorados} ignorado(s)${ouvidas.size ? '' : ', instância desconhecida'}.`);
   return r;
 }
 

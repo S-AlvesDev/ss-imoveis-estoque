@@ -5933,6 +5933,8 @@ async function ouvimosAEvolution(conexaoId) {
 async function processarWebhook(body) {
   const eventos = lerEventoDoAtende(body);
   const r = { eventos: eventos.length, mensagens: 0, ignorados: 0 };
+  const instancia = String(body?.instance ?? "\u2014");
+  const nomeDoEvento = String(body?.event ?? "\u2014");
   const ouvidas = /* @__PURE__ */ new Set();
   for (const e of eventos) {
     try {
@@ -5952,6 +5954,7 @@ async function processarWebhook(body) {
     }
   }
   for (const id of ouvidas) await ouvimosAEvolution(id).catch((err) => console.error("[atende webhook] carimbo:", err.message));
+  console.info(`[atende webhook] ${instancia} ${nomeDoEvento}: ${r.eventos} evento(s), ${r.mensagens} mensagem(ns), ${r.ignorados} ignorado(s)${ouvidas.size ? "" : ", inst\xE2ncia desconhecida"}.`);
   return r;
 }
 var ORDEM_DO_STATUS = { enviando: 0, enviada: 1, entregue: 2, lida: 3, falhou: 9 };
