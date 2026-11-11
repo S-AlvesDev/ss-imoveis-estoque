@@ -3436,12 +3436,16 @@ function lerMensagem(body) {
   if (ehJidQueIgnoramos(chave3.remoteJid)) return null;
   const telefone = telefoneDaChave(chave3, dados);
   if (!telefone) {
-    console.warn("[atende webhook] mensagem descartada: n\xE3o achei o telefone em", JSON.stringify({ remoteJid: chave3.remoteJid, campos: Object.keys(chave3 ?? {}) }));
+    console.warn("[atende webhook] mensagem descartada: n\xE3o achei o telefone em", JSON.stringify({ remoteJid: chave3.remoteJid, campos_da_chave: Object.keys(chave3 ?? {}), campos_do_evento: Object.keys(dados ?? {}) }));
     return null;
   }
   const m = dados.message ?? {};
   const real = m.ephemeralMessage?.message ?? m.viewOnceMessage?.message ?? m.viewOnceMessageV2?.message ?? m.documentWithCaptionMessage?.message ?? m;
   if (real.protocolMessage || real.reactionMessage || real.senderKeyDistributionMessage) return null;
+  if (!Object.keys(real).some((k) => k !== "messageContextInfo")) {
+    console.warn("[atende webhook] mensagem descartada: envelope sem conte\xFAdo", JSON.stringify({ campos_do_evento: Object.keys(dados ?? {}) }));
+    return null;
+  }
   let tipo = "outro";
   let txt = null;
   let midia = null;

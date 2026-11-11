@@ -183,13 +183,22 @@ export function lerMensagem(body: any): MensagemDoWhatsApp | null {
     // Mensagem de gente que não conseguimos identificar. Antes sumia sem
     // deixar rastro; agora fica no log com o formato que chegou, para saber
     // qual campo acrescentar — nunca mais um descarte invisível.
-    console.warn('[atende webhook] mensagem descartada: não achei o telefone em', JSON.stringify({ remoteJid: chave.remoteJid, campos: Object.keys(chave ?? {}) }));
+    // Os NOMES dos campos, nunca os valores: é o que falta saber para
+    // acrescentar o campo certo, e não põe telefone de ninguém no log.
+    console.warn('[atende webhook] mensagem descartada: não achei o telefone em', JSON.stringify({ remoteJid: chave.remoteJid, campos_da_chave: Object.keys(chave ?? {}), campos_do_evento: Object.keys(dados ?? {}) }));
     return null;
   }
   const m = dados.message ?? {};
   // Mensagem "efêmera" ou "view once" embrulha a de verdade.
   const real = m.ephemeralMessage?.message ?? m.viewOnceMessage?.message ?? m.viewOnceMessageV2?.message ?? m.documentWithCaptionMessage?.message ?? m;
   if (real.protocolMessage || real.reactionMessage || real.senderKeyDistributionMessage) return null;
+  // Envelope que chegou vazio: não é grupo, não é protocolo, tem telefone — e
+  // mesmo assim não há mensagem dentro. Nunca deve acontecer, então quando
+  // acontecer tem de estar escrito, e não virar mais um sumiço sem explicação.
+  if (!Object.keys(real).some((k) => k !== 'messageContextInfo')) {
+    console.warn('[atende webhook] mensagem descartada: envelope sem conteúdo', JSON.stringify({ campos_do_evento: Object.keys(dados ?? {}) }));
+    return null;
+  }
 
   let tipo: TipoDaMensagem = 'outro';
   let txt: string | null = null;
