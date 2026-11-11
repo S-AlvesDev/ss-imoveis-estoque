@@ -45,11 +45,29 @@ export interface Visao {
 /** Os estados em que a conversa ainda não tem dono e está esperando alguém. */
 const ESTADOS_DE_FILA = ['na_fila', 'nova', 'em_triagem'];
 
+/**
+ * Os times da pessoa, lembrados por meio minuto.
+ *
+ * Esta consulta saía a cada sincronização — de 4 em 4 segundos, por aba
+ * aberta — para responder algo que muda uma vez por mês. Era puro custo:
+ * cada ida ao banco vira uma linha de log na Supabase, e foi esse tipo de
+ * repetição que estourou a cota. Meio minuto de defasagem numa troca de
+ * time não atrapalha ninguém.
+ */
+const TIMES_LEMBRADOS_MS = 30_000;
+const timesLembrados = new Map<string, { em: number; membros: Array<{ time_id: string; supervisiona: boolean }> }>();
+
 export async function visaoDe(req: RequisicaoAtende): Promise<Visao> {
   const s = req.sessao!;
   if (s.papel === 'admin') return { tudo: true, eu: s.id, meusTimes: [], supervisiona: [], filaGeral: true };
+  const chave = `${s.empresa_id}:${s.id}`;
+  const lembrado = timesLembrados.get(chave);
+  if (lembrado && Date.now() - lembrado.em < TIMES_LEMBRADOS_MS) {
+    return { tudo: false, eu: s.id, meusTimes: lembrado.membros.map((m) => m.time_id), supervisiona: s.papel === 'supervisor' ? lembrado.membros.map((m) => m.time_id) : [], filaGeral: true };
+  }
   const { data } = await req.dbAtende!.from('atende_time_membros').select('time_id, supervisiona').eq('usuario_id', s.id);
   const membros = (data || []) as Array<{ time_id: string; supervisiona: boolean }>;
+  timesLembrados.set(chave, { em: Date.now(), membros });
   return { tudo: false, eu: s.id, meusTimes: membros.map((m) => m.time_id), supervisiona: s.papel === 'supervisor' ? membros.map((m) => m.time_id) : [], filaGeral: true };
 }
 
@@ -601,7 +619,20 @@ export async function definirEtiquetas(req: RequisicaoAtende, conversaId: string
  * adiantado — aconteceu no desenvolvimento, 22 s — faria cada mudança
  * nascer "no passado" do cursor e nunca chegar.
  */
-export async function delta(req: RequisicaoAtende, desde: string | null): Promise<Delta> {
+/**
+ * O delta: o que mudou desde o último carimbo.
+ *
+ * Roda de 4 em 4 segundos por aba aberta, então o número de consultas que
+ * ele dispara é o que define o custo do produto inteiro. Eram nove por
+ * sincronização; a conta de log da Supabase estourou por causa disso, não
+ * por volume de atendimento.
+ *
+ * Hoje são três no caso comum. Presença da equipe e estado da conexão
+ * mudam devagar e só vêm no sync COMPLETO, que a tela pede a cada 30 s; o
+ * batimento de presença vai junto. Fora disso, o delta pergunta só o que
+ * de fato muda a cada segundo: conversas, mensagens e chamados.
+ */
+export async function delta(req: RequisicaoAtende, desde: string | null, completo = true): Promise<Delta> {
   const db = req.dbAtende!;
   const s = req.sessao!;
   const inicio = Date.now();
@@ -617,8 +648,8 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
       return q;
     })(),
     desde ? db.from('atende_mensagens').select(`${MENSAGEM_COLUNAS}, atualizado_em`).gte('atualizado_em', desde).order('atualizado_em', { ascending: true }).limit(300) : Promise.resolve({ data: [], error: null }),
-    db.from('atende_usuarios').select('id, presenca, presenca_em').eq('ativo', true),
-    supabaseServer.from('atende_conexoes').select('id, instancia, numero, estado, conectado_em, ultimo_evento_em').eq('empresa_id', s.empresa_id).maybeSingle(),
+    completo ? db.from('atende_usuarios').select('id, presenca, presenca_em').eq('ativo', true) : Promise.resolve({ data: null, error: null }),
+    completo ? supabaseServer.from('atende_conexoes').select('id, instancia, numero, estado, conectado_em, ultimo_evento_em').eq('empresa_id', s.empresa_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     // Chamados para mim, recentes. A janela curta evita que uma aba que ficou
     // fora do ar volte tocando alarme de coisa velha; a tela ainda dedupe por id.
     db.from('atende_eventos').select('id, conversa_id, usuario_id, dados, criado_em').eq('tipo', 'cutucada').gte('criado_em', new Date(inicio - CUTUCADA_VALE_MS).toISOString()).order('criado_em', { ascending: true }).limit(20),
@@ -642,16 +673,25 @@ export async function delta(req: RequisicaoAtende, desde: string | null): Promis
   }
 
   // Heartbeat: quem sincroniza está aqui. 'ausente' é escolha da pessoa e fica; o resto vira 'online'.
-  const batida = new Date().toISOString();
-  void db.from('atende_usuarios').update({ presenca: 'online', presenca_em: batida }).eq('id', s.id).neq('presenca', 'ausente').then(() => undefined, () => undefined);
-  void db.from('atende_usuarios').update({ presenca_em: batida }).eq('id', s.id).eq('presenca', 'ausente').then(() => undefined, () => undefined);
+  // Só no sync completo, e numa gravação só: eram duas a cada 4 s por pessoa
+  // para carimbar uma presença que ninguém lê com essa precisão.
+  if (completo) {
+    const euAgora = ((equipeRes.data || []) as any[]).find((u) => Number(u.id) === s.id);
+    const batida = new Date().toISOString();
+    const patch = euAgora?.presenca === 'ausente' ? { presenca_em: batida } : { presenca: 'online' as const, presenca_em: batida };
+    void db
+      .from('atende_usuarios')
+      .update(patch)
+      .eq('id', s.id)
+      .then(() => undefined, () => undefined);
+  }
 
   return {
     cursor,
     conversas,
     mensagens,
-    equipe: ((equipeRes.data || []) as any[]).map((u) => ({ id: Number(u.id), presenca: u.presenca, presenca_em: u.presenca_em })),
-    conexao: (conexaoRes.data as any) ?? null,
+    // Ausentes no sync leve: a tela mantém o que já tem.
+    ...(completo ? { equipe: ((equipeRes.data || []) as any[]).map((u) => ({ id: Number(u.id), presenca: u.presenca, presenca_em: u.presenca_em })), conexao: (conexaoRes.data as any) ?? null } : {}),
     cutucadas: ((cutucadasRes.data || []) as any[])
       .filter((e) => Number(e.dados?.para) === s.id)
       .map((e) => ({ id: String(e.id), conversa_id: String(e.conversa_id), de: e.dados?.de_nome ? String(e.dados.de_nome) : null, texto: e.dados?.texto ? String(e.dados.texto) : null, criado_em: String(e.criado_em) })),

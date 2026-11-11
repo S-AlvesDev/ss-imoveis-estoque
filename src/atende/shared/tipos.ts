@@ -345,8 +345,14 @@ export interface Delta {
   cursor: string;
   conversas: Conversa[];
   mensagens: Mensagem[];
-  equipe: Array<{ id: number; presenca: Presenca; presenca_em: string | null }>;
-  conexao: Conexao | null;
+  /**
+   * Presença e conexão só vêm no sync COMPLETO (a cada 30 s). São dados que
+   * mudam devagar, e pedi-los de 4 em 4 segundos era a maior parte das
+   * chamadas ao banco — o que estourou a cota de log da Supabase. Ausentes,
+   * a tela mantém o que já tem.
+   */
+  equipe?: Array<{ id: number; presenca: Presenca; presenca_em: string | null }>;
+  conexao?: Conexao | null;
   /** Chamados para mim, dos últimos minutos. A tela toca e dedupe por id. */
   cutucadas: Cutucada[];
 }

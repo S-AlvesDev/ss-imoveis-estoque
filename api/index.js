@@ -4724,11 +4724,19 @@ async function destravarTriagensParadas(agora = /* @__PURE__ */ new Date(), hora
 // src/atende/server/conversas.ts
 import { randomUUID } from "crypto";
 var ESTADOS_DE_FILA = ["na_fila", "nova", "em_triagem"];
+var TIMES_LEMBRADOS_MS = 3e4;
+var timesLembrados = /* @__PURE__ */ new Map();
 async function visaoDe(req) {
   const s = req.sessao;
   if (s.papel === "admin") return { tudo: true, eu: s.id, meusTimes: [], supervisiona: [], filaGeral: true };
+  const chave3 = `${s.empresa_id}:${s.id}`;
+  const lembrado = timesLembrados.get(chave3);
+  if (lembrado && Date.now() - lembrado.em < TIMES_LEMBRADOS_MS) {
+    return { tudo: false, eu: s.id, meusTimes: lembrado.membros.map((m) => m.time_id), supervisiona: s.papel === "supervisor" ? lembrado.membros.map((m) => m.time_id) : [], filaGeral: true };
+  }
   const { data: data3 } = await req.dbAtende.from("atende_time_membros").select("time_id, supervisiona").eq("usuario_id", s.id);
   const membros = data3 || [];
+  timesLembrados.set(chave3, { em: Date.now(), membros });
   return { tudo: false, eu: s.id, meusTimes: membros.map((m) => m.time_id), supervisiona: s.papel === "supervisor" ? membros.map((m) => m.time_id) : [], filaGeral: true };
 }
 function podeVerConversa(v, c) {
@@ -5098,7 +5106,7 @@ async function definirEtiquetas(req, conversaId, etiquetas) {
   await db.from("atende_conversas").update({ atualizado_em: (/* @__PURE__ */ new Date()).toISOString() }).eq("id", c.id);
   return await conversaPorId(req, c.id);
 }
-async function delta(req, desde) {
+async function delta(req, desde, completo = true) {
   const db = req.dbAtende;
   const s = req.sessao;
   const inicio = Date.now();
@@ -5113,8 +5121,8 @@ async function delta(req, desde) {
       return q;
     })(),
     desde ? db.from("atende_mensagens").select(`${MENSAGEM_COLUNAS}, atualizado_em`).gte("atualizado_em", desde).order("atualizado_em", { ascending: true }).limit(300) : Promise.resolve({ data: [], error: null }),
-    db.from("atende_usuarios").select("id, presenca, presenca_em").eq("ativo", true),
-    supabaseServer.from("atende_conexoes").select("id, instancia, numero, estado, conectado_em, ultimo_evento_em").eq("empresa_id", s.empresa_id).maybeSingle(),
+    completo ? db.from("atende_usuarios").select("id, presenca, presenca_em").eq("ativo", true) : Promise.resolve({ data: null, error: null }),
+    completo ? supabaseServer.from("atende_conexoes").select("id, instancia, numero, estado, conectado_em, ultimo_evento_em").eq("empresa_id", s.empresa_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     // Chamados para mim, recentes. A janela curta evita que uma aba que ficou
     // fora do ar volte tocando alarme de coisa velha; a tela ainda dedupe por id.
     db.from("atende_eventos").select("id, conversa_id, usuario_id, dados, criado_em").eq("tipo", "cutucada").gte("criado_em", new Date(inicio - CUTUCADA_VALE_MS).toISOString()).order("criado_em", { ascending: true }).limit(20)
@@ -5133,15 +5141,18 @@ async function delta(req, desde) {
     for (const c of data3 || []) visiveis.add(c.id);
     mensagens = mensagens.filter((m) => visiveis.has(m.conversa_id));
   }
-  const batida = (/* @__PURE__ */ new Date()).toISOString();
-  void db.from("atende_usuarios").update({ presenca: "online", presenca_em: batida }).eq("id", s.id).neq("presenca", "ausente").then(() => void 0, () => void 0);
-  void db.from("atende_usuarios").update({ presenca_em: batida }).eq("id", s.id).eq("presenca", "ausente").then(() => void 0, () => void 0);
+  if (completo) {
+    const euAgora = (equipeRes.data || []).find((u) => Number(u.id) === s.id);
+    const batida = (/* @__PURE__ */ new Date()).toISOString();
+    const patch = euAgora?.presenca === "ausente" ? { presenca_em: batida } : { presenca: "online", presenca_em: batida };
+    void db.from("atende_usuarios").update(patch).eq("id", s.id).then(() => void 0, () => void 0);
+  }
   return {
     cursor,
     conversas,
     mensagens,
-    equipe: (equipeRes.data || []).map((u) => ({ id: Number(u.id), presenca: u.presenca, presenca_em: u.presenca_em })),
-    conexao: conexaoRes.data ?? null,
+    // Ausentes no sync leve: a tela mantém o que já tem.
+    ...completo ? { equipe: (equipeRes.data || []).map((u) => ({ id: Number(u.id), presenca: u.presenca, presenca_em: u.presenca_em })), conexao: conexaoRes.data ?? null } : {},
     cutucadas: (cutucadasRes.data || []).filter((e) => Number(e.dados?.para) === s.id).map((e) => ({ id: String(e.id), conversa_id: String(e.conversa_id), de: e.dados?.de_nome ? String(e.dados.de_nome) : null, texto: e.dados?.texto ? String(e.dados.texto) : null, criado_em: String(e.criado_em) }))
   };
 }
@@ -8425,7 +8436,7 @@ function criarRouterAtende() {
       vigiarSlaSePassouUmMinuto(req.sessao.empresa_id);
       gerarFollowupsSePassouUmaHora(req.sessao.empresa_id);
       vigiarSilencioSePassouDezMinutos();
-      res.json(await delta(req, desde));
+      res.json(await delta(req, desde, req.query.completo !== "0"));
     } catch (err) {
       tratar2(res, err, "GET /api/atende/sync", "Erro ao sincronizar.");
     }

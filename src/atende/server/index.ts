@@ -733,7 +733,9 @@ export function criarRouterAtende(): express.Router {
       gerarFollowupsSePassouUmaHora(req.sessao!.empresa_id);
       // E o vigia do silêncio, que precisa de alguém acordado para rodar.
       vigiarSilencioSePassouDezMinutos();
-      res.json(await delta(req, desde));
+      // A tela pede o completo (presença + conexão + batimento) a cada 30 s;
+      // nos outros tiques vem só o que muda de segundo em segundo.
+      res.json(await delta(req, desde, req.query.completo !== '0'));
     } catch (err: any) {
       tratar(res, err, 'GET /api/atende/sync', 'Erro ao sincronizar.');
     }

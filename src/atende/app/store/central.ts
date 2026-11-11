@@ -38,7 +38,8 @@ interface Central {
   setFiltro: (f: Filtro) => void;
   setBusca: (b: string) => void;
   carregarLista: () => Promise<void>;
-  sincronizar: () => Promise<void>;
+  /** `completo` traz presença e conexão também. Devolve se veio novidade. */
+  sincronizar: (completo?: boolean) => Promise<boolean>;
   abrir: (id: string | null) => Promise<void>;
   carregarMaisAntigas: (id: string) => Promise<boolean>;
   aplicarConversa: (c: Conversa) => void;
@@ -94,9 +95,18 @@ export const useCentral = create<Central>((set, get) => ({
     }
   },
 
-  sincronizar: async () => {
+  /**
+   * Puxa o que mudou. `completo` traz também presença e conexão, que mudam
+   * devagar — o relógio só pede isso a cada 30 s, porque perguntar de 4 em
+   * 4 segundos era a maior fatia do custo de banco. Devolve se veio alguma
+   * novidade, que é o que faz o relógio acelerar ou desacelerar.
+   */
+  sincronizar: async (completo = true) => {
     const { cursor } = get();
-    const d = await api.get<Delta>(`/sync${cursor ? `?desde=${encodeURIComponent(cursor)}` : ''}`);
+    const busca = new URLSearchParams();
+    if (cursor) busca.set('desde', cursor);
+    if (!completo) busca.set('completo', '0');
+    const d = await api.get<Delta>(`/sync${busca.size ? `?${busca}` : ''}`);
     const antes = get().conversas;
     const conversas = { ...antes };
     for (const c of d.conversas) conversas[c.id] = c;
@@ -119,18 +129,22 @@ export const useCentral = create<Central>((set, get) => ({
       if (mensagens[id]) mensagens[id] = mesclar(mensagens[id], lista);
     }
     const presenca = { ...get().presenca };
-    for (const u of d.equipe) presenca[u.id] = { presenca: u.presenca, presenca_em: u.presenca_em };
-    set({ conversas, mensagens, presenca, conexao: d.conexao, cursor: d.cursor });
+    for (const u of d.equipe ?? []) presenca[u.id] = { presenca: u.presenca, presenca_em: u.presenca_em };
+    // Sem `equipe`/`conexao` no sync leve: mantém o que já está na tela em vez de apagar.
+    set({ conversas, mensagens, presenca, cursor: d.cursor, ...(d.conexao !== undefined ? { conexao: d.conexao } : {}) });
     if (novidades.length) get().ouvinte?.(novidades);
     // Chamados da supervisão. O servidor manda os dos últimos minutos a cada
     // sync, então o id já visto é descartado — senão o alarme tocaria de 4 em
     // 4 segundos até a janela fechar.
+    let novas = 0;
     for (const c of d.cutucadas ?? []) {
       if (cutucadasVistas.has(c.id)) continue;
       cutucadasVistas.add(c.id);
       // Na primeira carga não há o que avisar: seria alarme de coisa já lida.
       if (cursor) get().ouvinteDeCutucada?.(c);
+      novas++;
     }
+    return novidades.length > 0 || d.mensagens.length > 0 || d.conversas.length > 0 || novas > 0;
   },
 
   abrir: async (id) => {
