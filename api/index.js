@@ -3567,6 +3567,9 @@ function previaDe(tipo, texto8) {
 // src/atende/server/midias.ts
 var BUCKET_DE_MIDIAS = "atende-midias";
 var URL_ASSINADA_SEGUNDOS = 10 * 60;
+var URL_DE_VISUALIZACAO_SEGUNDOS = 12 * 3600;
+var MARGEM_PARA_REASSINAR_MS = 60 * 60 * 1e3;
+var CACHE_DA_MIDIA = "31536000";
 var MIDIA_MAX_BYTES = 20 * 1024 * 1024;
 var EXTENSOES = {
   "image/jpeg": "jpg",
@@ -3600,7 +3603,7 @@ async function guardarMidia(caminho, base64, mimetype) {
   const bytes = Buffer.from(base64.replace(/^data:[^;]+;base64,/, ""), "base64");
   if (bytes.length === 0) throw new Error("Arquivo vazio.");
   if (bytes.length > MIDIA_MAX_BYTES) throw new Error(`Arquivo grande demais (m\xE1ximo ${Math.round(MIDIA_MAX_BYTES / 1024 / 1024)} MB).`);
-  const { error } = await supabaseServer.storage.from(BUCKET_DE_MIDIAS).upload(caminho, bytes, { contentType: mimetype.split(";")[0].trim(), upsert: true });
+  const { error } = await supabaseServer.storage.from(BUCKET_DE_MIDIAS).upload(caminho, bytes, { contentType: mimetype.split(";")[0].trim(), upsert: true, cacheControl: CACHE_DA_MIDIA });
   if (error) throw new Error(`Storage: ${error.message}`);
   return { caminho, tamanho: bytes.length };
 }
@@ -3618,8 +3621,8 @@ async function tamanhoDaMidia(caminho) {
   if (!achado) return null;
   return Number(achado.metadata?.size ?? 0) || 0;
 }
-async function urlAssinada(caminho, download) {
-  const { data: data3, error } = await supabaseServer.storage.from(BUCKET_DE_MIDIAS).createSignedUrl(caminho, URL_ASSINADA_SEGUNDOS, download ? { download } : void 0);
+async function urlAssinada(caminho, download, segundos = URL_ASSINADA_SEGUNDOS) {
+  const { data: data3, error } = await supabaseServer.storage.from(BUCKET_DE_MIDIAS).createSignedUrl(caminho, segundos, download ? { download } : void 0);
   if (error || !data3?.signedUrl) throw new Error(`Storage: ${error?.message ?? "sem URL"}`);
   return data3.signedUrl;
 }
@@ -3630,9 +3633,17 @@ function tipoPeloMimetype(mimetype) {
   if (m.startsWith("audio/")) return "audio";
   return "documento";
 }
+function urlAindaServe(midia, agora = Date.now()) {
+  const url = midia?.url_vista;
+  if (typeof url !== "string" || !url) return false;
+  const vence = Number(midia?.url_vista_vence);
+  if (!Number.isFinite(vence)) return false;
+  return vence - agora > MARGEM_PARA_REASSINAR_MS;
+}
 
 // src/atende/server/fotos.ts
 var BUCKET_DAS_FOTOS = "logos";
+var CACHE_DA_FOTO = "604800";
 var FOTO_MAX_BYTES = 2 * 1024 * 1024;
 var TIPOS = /* @__PURE__ */ new Set(["image/jpeg", "image/png", "image/webp"]);
 function caminhoDaFoto(empresaId, clienteId, mimetype = "image/jpeg") {
@@ -3649,7 +3660,7 @@ async function guardarFotoDoCliente(empresaId, clienteId, url) {
     const bytes = Buffer.from(await r.arrayBuffer());
     if (!bytes.length || bytes.length > FOTO_MAX_BYTES) return null;
     const caminho = caminhoDaFoto(empresaId, clienteId, mimetype);
-    const { error } = await supabaseServer.storage.from(BUCKET_DAS_FOTOS).upload(caminho, bytes, { contentType: mimetype, upsert: true });
+    const { error } = await supabaseServer.storage.from(BUCKET_DAS_FOTOS).upload(caminho, bytes, { contentType: mimetype, upsert: true, cacheControl: CACHE_DA_FOTO });
     if (error) {
       console.warn("[atende foto] storage:", error.message);
       return null;
@@ -4810,7 +4821,12 @@ async function urlDaMidia(req, mensagemId, download) {
   if (!m?.midia?.caminho) return null;
   const conversa = await conversaPorId(req, m.conversa_id);
   if (!conversa) return null;
-  return urlAssinada(m.midia.caminho, download ? m.midia.nome ?? void 0 : void 0);
+  if (download) return urlAssinada(m.midia.caminho, m.midia.nome ?? void 0);
+  const agora = Date.now();
+  if (urlAindaServe(m.midia, agora)) return m.midia.url_vista;
+  const url = await urlAssinada(m.midia.caminho, void 0, URL_DE_VISUALIZACAO_SEGUNDOS);
+  await req.dbAtende.from("atende_mensagens").update({ midia: { ...m.midia, url_vista: url, url_vista_vence: agora + URL_DE_VISUALIZACAO_SEGUNDOS * 1e3 } }).eq("id", mensagemId).then(void 0, (e) => console.warn("[atende midia] guardar url:", e?.message));
+  return url;
 }
 var ErroDeConversa = class extends Error {
   constructor(message, status = 400) {

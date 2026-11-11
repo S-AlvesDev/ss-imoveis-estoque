@@ -21,6 +21,13 @@ import { fotoDoContato } from '../../server/evolution';
  */
 
 export const BUCKET_DAS_FOTOS = 'logos';
+/**
+ * Uma semana. O avatar aparece em toda linha da lista de conversas, então
+ * sem cache ele é baixado às dezenas a cada visita — e é o tipo de imagem
+ * que quase nunca muda. Uma semana de defasagem num avatar não incomoda
+ * ninguém; baixá-lo de hora em hora, por pessoa, come a franquia.
+ */
+export const CACHE_DA_FOTO = '604800';
 /** Avatar é imagem pequena; acima disto é coisa errada e não vale guardar. */
 export const FOTO_MAX_BYTES = 2 * 1024 * 1024;
 const TIPOS = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -53,7 +60,7 @@ export async function guardarFotoDoCliente(empresaId: string, clienteId: string,
     if (!bytes.length || bytes.length > FOTO_MAX_BYTES) return null;
 
     const caminho = caminhoDaFoto(empresaId, clienteId, mimetype);
-    const { error } = await supabaseServer.storage.from(BUCKET_DAS_FOTOS).upload(caminho, bytes, { contentType: mimetype, upsert: true });
+    const { error } = await supabaseServer.storage.from(BUCKET_DAS_FOTOS).upload(caminho, bytes, { contentType: mimetype, upsert: true, cacheControl: CACHE_DA_FOTO });
     if (error) {
       console.warn('[atende foto] storage:', error.message);
       return null;

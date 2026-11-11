@@ -11,6 +11,28 @@ import { supabaseServer } from '../../lib/supabaseServer';
  */
 export const BUCKET_DE_MIDIAS = 'atende-midias';
 export const URL_ASSINADA_SEGUNDOS = 10 * 60;
+/**
+ * A URL de VISUALIZAÇÃO vale 12 h, e é reaproveitada enquanto valer.
+ *
+ * Com 10 minutos, cada vez que alguém abria a conversa o servidor assinava
+ * uma URL nova — e URL nova é endereço novo para o navegador, que então
+ * baixava tudo outra vez. Trocar de conversa e voltar baixava a conversa
+ * inteira de novo. Era isso que estava consumindo a franquia de tráfego do
+ * Storage: o mesmo áudio, o mesmo print, dezenas de vezes por dia.
+ *
+ * Para o navegador poder guardar, o endereço tem de se repetir. Daí a
+ * validade longa e a URL gravada na própria mensagem (ver `urlDaMidia`).
+ * O download continua com a URL curta: é uma vez só, não há o que cachear.
+ */
+export const URL_DE_VISUALIZACAO_SEGUNDOS = 12 * 3600;
+/** Reassina antes de vencer, para ninguém receber uma URL quase morta. */
+export const MARGEM_PARA_REASSINAR_MS = 60 * 60 * 1000;
+/**
+ * Um ano. O caminho tem o id da mensagem, então o conteúdo daquele endereço
+ * nunca muda — pode ser guardado para sempre, e todo byte que o navegador
+ * guarda é um byte que não sai da nossa franquia.
+ */
+export const CACHE_DA_MIDIA = '31536000';
 /** O máximo que aceitamos subir pela central (o bucket corta em 25 MB). */
 export const MIDIA_MAX_BYTES = 20 * 1024 * 1024;
 
@@ -50,7 +72,7 @@ export async function guardarMidia(caminho: string, base64: string, mimetype: st
   const bytes = Buffer.from(base64.replace(/^data:[^;]+;base64,/, ''), 'base64');
   if (bytes.length === 0) throw new Error('Arquivo vazio.');
   if (bytes.length > MIDIA_MAX_BYTES) throw new Error(`Arquivo grande demais (máximo ${Math.round(MIDIA_MAX_BYTES / 1024 / 1024)} MB).`);
-  const { error } = await supabaseServer.storage.from(BUCKET_DE_MIDIAS).upload(caminho, bytes, { contentType: mimetype.split(';')[0].trim(), upsert: true });
+  const { error } = await supabaseServer.storage.from(BUCKET_DE_MIDIAS).upload(caminho, bytes, { contentType: mimetype.split(';')[0].trim(), upsert: true, cacheControl: CACHE_DA_MIDIA });
   if (error) throw new Error(`Storage: ${error.message}`);
   return { caminho, tamanho: bytes.length };
 }
@@ -78,8 +100,8 @@ export async function tamanhoDaMidia(caminho: string): Promise<number | null> {
 }
 
 /** A URL que o navegador usa para ver/baixar, válida por poucos minutos. */
-export async function urlAssinada(caminho: string, download?: string): Promise<string> {
-  const { data, error } = await supabaseServer.storage.from(BUCKET_DE_MIDIAS).createSignedUrl(caminho, URL_ASSINADA_SEGUNDOS, download ? { download } : undefined);
+export async function urlAssinada(caminho: string, download?: string, segundos = URL_ASSINADA_SEGUNDOS): Promise<string> {
+  const { data, error } = await supabaseServer.storage.from(BUCKET_DE_MIDIAS).createSignedUrl(caminho, segundos, download ? { download } : undefined);
   if (error || !data?.signedUrl) throw new Error(`Storage: ${error?.message ?? 'sem URL'}`);
   return data.signedUrl;
 }
@@ -91,4 +113,20 @@ export function tipoPeloMimetype(mimetype: string): 'imagem' | 'video' | 'audio'
   if (m.startsWith('video/')) return 'video';
   if (m.startsWith('audio/')) return 'audio';
   return 'documento';
+}
+
+/**
+ * Dá para reaproveitar a URL já guardada nesta mídia?
+ *
+ * É a regra que faz o navegador conseguir cachear: enquanto a resposta for
+ * sim, todo mundo recebe exatamente o mesmo endereço, e o arquivo não sai
+ * do Storage de novo. A margem existe para ninguém receber uma URL que
+ * vence no meio do carregamento de um vídeo.
+ */
+export function urlAindaServe(midia: any, agora = Date.now()): boolean {
+  const url = midia?.url_vista;
+  if (typeof url !== 'string' || !url) return false;
+  const vence = Number(midia?.url_vista_vence);
+  if (!Number.isFinite(vence)) return false;
+  return vence - agora > MARGEM_PARA_REASSINAR_MS;
 }

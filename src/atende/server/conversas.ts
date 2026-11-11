@@ -6,7 +6,7 @@ import { assinarRemetente } from '../shared/remetente';
 import { enviarTextoComId, enviarMidia, enviarAudio, enviarLocalizacao, enviarContato, marcarLidas, type Enviada } from '../../server/evolution';
 import type { ScopedDb } from '../../server/tenant';
 import { previaDe } from './eventos';
-import { caminhoDaMidia, tipoPeloMimetype, urlAssinada, urlDeUpload, tamanhoDaMidia, MIDIA_MAX_BYTES } from './midias';
+import { caminhoDaMidia, tipoPeloMimetype, urlAssinada, urlDeUpload, tamanhoDaMidia, MIDIA_MAX_BYTES, URL_DE_VISUALIZACAO_SEGUNDOS, urlAindaServe } from './midias';
 import type { RequisicaoAtende } from './auth';
 import { pode } from '../shared/papeis';
 import { avisarSobreConversa } from './push';
@@ -170,12 +170,37 @@ export async function mensagensDaConversa(req: RequisicaoAtende, conversaId: str
 }
 
 /** A URL assinada da mídia de uma mensagem — depois de conferir que a pessoa vê a conversa. */
+/**
+ * A URL para ver o arquivo — a MESMA URL enquanto ela valer.
+ *
+ * Assinar de novo a cada abertura dava um endereço diferente para o mesmo
+ * arquivo, e endereço diferente é, para o navegador, arquivo diferente:
+ * baixava tudo outra vez a cada troca de conversa. Era o maior consumo da
+ * franquia de tráfego do Storage, e não trazia segurança nenhuma — o
+ * caminho é o mesmo, só o bilhete mudava.
+ *
+ * Agora a URL fica guardada na própria mensagem e é reaproveitada até
+ * faltar uma hora para vencer. O download não entra nisso: é uma vez só, e
+ * leva a URL curta de sempre.
+ */
 export async function urlDaMidia(req: RequisicaoAtende, mensagemId: string, download: boolean): Promise<string | null> {
   const { data: m } = await req.dbAtende!.from('atende_mensagens').select('conversa_id, midia').eq('id', mensagemId).maybeSingle();
   if (!m?.midia?.caminho) return null;
   const conversa = await conversaPorId(req, m.conversa_id);
   if (!conversa) return null;
-  return urlAssinada(m.midia.caminho, download ? (m.midia.nome ?? undefined) : undefined);
+  if (download) return urlAssinada(m.midia.caminho, m.midia.nome ?? undefined);
+
+  const agora = Date.now();
+  if (urlAindaServe(m.midia, agora)) return m.midia.url_vista as string;
+
+  const url = await urlAssinada(m.midia.caminho, undefined, URL_DE_VISUALIZACAO_SEGUNDOS);
+  // Falhar aqui não pode custar a visualização: a URL já está na mão.
+  await req
+    .dbAtende!.from('atende_mensagens')
+    .update({ midia: { ...m.midia, url_vista: url, url_vista_vence: agora + URL_DE_VISUALIZACAO_SEGUNDOS * 1000 } })
+    .eq('id', mensagemId)
+    .then(undefined, (e: any) => console.warn('[atende midia] guardar url:', e?.message));
+  return url;
 }
 
 // ---------------------------------------------------------------------------

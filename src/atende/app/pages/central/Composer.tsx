@@ -125,7 +125,7 @@ export function Composer({ conversa }: { conversa: Conversa }) {
     const mimetype = (blob.type || 'application/octet-stream').split(';')[0];
     const nome = blob instanceof File ? blob.name : `audio-${Date.now()}.${mimetype.includes('ogg') ? 'ogg' : mimetype.includes('mp4') ? 'm4a' : 'webm'}`;
     const prep = await api.post<{ mensagemId: string; caminho: string; signedUrl: string; token: string }>(`/conversas/${conversa.id}/midias/url`, { mimetype, nome, tamanho: blob.size });
-    const up = await fetch(prep.signedUrl, { method: 'PUT', headers: { 'Content-Type': mimetype, 'x-upsert': 'true' }, body: blob });
+    const up = await fetch(prep.signedUrl, { method: 'PUT', headers: { 'Content-Type': mimetype, 'x-upsert': 'true', 'cache-control': 'max-age=31536000' }, body: blob });
     if (!up.ok) throw new ErroDaApi(`O Storage recusou o arquivo (${up.status}).`);
     const r = await api.post<{ mensagem: Mensagem }>(`/conversas/${conversa.id}/mensagens`, { tipo, caminho: prep.caminho, mimetype, nome, texto: legenda });
     await depoisDeEnviar(r.mensagem);

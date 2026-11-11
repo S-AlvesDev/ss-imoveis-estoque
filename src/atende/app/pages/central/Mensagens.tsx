@@ -235,18 +235,40 @@ function Conteudo({ m, nossa, daIa }: { m: Mensagem; nossa: boolean; daIa: boole
   );
 }
 
+/**
+ * As URLs de mídia já pedidas nesta aba.
+ *
+ * Abrir uma conversa monta uma caixinha por arquivo, e cada uma pedia a sua
+ * URL ao servidor — cinquenta arquivos, cinquenta chamadas, toda vez que se
+ * trocava de conversa e voltava. O servidor hoje devolve sempre a mesma URL
+ * enquanto ela vale, então a chamada era só trabalho repetido.
+ *
+ * Guardado por aba, não em disco: a URL vence, e deixar URL vencida guardada
+ * daria imagem quebrada no dia seguinte.
+ */
+const URLS_DE_MIDIA = new Map<string, string>();
+
 /** Imagem, áudio, vídeo, documento, figurinha — com a URL assinada carregada sob demanda. */
 function Arquivo({ m, fundo }: { m: Mensagem; fundo: string }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [url, setUrl] = useState<string | null>(() => URLS_DE_MIDIA.get(m.id) ?? null);
   const [erro, setErro] = useState(false);
   const pendente = m.midia?.pendente && !m.midia?.caminho;
 
-  async function carregar() {
+  async function carregar(forcar = false) {
     setErro(false);
+    if (!forcar) {
+      const guardada = URLS_DE_MIDIA.get(m.id);
+      if (guardada) {
+        setUrl(guardada);
+        return;
+      }
+    }
     try {
       const r = await api.get<{ url: string }>(`/midias/${m.id}`);
+      URLS_DE_MIDIA.set(m.id, r.url);
       setUrl(r.url);
     } catch {
+      URLS_DE_MIDIA.delete(m.id);
       setErro(true);
     }
   }
@@ -265,7 +287,7 @@ function Arquivo({ m, fundo }: { m: Mensagem; fundo: string }) {
   if (erro) {
     return (
       <Caixinha fundo={fundo}>
-        <button type="button" onClick={carregar} className="inline-flex items-center gap-1.5 text-xs underline">
+        <button type="button" onClick={() => void carregar(true)} className="inline-flex items-center gap-1.5 text-xs underline">
           <RefreshCw size={13} /> Carregar de novo
         </button>
       </Caixinha>
