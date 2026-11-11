@@ -43,8 +43,16 @@ export function horasUteisEntre(de: Date, ate: Date): number {
   return total / HORA_MS;
 }
 
-/** Nunca avisa antes disto, por mais parada que a empresa esteja. */
-export const SILENCIO_MINIMO_H = 3;
+/**
+ * Nunca avisa antes disto, por mais parada que a empresa esteja.
+ *
+ * Era 3 h, escolhido quando eu ainda achava que o silêncio podia ser
+ * oscilação. Não é: quando acontece, é uma instância que ficou conectada e
+ * surda, e só volta com um QR novo. Três horas de expediente é meio dia de
+ * atendimento perdido — numa empresa que recebe dez mensagens por hora, meia
+ * hora calada já é certeza suficiente para incomodar alguém.
+ */
+export const SILENCIO_MINIMO_H = 0.5;
 /** Nem depois disto, por mais movimentada que seja. */
 export const SILENCIO_MAXIMO_H = 24;
 /** Horas de expediente em 14 dias: 12 por dia, 12 dias (sem os dois domingos). */
@@ -65,4 +73,28 @@ export function limiteDeSilencio(entradasEm14Dias: number): number {
   if (entradasEm14Dias <= 0) return Infinity;
   const porHoraUtil = entradasEm14Dias / HORAS_UTEIS_EM_14_DIAS;
   return Math.min(SILENCIO_MAXIMO_H, Math.max(SILENCIO_MINIMO_H, MENSAGENS_QUE_FALTARAM / porHoraUtil));
+}
+
+/**
+ * Esta conexão está calada além do normal DELA?
+ *
+ * Mesma conta no servidor (que manda o e-mail) e na tela (que avisa quem
+ * está atendendo): os dois não podem discordar. O limite vem guardado na
+ * conexão, recalculado uma vez por dia — a tela não consulta nada.
+ */
+export function silencioAnormal(
+  c: { ultimo_evento_em?: string | null; limite_silencio_h?: number | null } | null | undefined,
+  agora: Date = new Date(),
+): { horas: number; limite: number; anormal: boolean } | null {
+  if (!c?.ultimo_evento_em || c.limite_silencio_h == null || !Number.isFinite(Number(c.limite_silencio_h))) return null;
+  const limite = Math.max(SILENCIO_MINIMO_H, Number(c.limite_silencio_h));
+  const horas = horasUteisEntre(new Date(c.ultimo_evento_em), agora);
+  return { horas, limite, anormal: horas >= limite };
+}
+
+/** "40 min", "2,5 h" — horas de expediente, do jeito que se fala. */
+export function duracaoUtil(h: number): string {
+  if (h < 1) return `${Math.round(h * 60)} min`;
+  if (h < 24) return `${h.toFixed(1).replace('.', ',')} h`;
+  return 'mais de um dia';
 }

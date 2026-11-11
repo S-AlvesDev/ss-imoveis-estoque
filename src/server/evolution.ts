@@ -334,3 +334,77 @@ export function ehInstanciaDoStokAi(instancia: string | null | undefined, env: A
   return !instancia || instancia === env.EVOLUTION_INSTANCE;
 }
 
+
+// ---------------------------------------------------------------------------
+//  As configurações da instância
+//
+//  Nunca mexemos nelas: a instância era criada no padrão e ficava assim. E o
+//  padrão faz a Evolution processar coisa que nós jogamos fora de qualquer
+//  jeito — status (os "stories") dos contatos e mensagens de grupo.
+//
+//  Isso não era só desperdício. No log de 48 h de um cliente, 48 dos 50
+//  erros de stream classificados vinham de confirmação de `class: status`
+//  (43 de mídia, 5 de texto) — ou seja, dos stories dos contatos. Cada erro
+//  desses derruba o socket, e a reconexão às vezes volta surda: conectada,
+//  enviando, e sem entregar nada do que chega.
+//
+//  Numa imobiliária com centenas de contatos postando story o dia inteiro,
+//  isso é tráfego constante. Numa conta de teste com um punhado de contatos,
+//  quase nenhum — e foi exatamente essa a diferença entre as duas.
+// ---------------------------------------------------------------------------
+
+export interface ConfiguracoesDaInstancia {
+  rejectCall?: boolean;
+  msgCall?: string;
+  groupsIgnore?: boolean;
+  alwaysOnline?: boolean;
+  readMessages?: boolean;
+  readStatus?: boolean;
+  syncFullHistory?: boolean;
+}
+
+/**
+ * O que nós queremos ligado e desligado.
+ *
+ * Só o que o Atende Aí não usa: grupo nós descartamos na leitura do webhook,
+ * story nós nunca mostramos, e histórico completo é uma descarga enorme que
+ * não serve para nada aqui. O resto (`rejectCall`, `msgCall`) fica como está
+ * — mexe no que o cliente vê e não é nosso para decidir.
+ */
+export const CONFIGURACOES_RECOMENDADAS: ConfiguracoesDaInstancia = {
+  groupsIgnore: true,
+  readStatus: false,
+  syncFullHistory: false,
+};
+
+/** O que está configurado hoje. Nulo quando a Evolution não responde. */
+export async function configuracoesDaInstancia(nome: string, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<ConfiguracoesDaInstancia | null> {
+  try {
+    const r = await evo<any>(`/settings/find/${encodeURIComponent(nome)}`, {}, env);
+    const s = r?.settings ?? r;
+    return s && typeof s === 'object' ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Grava as configurações. Lê as de agora antes e manda o conjunto inteiro
+ * de volta com as mudanças por cima: a rota grava tudo o que recebe, então
+ * enviar só um pedaço zeraria o resto.
+ */
+export async function definirConfiguracoes(nome: string, mudancas: ConfiguracoesDaInstancia, env: AmbienteEvolution = process.env as AmbienteEvolution): Promise<{ antes: ConfiguracoesDaInstancia | null; depois: ConfiguracoesDaInstancia }> {
+  const antes = await configuracoesDaInstancia(nome, env);
+  const depois: ConfiguracoesDaInstancia = {
+    rejectCall: antes?.rejectCall ?? false,
+    msgCall: antes?.msgCall ?? '',
+    groupsIgnore: antes?.groupsIgnore ?? false,
+    alwaysOnline: antes?.alwaysOnline ?? false,
+    readMessages: antes?.readMessages ?? false,
+    readStatus: antes?.readStatus ?? false,
+    syncFullHistory: antes?.syncFullHistory ?? false,
+    ...mudancas,
+  };
+  await evo(`/settings/set/${encodeURIComponent(nome)}`, { method: 'POST', body: JSON.stringify(depois) }, env);
+  return { antes, depois };
+}

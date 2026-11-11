@@ -1,5 +1,5 @@
 import { supabaseServer } from '../../lib/supabaseServer';
-import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baixarMidia, fotoDoContato, evolutionConfigurada, variantesDoTelefone, webhookDaInstancia, configurarWebhook, reiniciarInstancia, type QrCode } from '../../server/evolution';
+import { criarInstancia, qrDaInstancia, estadoDaInstancia, apagarInstancia, baixarMidia, fotoDoContato, evolutionConfigurada, variantesDoTelefone, webhookDaInstancia, configurarWebhook, reiniciarInstancia, configuracoesDaInstancia, definirConfiguracoes, CONFIGURACOES_RECOMENDADAS, type QrCode, type ConfiguracoesDaInstancia } from '../../server/evolution';
 import { siteUrl } from '../../server/senha';
 import { lerEventoDoAtende, previaDe, type MensagemDoWhatsApp, type AtualizacaoDeStatus, type AtualizacaoDeConexao } from './eventos';
 import { caminhoDaMidia, guardarMidia } from './midias';
@@ -41,7 +41,7 @@ export function traduzirEstado(s: string): EstadoDaConexao {
   return 'aguardando_qr';
 }
 
-const CONEXAO_COLUNAS = 'id, empresa_id, instancia, numero, estado, conectado_em, ultimo_evento_em';
+const CONEXAO_COLUNAS = 'id, empresa_id, instancia, numero, estado, conectado_em, ultimo_evento_em, limite_silencio_h';
 
 /**
  * A pessoa ainda pode receber conversa? Usuário desativado não recebe — e
@@ -171,6 +171,8 @@ export async function diagnosticoDoWhatsapp(empresaId: string): Promise<Record<s
     estado_que_guardamos: conexao?.estado ?? null,
     ultimo_evento_em: conexao?.ultimo_evento_em ?? null,
     silencio: await medirSilencio(empresaId, conexao?.ultimo_evento_em ?? null),
+    configuracoes: await configuracoesDaInstancia(instancia),
+    configuracoes_recomendadas: CONFIGURACOES_RECOMENDADAS,
     webhook: {
       registrado: Boolean(w),
       ligado: w?.enabled ?? null,
@@ -182,6 +184,22 @@ export async function diagnosticoDoWhatsapp(empresaId: string): Promise<Record<s
       recebe_mensagens: Array.isArray(w?.events) ? w!.events!.some((e) => String(e).toUpperCase() === 'MESSAGES_UPSERT') : null,
     },
   };
+}
+
+/**
+ * Desliga na instância o que o Atende Aí não usa: story dos contatos, grupo
+ * e sincronização de histórico inteiro.
+ *
+ * Não é faxina: é o gatilho. Nos logs de 48 h, 48 dos 50 erros de stream
+ * classificados eram confirmação de `class: status` — os stories dos
+ * contatos. Cada erro desses derruba o socket, e a reconexão às vezes volta
+ * surda. Grupo nós já descartamos na leitura, então processá-lo é só mais
+ * superfície para o mesmo acidente.
+ *
+ * Reversível, sem QR e sem perder mensagem: devolve o antes e o depois.
+ */
+export async function aplicarConfiguracoesRecomendadas(empresaId: string): Promise<{ antes: ConfiguracoesDaInstancia | null; depois: ConfiguracoesDaInstancia }> {
+  return definirConfiguracoes(nomeDaInstancia(empresaId), CONFIGURACOES_RECOMENDADAS);
 }
 
 /** Regrava o webhook da instância com a URL e o token de agora. Conserta instância que ficou com token velho. */

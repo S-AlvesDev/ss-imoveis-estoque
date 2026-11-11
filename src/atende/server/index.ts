@@ -10,7 +10,7 @@ import { emailDeBoasVindasAtende, emailDeConviteAtende, emailDeRecuperacaoAtende
 import { validarCadastro, validarEmpresa, validarTime, validarNovoFuncionario, validarEdicaoDeFuncionario, validarEmail, validarSenha } from '../shared/validacao';
 import { NOME_DO_PAPEL } from '../shared/papeis';
 import { lerSessaoDoStokAi, situacaoDaPonte, entrarPelaPonte, ErroDaPonte } from './ponte';
-import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa, diagnosticoDoWhatsapp, reconfigurarWebhook, reiniciarSessao } from './whatsapp';
+import { processarWebhook, conectar, situacaoDaConexao, desconectar, conexaoDaEmpresa, diagnosticoDoWhatsapp, reconfigurarWebhook, reiniciarSessao, aplicarConfiguracoesRecomendadas } from './whatsapp';
 import { listarConversas, conversaPorId, cutucar, mensagensDaConversa, urlDaMidia, enviarMensagem, prepararUpload, notaInterna, assumir, encerrar, reabrir, marcarComoLida, atualizarCliente, conversasDoCliente, buscarClientes, listarEtiquetas, criarEtiqueta, definirEtiquetas, delta, triagemDaConversa, corrigirTriagem, atualizarLead, transferir, eventosDaConversa, definirPresenca, ErroDeConversa, type Filtro } from './conversas';
 import { simular, destravarTriagensParadas } from './triagem';
 import { consertarFotosVencidas } from './fotos';
@@ -26,7 +26,7 @@ import { ErroDoMercadoPago, mensagemParaOPagador } from '../../server/mercadopag
 import { vigiarSlaSePassouUmMinuto, vigiarSlaDeTodas } from './sla';
 import { gerarFollowupsSePassouUmaHora, gerarFollowupsDeTodas } from './followup';
 import { lembretesDoAtende, cobrancasPendentes, validarFaturamento } from './cobrancas';
-import { resumosSemanaisDoAtende, vigiarConexoesDoAtende, vigiarSilenciosDoAtende, vigiarSilencioSePassouDezMinutos } from './rotinas';
+import { resumosSemanaisDoAtende, vigiarConexoesDoAtende, vigiarSilenciosDoAtende, vigiarSilencioSePassouDezMinutos, atualizarLimitesDeSilencio } from './rotinas';
 import { enviarFollowup, descartarFollowup, encerrarComAvaliacao, fundirClientes, contatosParecidos } from './conversas';
 import { resumoDeAvaliacoes } from './avaliacao';
 import { sanearHistorico, responderNaHomeDoAtende, responderNoPainelDoAtende, registrarJatobaDoAtende, perguntasHoje, LIMITE_HOME_DIA, TAMANHO_MAXIMO_DA_MENSAGEM } from './jatoba';
@@ -305,6 +305,8 @@ export function criarRouterAtende(): express.Router {
       }
       const cobrancas = await cobrancasPendentes();
       const conexoes = await vigiarConexoesDoAtende();
+      // O limite de silêncio de cada empresa, recalculado do movimento dela.
+      await atualizarLimitesDeSilencio(agora).catch((e: any) => console.warn('[atende cron] limites:', e.message));
       // Piso: se ninguém abriu o painel e nenhum webhook chegou, o cron varre.
       const caladas = await vigiarSilenciosDoAtende(agora).catch((e: any) => (console.warn('[atende cron] silêncio:', e.message), [] as Array<{ empresa: string; horas: number; estado: string }>));
       const segunda = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: 'America/Sao_Paulo' }).format(agora) === 'Mon';
@@ -385,7 +387,7 @@ export function criarRouterAtende(): express.Router {
   r.get('/bootstrap', async (req: RequisicaoAtende, res) => {
     try {
       const [empresa, times, equipe, conexao] = await Promise.all([carregarEmpresa(req), carregarTimes(req), carregarEquipe(req), conexaoDaEmpresa(req.sessao!.empresa_id)]);
-      const resposta: BootstrapAtende = { sessao: req.sessao!, empresa, times, equipe, conexao: conexao ? { id: conexao.id, instancia: conexao.instancia, numero: conexao.numero, estado: conexao.estado, conectado_em: conexao.conectado_em, ultimo_evento_em: conexao.ultimo_evento_em } : null, conta: (req as RequisicaoComPlano).contaAtende! };
+      const resposta: BootstrapAtende = { sessao: req.sessao!, empresa, times, equipe, conexao: conexao ? { id: conexao.id, instancia: conexao.instancia, numero: conexao.numero, estado: conexao.estado, conectado_em: conexao.conectado_em, ultimo_evento_em: conexao.ultimo_evento_em, limite_silencio_h: conexao.limite_silencio_h ?? null } : null, conta: (req as RequisicaoComPlano).contaAtende! };
       res.json(resposta);
     } catch (err: any) {
       console.error('[GET /api/atende/bootstrap] erro:', err.message);
@@ -689,6 +691,16 @@ export function criarRouterAtende(): express.Router {
       res.json(await diagnosticoDoWhatsapp(req.sessao!.empresa_id));
     } catch (err: any) {
       tratar(res, err, 'POST /api/atende/whatsapp/reiniciar', 'Não foi possível reiniciar a sessão.');
+    }
+  });
+
+  /** Desliga story, grupo e histórico completo na instância. Reversível, sem QR. */
+  r.post('/whatsapp/configuracoes', exigir('whatsapp.gerir'), async (req: RequisicaoAtende, res) => {
+    try {
+      const r2 = await aplicarConfiguracoesRecomendadas(req.sessao!.empresa_id);
+      res.json({ ...r2, diagnostico: await diagnosticoDoWhatsapp(req.sessao!.empresa_id) });
+    } catch (err: any) {
+      tratar(res, err, 'POST /api/atende/whatsapp/configuracoes', 'Não foi possível aplicar as configurações.');
     }
   });
 

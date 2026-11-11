@@ -649,7 +649,7 @@ export async function delta(req: RequisicaoAtende, desde: string | null, complet
     })(),
     desde ? db.from('atende_mensagens').select(`${MENSAGEM_COLUNAS}, atualizado_em`).gte('atualizado_em', desde).order('atualizado_em', { ascending: true }).limit(300) : Promise.resolve({ data: [], error: null }),
     completo ? db.from('atende_usuarios').select('id, presenca, presenca_em').eq('ativo', true) : Promise.resolve({ data: null, error: null }),
-    completo ? supabaseServer.from('atende_conexoes').select('id, instancia, numero, estado, conectado_em, ultimo_evento_em').eq('empresa_id', s.empresa_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    completo ? supabaseServer.from('atende_conexoes').select('id, instancia, numero, estado, conectado_em, ultimo_evento_em, limite_silencio_h').eq('empresa_id', s.empresa_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     // Chamados para mim, recentes. A janela curta evita que uma aba que ficou
     // fora do ar volte tocando alarme de coisa velha; a tela ainda dedupe por id.
     db.from('atende_eventos').select('id, conversa_id, usuario_id, dados, criado_em').eq('tipo', 'cutucada').gte('criado_em', new Date(inicio - CUTUCADA_VALE_MS).toISOString()).order('criado_em', { ascending: true }).limit(20),

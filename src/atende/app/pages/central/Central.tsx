@@ -10,6 +10,7 @@ import { Pagina } from '../../ui/Pagina';
 import { SeloIa } from '../../ui/Ia';
 import { api, ErroDaApi } from '../../lib/api';
 import { useCentral, conversasVisiveis, type Filtro } from '../../store/central';
+import { silencioAnormal, duracaoUtil } from '../../../shared/silencio';
 import { useCabecalho } from '../../store/cabecalho';
 import { useSessaoAtende } from '../../store/sessao';
 import { useDadosAtende } from '../../store/dados';
@@ -112,7 +113,21 @@ export function Central({ conversaId }: { conversaId: string | null }) {
     return c;
   }, [conversasMap, sessao.id]);
 
+  // Um relógio lento só para o aviso de silêncio recontar sozinho com a
+  // tela parada. Nada aqui consulta o servidor.
+  const [agora, setAgora] = useState(() => new Date());
+  useEffect(() => {
+    const t = window.setInterval(() => setAgora(new Date()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
+
   const semWhatsapp = conexao === null || conexao.estado !== 'conectada';
+  /**
+   * Conectada e surda: a conexão diz estar de pé e parou de entregar. É a
+   * falha que custou um dia inteiro de mensagens sem ninguém notar — e a
+   * única pista é o silêncio, então ela precisa aparecer para quem atende.
+   */
+  const mudo = !semWhatsapp ? silencioAnormal(conexao, agora) : null;
   const opcoesDeFiltro = FILTROS.map((f) => ({ valor: f.id, rotulo: f.nome, icone: f.icone, contagem: contagens[f.id] }));
   const titulo = filtro === 'todas' ? 'Conversas' : 'Atendimentos';
   const descricao = filtro === 'todas' ? 'Todas as conversas da empresa, abertas e encerradas.' : 'As conversas abertas, a fila e as suas — em tempo real.';
@@ -147,6 +162,20 @@ export function Central({ conversaId }: { conversaId: string | null }) {
               <Pilulas valor={filtro} onChange={setFiltro} opcoes={opcoesDeFiltro} />
             </div>
           </div>
+          {mudo?.anormal && (
+            <FaixaOffline
+              texto={`Nada chega pelo WhatsApp há ${duracaoUtil(mudo.horas)} de expediente. A conexão diz estar de pé, mas parou de entregar.`}
+              acao={
+                pode(sessao.papel, 'whatsapp.gerir') ? (
+                  <button type="button" onClick={() => ir(TELAS.whatsapp)} className="shrink-0 font-semibold underline-offset-2 hover:underline">
+                    Reconectar
+                  </button>
+                ) : (
+                  <span className="shrink-0 opacity-80">Avise o administrador.</span>
+                )
+              }
+            />
+          )}
           {semWhatsapp && conexao !== undefined && (
             <FaixaOffline
               texto={conexao ? 'WhatsApp da empresa desconectado.' : 'A empresa ainda não conectou o WhatsApp.'}

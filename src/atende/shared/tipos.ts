@@ -206,6 +206,12 @@ export interface Conexao {
   estado: EstadoDaConexao;
   conectado_em: string | null;
   ultimo_evento_em: string | null;
+  /**
+   * Quantas horas de EXPEDIENTE caladas já são anormais para esta empresa —
+   * calculado do movimento dela e recalculado uma vez por dia. A tela compara
+   * com `ultimo_evento_em` e avisa quem está atendendo, sem consultar nada.
+   */
+  limite_silencio_h?: number | null;
 }
 
 export interface Cliente {

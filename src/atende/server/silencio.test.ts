@@ -20,7 +20,7 @@ vi.hoisted(() => {
 });
 vi.mock('../../lib/supabaseServer', () => ({ supabaseServer: {} }));
 
-import { horasUteisEntre, limiteDeSilencio, SILENCIO_MINIMO_H, SILENCIO_MAXIMO_H } from '../shared/silencio';
+import { horasUteisEntre, limiteDeSilencio, silencioAnormal, duracaoUtil, SILENCIO_MINIMO_H, SILENCIO_MAXIMO_H } from '../shared/silencio';
 import { emailDoSilencio } from './rotinas';
 
 /** Um instante no horário de Brasília (UTC-3), escrito como se lê no relógio daqui. */
@@ -68,9 +68,10 @@ describe('o limite de cada empresa', () => {
     expect(limiteDeSilencio(0)).toBe(Infinity);
   });
 
-  it('empresa movimentada é cobrada no piso de 3 horas', () => {
-    expect(limiteDeSilencio(288)).toBeCloseTo(SILENCIO_MINIMO_H, 5); // 2 por hora útil
-    expect(limiteDeSilencio(5000)).toBe(SILENCIO_MINIMO_H);
+  it('empresa movimentada é cobrada rápido; a muito movimentada, no piso', () => {
+    expect(limiteDeSilencio(288)).toBeCloseTo(3, 5); // 2 por hora útil → 3 h
+    expect(limiteDeSilencio(1440)).toBeCloseTo(0.6, 5); // 10 por hora útil → 36 min
+    expect(limiteDeSilencio(5000)).toBe(SILENCIO_MINIMO_H); // piso de 30 min
   });
 
   it('empresa de movimento médio ganha um limite proporcional', () => {
@@ -97,16 +98,68 @@ describe('o limite de cada empresa', () => {
 });
 
 describe('o caso que motivou isto', () => {
-  it('parou às 15h28 e às 18h30 já teria avisado', () => {
-    // Uma imobiliária que recebe ~4 mensagens por hora útil nas duas semanas anteriores.
-    const limite = limiteDeSilencio(576);
-    const silencio = horasUteisEntre(br('2026-11-10T15:28:00'), br('2026-11-10T18:30:00'));
-    expect(limite).toBe(SILENCIO_MINIMO_H);
-    expect(silencio).toBeGreaterThanOrEqual(limite);
+  /**
+   * A imobiliária recebeu 176 mensagens numa segunda e ZERO na terça: a
+   * instância ficou conectada e surda, e ninguém soube o dia inteiro. Em 14
+   * dias ela recebe ~1.400 mensagens — cerca de 10 por hora de expediente.
+   */
+  const limiteDela = limiteDeSilencio(1400);
+
+  it('com o movimento dela, meia hora calada já é anormal', () => {
+    expect(limiteDela).toBeLessThan(1);
+    expect(limiteDela).toBeGreaterThanOrEqual(SILENCIO_MINIMO_H);
   });
 
-  it('e não teria avisado às 16h30, uma hora depois', () => {
-    expect(horasUteisEntre(br('2026-11-10T15:28:00'), br('2026-11-10T16:30:00'))).toBeLessThan(SILENCIO_MINIMO_H);
+  it('parou às 13h42 e por volta das 14h20 já teria avisado', () => {
+    const silencio = horasUteisEntre(br('2026-11-11T13:42:00'), br('2026-11-11T14:20:00'));
+    expect(silencio).toBeGreaterThanOrEqual(limiteDela);
+  });
+
+  it('e não teria avisado dez minutos depois da parada', () => {
+    expect(horasUteisEntre(br('2026-11-11T13:42:00'), br('2026-11-11T13:52:00'))).toBeLessThan(limiteDela);
+  });
+
+  it('o dia perdido cabia num aviso: 3 h de atraso viraram menos de 40 min', () => {
+    const antes = 3; // o piso que havia quando escrevi isto
+    expect(limiteDela).toBeLessThan(antes / 4);
+  });
+});
+
+describe('o aviso na tela', () => {
+  const agora = br('2026-11-11T14:20:00');
+
+  it('conexão calada além do limite dela é anormal', () => {
+    const r = silencioAnormal({ ultimo_evento_em: br('2026-11-11T13:42:00').toISOString(), limite_silencio_h: 0.6 }, agora);
+    expect(r).toMatchObject({ anormal: true });
+    expect(r!.horas).toBeCloseTo(38 / 60, 2);
+  });
+
+  it('calada de menos não assusta ninguém', () => {
+    expect(silencioAnormal({ ultimo_evento_em: br('2026-11-11T14:10:00').toISOString(), limite_silencio_h: 0.6 }, agora)!.anormal).toBe(false);
+  });
+
+  it('sem limite guardado (migração 058 ainda não rodou), a tela não inventa aviso', () => {
+    expect(silencioAnormal({ ultimo_evento_em: br('2026-11-11T10:00:00').toISOString(), limite_silencio_h: null }, agora)).toBeNull();
+    expect(silencioAnormal(null, agora)).toBeNull();
+    expect(silencioAnormal({ ultimo_evento_em: null, limite_silencio_h: 0.6 }, agora)).toBeNull();
+  });
+
+  it('o piso vale também na tela: limite minúsculo não vira alarme a cada minuto', () => {
+    const r = silencioAnormal({ ultimo_evento_em: br('2026-11-11T14:15:00').toISOString(), limite_silencio_h: 0.01 }, agora);
+    expect(r!.limite).toBe(SILENCIO_MINIMO_H);
+    expect(r!.anormal).toBe(false);
+  });
+
+  it('de madrugada o contador não anda, então não acorda ninguém', () => {
+    const r = silencioAnormal({ ultimo_evento_em: br('2026-11-10T22:00:00').toISOString(), limite_silencio_h: 0.6 }, br('2026-11-11T03:00:00'));
+    expect(r!.anormal).toBe(false);
+  });
+
+  it('o tempo é dito como gente fala', () => {
+    expect(duracaoUtil(0.5)).toBe('30 min');
+    expect(duracaoUtil(0)).toBe('0 min');
+    expect(duracaoUtil(2.5)).toBe('2,5 h');
+    expect(duracaoUtil(30)).toBe('mais de um dia');
   });
 });
 

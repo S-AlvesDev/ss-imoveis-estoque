@@ -189,7 +189,7 @@ export function emailDoSilencio(empresa: string, args: { desde: Date; horasUteis
         (deAcordo
           ? p('A conexão <strong>diz que está de pé</strong>, e é justamente esse o problema: a ligação com o aparelho caiu sem avisar. Quem escreve para vocês vê a mensagem sair normalmente, mas ela não chega à central.')
           : p('A conexão também já não se diz conectada, então as mensagens dos clientes não estão chegando à central.')) +
-        p('<strong>O que fazer:</strong> abra o Atende Aí em <strong>WhatsApp</strong> e clique em <strong>Diagnosticar</strong>. A tela diz qual é o problema e oferece o botão certo — quase sempre <strong>Reiniciar sessão</strong>, que religa sem QR e sem perder mensagem. Se depois de duas tentativas não voltar, é reconectar pelo QR com o celular da empresa.'),
+        p('<strong>O que fazer:</strong> no Atende Aí, abra <strong>WhatsApp</strong> → <strong>Desconectar</strong> e depois <strong>Conectar</strong>, lendo o QR com o celular da empresa. É o único caminho que resolve este caso: <strong>"Reiniciar sessão" não basta</strong> — a conexão volta a dizer que está de pé e continua sem entregar. Leva dois minutos, e o histórico não se perde.'),
       botao: { texto: 'Abrir o diagnóstico', href: `${atendeUrl(siteUrl())}/whatsapp` },
     }),
   };
@@ -213,6 +213,36 @@ async function entradasAntesDoSilencio(empresaId: string, ate: Date): Promise<nu
     .gte('criado_em', de.toISOString())
     .lt('criado_em', ate.toISOString());
   return count ?? 0;
+}
+
+/**
+ * Guarda o limite na conexão, para a tela poder avisar sem consultar nada.
+ * Coluna nova (migração 058): se não existir ainda, segue em silêncio.
+ */
+async function guardarLimite(conexaoId: string, limite: number): Promise<void> {
+  const valor = Number.isFinite(limite) ? Number(limite.toFixed(2)) : null;
+  const { error } = await supabaseServer.from('atende_conexoes').update({ limite_silencio_h: valor }).eq('id', conexaoId);
+  if (error && !/limite_silencio_h/.test(error.message)) console.warn('[atende silêncio] guardar limite:', error.message);
+}
+
+/**
+ * Recalcula o limite de todas as conexões, uma vez por dia.
+ *
+ * É uma contagem por empresa — barato de madrugada, caro se a tela tivesse
+ * de fazer a cada sincronização. Por isso fica guardado.
+ */
+export async function atualizarLimitesDeSilencio(agora: Date = new Date()): Promise<number> {
+  const { data } = await supabaseServer.from('atende_conexoes').select('id, empresa_id').not('conectado_em', 'is', null);
+  let feitos = 0;
+  for (const c of (data || []) as Array<{ id: string; empresa_id: string }>) {
+    try {
+      await guardarLimite(c.id, limiteDeSilencio(await entradasAntesDoSilencio(c.empresa_id, agora)));
+      feitos++;
+    } catch (err: any) {
+      console.warn('[atende silêncio] limite:', err.message);
+    }
+  }
+  return feitos;
 }
 
 /**
@@ -247,6 +277,7 @@ export async function vigiarSilenciosDoAtende(agora: Date = new Date()): Promise
     try {
       const desde = new Date(c.ultimo_evento_em);
       const limite = limiteDeSilencio(await entradasAntesDoSilencio(c.empresa_id, desde));
+      await guardarLimite(c.id, limite);
       if (horasUteis < limite) continue;
 
       // Só agora se pergunta à Evolution — para contar no e-mail o que ela acha

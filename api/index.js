@@ -1616,6 +1616,35 @@ async function apagarInstancia(nome, env = process.env) {
 function ehInstanciaDoStokAi(instancia, env = process.env) {
   return !instancia || instancia === env.EVOLUTION_INSTANCE;
 }
+var CONFIGURACOES_RECOMENDADAS = {
+  groupsIgnore: true,
+  readStatus: false,
+  syncFullHistory: false
+};
+async function configuracoesDaInstancia(nome, env = process.env) {
+  try {
+    const r = await evo(`/settings/find/${encodeURIComponent(nome)}`, {}, env);
+    const s = r?.settings ?? r;
+    return s && typeof s === "object" ? s : null;
+  } catch {
+    return null;
+  }
+}
+async function definirConfiguracoes(nome, mudancas, env = process.env) {
+  const antes = await configuracoesDaInstancia(nome, env);
+  const depois = {
+    rejectCall: antes?.rejectCall ?? false,
+    msgCall: antes?.msgCall ?? "",
+    groupsIgnore: antes?.groupsIgnore ?? false,
+    alwaysOnline: antes?.alwaysOnline ?? false,
+    readMessages: antes?.readMessages ?? false,
+    readStatus: antes?.readStatus ?? false,
+    syncFullHistory: antes?.syncFullHistory ?? false,
+    ...mudancas
+  };
+  await evo(`/settings/set/${encodeURIComponent(nome)}`, { method: "POST", body: JSON.stringify(depois) }, env);
+  return { antes, depois };
+}
 
 // src/server/claude.ts
 var MODELO_PADRAO = "claude-sonnet-5";
@@ -5126,7 +5155,7 @@ async function delta(req, desde, completo = true) {
     })(),
     desde ? db.from("atende_mensagens").select(`${MENSAGEM_COLUNAS}, atualizado_em`).gte("atualizado_em", desde).order("atualizado_em", { ascending: true }).limit(300) : Promise.resolve({ data: [], error: null }),
     completo ? db.from("atende_usuarios").select("id, presenca, presenca_em").eq("ativo", true) : Promise.resolve({ data: null, error: null }),
-    completo ? supabaseServer.from("atende_conexoes").select("id, instancia, numero, estado, conectado_em, ultimo_evento_em").eq("empresa_id", s.empresa_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    completo ? supabaseServer.from("atende_conexoes").select("id, instancia, numero, estado, conectado_em, ultimo_evento_em, limite_silencio_h").eq("empresa_id", s.empresa_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     // Chamados para mim, recentes. A janela curta evita que uma aba que ficou
     // fora do ar volte tocando alarme de coisa velha; a tela ainda dedupe por id.
     db.from("atende_eventos").select("id, conversa_id, usuario_id, dados, criado_em").eq("tipo", "cutucada").gte("criado_em", new Date(inicio - CUTUCADA_VALE_MS).toISOString()).order("criado_em", { ascending: true }).limit(20)
@@ -5825,7 +5854,7 @@ function horasUteisEntre(de, ate) {
   }
   return total / HORA_MS;
 }
-var SILENCIO_MINIMO_H = 3;
+var SILENCIO_MINIMO_H = 0.5;
 var SILENCIO_MAXIMO_H = 24;
 var HORAS_UTEIS_EM_14_DIAS = 144;
 var MENSAGENS_QUE_FALTARAM = 6;
@@ -5850,7 +5879,7 @@ function traduzirEstado(s) {
   if (v === "close" || v === "closed") return "desconectada";
   return "aguardando_qr";
 }
-var CONEXAO_COLUNAS = "id, empresa_id, instancia, numero, estado, conectado_em, ultimo_evento_em";
+var CONEXAO_COLUNAS = "id, empresa_id, instancia, numero, estado, conectado_em, ultimo_evento_em, limite_silencio_h";
 async function atendenteAtivo(empresaId, usuarioId) {
   const { data: data3 } = await supabaseServer.from("atende_usuarios").select("id").eq("id", usuarioId).eq("empresa_id", empresaId).eq("ativo", true).maybeSingle();
   return Boolean(data3);
@@ -5923,6 +5952,8 @@ async function diagnosticoDoWhatsapp(empresaId) {
     estado_que_guardamos: conexao?.estado ?? null,
     ultimo_evento_em: conexao?.ultimo_evento_em ?? null,
     silencio: await medirSilencio(empresaId, conexao?.ultimo_evento_em ?? null),
+    configuracoes: await configuracoesDaInstancia(instancia),
+    configuracoes_recomendadas: CONFIGURACOES_RECOMENDADAS,
     webhook: {
       registrado: Boolean(w),
       ligado: w?.enabled ?? null,
@@ -5934,6 +5965,9 @@ async function diagnosticoDoWhatsapp(empresaId) {
       recebe_mensagens: Array.isArray(w?.events) ? w.events.some((e) => String(e).toUpperCase() === "MESSAGES_UPSERT") : null
     }
   };
+}
+async function aplicarConfiguracoesRecomendadas(empresaId) {
+  return definirConfiguracoes(nomeDaInstancia(empresaId), CONFIGURACOES_RECOMENDADAS);
 }
 async function reconfigurarWebhook(empresaId) {
   await configurarWebhook(nomeDaInstancia(empresaId), urlDoWebhook(), process.env, EVENTOS_DO_ATENDE);
@@ -7199,7 +7233,7 @@ function emailDoSilencio(empresa, args) {
         ["\xDAltima coisa que chegou", fmtDataHora2.format(args.desde)],
         ["Sil\xEAncio (hor\xE1rio comercial)", horas(args.horasUteis)],
         ["A conex\xE3o diz estar", args.estado]
-      ]) + (deAcordo ? p("A conex\xE3o <strong>diz que est\xE1 de p\xE9</strong>, e \xE9 justamente esse o problema: a liga\xE7\xE3o com o aparelho caiu sem avisar. Quem escreve para voc\xEAs v\xEA a mensagem sair normalmente, mas ela n\xE3o chega \xE0 central.") : p("A conex\xE3o tamb\xE9m j\xE1 n\xE3o se diz conectada, ent\xE3o as mensagens dos clientes n\xE3o est\xE3o chegando \xE0 central.")) + p("<strong>O que fazer:</strong> abra o Atende A\xED em <strong>WhatsApp</strong> e clique em <strong>Diagnosticar</strong>. A tela diz qual \xE9 o problema e oferece o bot\xE3o certo \u2014 quase sempre <strong>Reiniciar sess\xE3o</strong>, que religa sem QR e sem perder mensagem. Se depois de duas tentativas n\xE3o voltar, \xE9 reconectar pelo QR com o celular da empresa."),
+      ]) + (deAcordo ? p("A conex\xE3o <strong>diz que est\xE1 de p\xE9</strong>, e \xE9 justamente esse o problema: a liga\xE7\xE3o com o aparelho caiu sem avisar. Quem escreve para voc\xEAs v\xEA a mensagem sair normalmente, mas ela n\xE3o chega \xE0 central.") : p("A conex\xE3o tamb\xE9m j\xE1 n\xE3o se diz conectada, ent\xE3o as mensagens dos clientes n\xE3o est\xE3o chegando \xE0 central.")) + p('<strong>O que fazer:</strong> no Atende A\xED, abra <strong>WhatsApp</strong> \u2192 <strong>Desconectar</strong> e depois <strong>Conectar</strong>, lendo o QR com o celular da empresa. \xC9 o \xFAnico caminho que resolve este caso: <strong>"Reiniciar sess\xE3o" n\xE3o basta</strong> \u2014 a conex\xE3o volta a dizer que est\xE1 de p\xE9 e continua sem entregar. Leva dois minutos, e o hist\xF3rico n\xE3o se perde.'),
       botao: { texto: "Abrir o diagn\xF3stico", href: `${atendeUrl(siteUrl2())}/whatsapp` }
     })
   };
@@ -7208,6 +7242,24 @@ async function entradasAntesDoSilencio(empresaId, ate) {
   const de = new Date(ate.getTime() - 14 * DIA_MS5);
   const { count } = await supabaseServer.from("atende_mensagens").select("id", { count: "exact", head: true }).eq("empresa_id", empresaId).eq("direcao", "entrada").gte("criado_em", de.toISOString()).lt("criado_em", ate.toISOString());
   return count ?? 0;
+}
+async function guardarLimite(conexaoId, limite) {
+  const valor = Number.isFinite(limite) ? Number(limite.toFixed(2)) : null;
+  const { error } = await supabaseServer.from("atende_conexoes").update({ limite_silencio_h: valor }).eq("id", conexaoId);
+  if (error && !/limite_silencio_h/.test(error.message)) console.warn("[atende sil\xEAncio] guardar limite:", error.message);
+}
+async function atualizarLimitesDeSilencio(agora = /* @__PURE__ */ new Date()) {
+  const { data: data3 } = await supabaseServer.from("atende_conexoes").select("id, empresa_id").not("conectado_em", "is", null);
+  let feitos = 0;
+  for (const c of data3 || []) {
+    try {
+      await guardarLimite(c.id, limiteDeSilencio(await entradasAntesDoSilencio(c.empresa_id, agora)));
+      feitos++;
+    } catch (err) {
+      console.warn("[atende sil\xEAncio] limite:", err.message);
+    }
+  }
+  return feitos;
 }
 async function vigiarSilenciosDoAtende(agora = /* @__PURE__ */ new Date()) {
   if (!evolutionConfigurada()) return [];
@@ -7227,6 +7279,7 @@ async function vigiarSilenciosDoAtende(agora = /* @__PURE__ */ new Date()) {
     try {
       const desde = new Date(c.ultimo_evento_em);
       const limite = limiteDeSilencio(await entradasAntesDoSilencio(c.empresa_id, desde));
+      await guardarLimite(c.id, limite);
       if (horasUteis < limite) continue;
       let estado = "n\xE3o respondeu";
       try {
@@ -8090,6 +8143,7 @@ function criarRouterAtende() {
       }
       const cobrancas = await cobrancasPendentes();
       const conexoes = await vigiarConexoesDoAtende();
+      await atualizarLimitesDeSilencio(agora).catch((e) => console.warn("[atende cron] limites:", e.message));
       const caladas = await vigiarSilenciosDoAtende(agora).catch((e) => (console.warn("[atende cron] sil\xEAncio:", e.message), []));
       const segunda = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: "America/Sao_Paulo" }).format(agora) === "Mon";
       const resumos = segunda ? await resumosSemanaisDoAtende(agora) : { empresas: 0, enviados: 0 };
@@ -8152,7 +8206,7 @@ function criarRouterAtende() {
   r.get("/bootstrap", async (req, res) => {
     try {
       const [empresa, times, equipe, conexao] = await Promise.all([carregarEmpresa2(req), carregarTimes2(req), carregarEquipe(req), conexaoDaEmpresa(req.sessao.empresa_id)]);
-      const resposta = { sessao: req.sessao, empresa, times, equipe, conexao: conexao ? { id: conexao.id, instancia: conexao.instancia, numero: conexao.numero, estado: conexao.estado, conectado_em: conexao.conectado_em, ultimo_evento_em: conexao.ultimo_evento_em } : null, conta: req.contaAtende };
+      const resposta = { sessao: req.sessao, empresa, times, equipe, conexao: conexao ? { id: conexao.id, instancia: conexao.instancia, numero: conexao.numero, estado: conexao.estado, conectado_em: conexao.conectado_em, ultimo_evento_em: conexao.ultimo_evento_em, limite_silencio_h: conexao.limite_silencio_h ?? null } : null, conta: req.contaAtende };
       res.json(resposta);
     } catch (err) {
       console.error("[GET /api/atende/bootstrap] erro:", err.message);
@@ -8401,6 +8455,14 @@ function criarRouterAtende() {
       res.json(await diagnosticoDoWhatsapp(req.sessao.empresa_id));
     } catch (err) {
       tratar2(res, err, "POST /api/atende/whatsapp/reiniciar", "N\xE3o foi poss\xEDvel reiniciar a sess\xE3o.");
+    }
+  });
+  r.post("/whatsapp/configuracoes", exigir("whatsapp.gerir"), async (req, res) => {
+    try {
+      const r2 = await aplicarConfiguracoesRecomendadas(req.sessao.empresa_id);
+      res.json({ ...r2, diagnostico: await diagnosticoDoWhatsapp(req.sessao.empresa_id) });
+    } catch (err) {
+      tratar2(res, err, "POST /api/atende/whatsapp/configuracoes", "N\xE3o foi poss\xEDvel aplicar as configura\xE7\xF5es.");
     }
   });
   r.post("/whatsapp/conectar", exigir("whatsapp.gerir"), async (req, res) => {

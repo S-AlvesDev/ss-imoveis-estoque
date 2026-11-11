@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Check, QrCode, RefreshCw, RotateCw, Smartphone, Stethoscope, Unplug, Wifi, Wrench, X } from 'lucide-react';
+import { Check, QrCode, RefreshCw, RotateCw, Smartphone, Stethoscope, TriangleAlert, Unplug, Wifi, Wrench, X } from 'lucide-react';
 import { Botao } from '../ui/Botao';
 import { Cartao, CabecalhoDoCartao } from '../ui/Cartao';
 import { Etiqueta, type TomDaEtiqueta } from '../ui/Etiqueta';
@@ -28,6 +28,20 @@ const NOME_DO_ESTADO_DA_CONEXAO: Record<Conexao['estado'], { texto: string; tom:
   desconectada: { texto: 'Desconectado', tom: 'vermelho' },
 };
 
+interface Configuracoes {
+  groupsIgnore?: boolean;
+  readStatus?: boolean;
+  syncFullHistory?: boolean;
+  [k: string]: unknown;
+}
+
+/** As três que importam aqui, com o nome que uma pessoa entende. */
+const AJUSTES: Array<{ chave: keyof Configuracoes & string; titulo: string; porque: string }> = [
+  { chave: 'readStatus', titulo: 'Processa os status dos contatos', porque: 'os "stories" de quem fala com vocês — o Atende Aí não mostra, e é o que mais derruba a conexão' },
+  { chave: 'groupsIgnore', titulo: 'Ignora mensagens de grupo', porque: 'o Atende Aí já descarta grupo na entrada; processar é só trabalho para nada' },
+  { chave: 'syncFullHistory', titulo: 'Sincroniza o histórico inteiro', porque: 'uma descarga enorme a cada conexão, que não aparece em lugar nenhum' },
+];
+
 /** O que o servidor responde sobre a conexão — sem segredo nenhum: do token só se confere. */
 interface Diagnostico {
   instancia: string;
@@ -37,6 +51,9 @@ interface Diagnostico {
   ultimo_evento_em?: string | null;
   /** Há quanto tempo nada chega, e se isso já é demais para o movimento desta empresa. */
   silencio?: { horas_uteis: number; limite: number | null; calado: boolean } | null;
+  /** O que a instância está processando hoje, e o que deveria processar. */
+  configuracoes?: Configuracoes | null;
+  configuracoes_recomendadas?: Configuracoes;
   webhook?: {
     registrado: boolean;
     ligado: boolean | null;
@@ -78,6 +95,20 @@ export function Whatsapp() {
       toast.success('Sessão reiniciada. Mande uma mensagem de teste: deve chegar em segundos.');
     } catch (e) {
       toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível reiniciar a sessão.');
+    } finally {
+      setDiagnosticando(false);
+    }
+  }
+
+  /** Desliga story, grupo e histórico completo. Reversível, sem QR, sem perder mensagem. */
+  async function aplicarConfiguracoes() {
+    setDiagnosticando(true);
+    try {
+      const r = await api.post<{ diagnostico: Diagnostico }>('/whatsapp/configuracoes');
+      setDiag(r.diagnostico);
+      toast.success('Pronto. A instância parou de processar story, grupo e histórico.');
+    } catch (e) {
+      toast.error(e instanceof ErroDaApi ? e.message : 'Não foi possível aplicar as configurações.');
     } finally {
       setDiagnosticando(false);
     }
@@ -278,14 +309,42 @@ export function Whatsapp() {
             {/* O zumbi: sessão e webhook impecáveis, e mesmo assim nada entra.
                 Era o caso que a tela não enxergava — dava tudo verde. */}
             {webhookOk(diag) && diag.estado_na_evolution === 'conectada' && diag.silencio?.calado && (
-              <Alerta tom="erro" className="mt-4" titulo="A conexão diz estar de pé, mas parou de entregar" acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<RotateCw size={14} />} onClick={reiniciar}>Reiniciar sessão</Botao>}>
-                Está tudo certo no papel e nada chega há {duracaoCurta(diag.silencio.horas_uteis)} de expediente — mais do que o normal para o movimento de vocês. É a ligação com o aparelho que caiu sem avisar. Reiniciar religa sem QR e sem perder mensagem; se depois de duas tentativas não voltar, reconecte pelo QR.
+              <Alerta tom="erro" className="mt-4" titulo="A conexão diz estar de pé, mas parou de entregar" acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<RotateCw size={14} />} onClick={reiniciar}>Tentar reiniciar</Botao>}>
+                Está tudo certo no papel e nada chega há {duracaoCurta(diag.silencio.horas_uteis)} de expediente. Reiniciar é a tentativa barata, mas <strong>nesta falha ela costuma não bastar</strong>: a conexão volta a dizer que está de pé e segue surda. Se não voltar na primeira tentativa, use <strong>Desconectar</strong> e leia o QR com o celular da empresa — é o que resolve, em dois minutos e sem perder histórico.
               </Alerta>
             )}
             {tudoCerto(diag) && (
               <Alerta tom="ia" className="mt-4" titulo="Está tudo certo e mesmo assim não chega mensagem?" acao={<Botao tamanho="sm" variante="secundaria" carregando={diagnosticando} icone={<RotateCw size={14} />} onClick={reiniciar}>Reiniciar sessão</Botao>}>
-                A conexão pode estar viva no papel e ter parado de entregar. Reiniciar refaz a ligação com o WhatsApp e traz o que ficou para trás — sem desconectar o aparelho, sem QR e sem perder mensagem.
+                Tente reiniciar primeiro: é rápido e não pede QR. Mas se não resolver em duas tentativas, <strong>não insista</strong> — nesta falha a conexão volta a dizer que está de pé e continua surda. O que resolve é <strong>Desconectar</strong> e ler o QR de novo com o celular da empresa, acima nesta página.
               </Alerta>
+            )}
+            {/* O que a instância está processando à toa — e o botão que desliga.
+                Não é faxina: 48 dos 50 erros de stream que derrubaram a conexão
+                deste cliente vinham de confirmação de status dos contatos. */}
+            {diag.configuracoes && (
+              <div className="mt-4 rounded-xl border border-[var(--border)] p-3.5">
+                <p className="text-[13px] font-semibold">O que esta instância processa</p>
+                <ul className="mt-2 space-y-1.5 text-[12px] leading-5">
+                  {AJUSTES.map(({ chave, titulo, porque }) => {
+                    const atual = Boolean(diag.configuracoes?.[chave]);
+                    const desejado = Boolean(diag.configuracoes_recomendadas?.[chave]);
+                    return (
+                      <li key={chave} className="flex items-start gap-2">
+                        {atual === desejado ? <Check size={14} className="mt-0.5 shrink-0 text-emerald-600" /> : <TriangleAlert size={14} className="mt-0.5 shrink-0 text-amber-600" />}
+                        <span className="min-w-0">
+                          <span className="font-medium">{titulo}:</span> {atual ? 'sim' : 'não'}
+                          {atual !== desejado && <span className="text-[var(--text-muted)]"> — deveria ser {desejado ? 'sim' : 'não'}: {porque}</span>}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {!configuracoesOk(diag) && (
+                  <Alerta tom="aviso" className="mt-3" titulo="Sobra trabalho que derruba a conexão" acao={<Botao tamanho="sm" carregando={diagnosticando} icone={<Wrench size={14} />} onClick={aplicarConfiguracoes}>Desligar o que não usamos</Botao>}>
+                    Story de contato e mensagem de grupo o Atende Aí descarta de qualquer jeito — mas a instância continua processando, e é daí que vêm as quedas de conexão. Desligar não desconecta o WhatsApp, não pede QR e não perde mensagem.
+                  </Alerta>
+                )}
+              </div>
             )}
             {diag.ultimo_evento_em && (
               <p className="mt-3 text-[11px] leading-4 text-[var(--text-muted)]">
@@ -337,6 +396,12 @@ function duracaoCurta(h: number): string {
 /** "21:39" — o relógio, para quem está olhando a tela agora. */
 function horaCurta(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—';
+}
+
+/** A instância está processando só o que usamos? */
+function configuracoesOk(d: Diagnostico): boolean {
+  if (!d.configuracoes || !d.configuracoes_recomendadas) return true;
+  return AJUSTES.every(({ chave }) => Boolean(d.configuracoes?.[chave]) === Boolean(d.configuracoes_recomendadas?.[chave]));
 }
 
 /** O webhook está em ordem? (separado da sessão: cada defeito tem o seu remédio) */
