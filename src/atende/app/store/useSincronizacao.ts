@@ -21,22 +21,25 @@ import { useCentral } from './central';
 
 /** Com movimento, ou logo depois dele. */
 const RAPIDO_MS = 4_000;
-/** Depois de ~30 s sem nada. */
+/**
+ * Depois de ~30 s sem nada — e é até onde se afrouxa com a aba à vista.
+ *
+ * Cheguei a pôr um terceiro degrau de 12 s. Economizava pouco a mais e
+ * custava o que não devia: alguém olhando a tela à espera de um cliente
+ * veria a mensagem 8 segundos depois do que vê hoje. A maior parte da
+ * economia veio de cortar as consultas por tique, que não muda nada para
+ * quem usa; esticar o relógio até doer seria cobrar da pessoa errada.
+ */
 const CALMO_MS = 8_000;
-/** Depois de ~3 min sem nada. */
-const PARADO_MS = 12_000;
 /** Aba escondida: ninguém está olhando. */
 const ESCONDIDO_MS = 20_000;
 const TIQUES_ATE_CALMO = 8;
-const TIQUES_ATE_PARADO = 30;
 /** Presença e conexão mudam devagar; não precisam vir a cada tique. */
 const COMPLETO_A_CADA_MS = 30_000;
 
 export function intervaloDoTique(vazios: number, escondido: boolean): number {
   if (escondido) return ESCONDIDO_MS;
-  if (vazios >= TIQUES_ATE_PARADO) return PARADO_MS;
-  if (vazios >= TIQUES_ATE_CALMO) return CALMO_MS;
-  return RAPIDO_MS;
+  return vazios >= TIQUES_ATE_CALMO ? CALMO_MS : RAPIDO_MS;
 }
 
 export function useSincronizacao(opcoes: { carregarLista?: boolean } = {}) {
@@ -86,14 +89,27 @@ export function useSincronizacao(opcoes: { carregarLista?: boolean } = {}) {
       void tique();
     }
 
+    /**
+     * Mexeu no painel — clicou, digitou, rolou a lista: está trabalhando.
+     * Volta para o ritmo rápido sem forçar um tique, que seria uma consulta
+     * a cada clique. Só desfaz o afrouxamento.
+     */
+    function mexeu() {
+      vazios.current = 0;
+    }
+
     void tique();
     document.addEventListener('visibilitychange', acordar);
     window.addEventListener('focus', acordar);
+    for (const evento of ['pointerdown', 'keydown', 'wheel'] as const) {
+      window.addEventListener(evento, mexeu, { passive: true });
+    }
     return () => {
       ativo = false;
       window.clearTimeout(relogio);
       document.removeEventListener('visibilitychange', acordar);
       window.removeEventListener('focus', acordar);
+      for (const evento of ['pointerdown', 'keydown', 'wheel'] as const) window.removeEventListener(evento, mexeu);
     };
   }, [carregarLista, sincronizar, comLista]);
 }

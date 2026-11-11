@@ -23,9 +23,9 @@ describe('o ritmo', () => {
     expect(intervaloDoTique(8, false)).toBe(8_000);
   });
 
-  it('parado há minutos, afrouxa mais — mas nunca a ponto de parecer travado', () => {
-    expect(intervaloDoTique(30, false)).toBe(12_000);
-    expect(intervaloDoTique(10_000, false)).toBe(12_000);
+  it('com a aba à vista, 8 s é o limite — quem espera um cliente não pode esperar mais', () => {
+    expect(intervaloDoTique(30, false)).toBe(8_000);
+    expect(intervaloDoTique(10_000, false)).toBe(8_000);
   });
 
   it('aba escondida é o mais lento: ninguém está olhando', () => {
@@ -53,10 +53,14 @@ describe('a economia', () => {
   /** Uma jornada de 12 h quase toda calada, que é o caso comum. */
   const tiquesEm = (ms: number, janelaMs: number) => Math.round(janelaMs / ms);
 
-  it('uma aba parada o dia todo passa a custar uma fração do que custava', () => {
+  it('uma aba parada o dia todo passa a custar metade dos tiques', () => {
     const doze = 12 * 3600_000;
     const antes = tiquesEm(4_000, doze);
     const depois = tiquesEm(intervaloDoTique(999, false), doze);
-    expect(antes / depois).toBeCloseTo(3, 1);
+    expect(antes / depois).toBeCloseTo(2, 1);
+  });
+
+  it('o pior atraso com alguém olhando é 8 s — o dobro do de antes, não mais', () => {
+    expect(intervaloDoTique(1e6, false)).toBeLessThanOrEqual(2 * 4_000);
   });
 });

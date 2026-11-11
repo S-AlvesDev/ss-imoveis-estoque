@@ -245,19 +245,36 @@ function Conteudo({ m, nossa, daIa }: { m: Mensagem; nossa: boolean; daIa: boole
  *
  * Guardado por aba, não em disco: a URL vence, e deixar URL vencida guardada
  * daria imagem quebrada no dia seguinte.
+ *
+ * E com a hora junto, porque a assinatura dura 12 h e um painel fica aberto
+ * a noite inteira. Sem isso, a aba de quem chegasse de manhã mostraria as
+ * imagens quebradas — trocar o custo de tráfego por imagem quebrada não é
+ * economia, é outro defeito.
  */
-const URLS_DE_MIDIA = new Map<string, string>();
+const VALE_POR_MS = 6 * 3600_000;
+const URLS_DE_MIDIA = new Map<string, { url: string; em: number }>();
+
+function urlGuardada(id: string): string | null {
+  const g = URLS_DE_MIDIA.get(id);
+  if (!g) return null;
+  if (Date.now() - g.em > VALE_POR_MS) {
+    URLS_DE_MIDIA.delete(id);
+    return null;
+  }
+  return g.url;
+}
 
 /** Imagem, áudio, vídeo, documento, figurinha — com a URL assinada carregada sob demanda. */
 function Arquivo({ m, fundo }: { m: Mensagem; fundo: string }) {
-  const [url, setUrl] = useState<string | null>(() => URLS_DE_MIDIA.get(m.id) ?? null);
+  const [url, setUrl] = useState<string | null>(() => urlGuardada(m.id));
   const [erro, setErro] = useState(false);
+  const jaTentouDeNovo = useRef(false);
   const pendente = m.midia?.pendente && !m.midia?.caminho;
 
   async function carregar(forcar = false) {
     setErro(false);
     if (!forcar) {
-      const guardada = URLS_DE_MIDIA.get(m.id);
+      const guardada = urlGuardada(m.id);
       if (guardada) {
         setUrl(guardada);
         return;
@@ -265,12 +282,24 @@ function Arquivo({ m, fundo }: { m: Mensagem; fundo: string }) {
     }
     try {
       const r = await api.get<{ url: string }>(`/midias/${m.id}`);
-      URLS_DE_MIDIA.set(m.id, r.url);
+      URLS_DE_MIDIA.set(m.id, { url: r.url, em: Date.now() });
       setUrl(r.url);
     } catch {
       URLS_DE_MIDIA.delete(m.id);
       setErro(true);
     }
+  }
+
+  /**
+   * O arquivo não carregou com a URL que tínhamos. Pede outra, uma vez.
+   * Rede oscilando, assinatura que venceu com a aba aberta desde ontem —
+   * seja o que for, a pessoa não precisa saber: tenta de novo e pronto.
+   */
+  function naoCarregou() {
+    if (jaTentouDeNovo.current) return setErro(true);
+    jaTentouDeNovo.current = true;
+    URLS_DE_MIDIA.delete(m.id);
+    void carregar(true);
   }
   useEffect(() => {
     if (!pendente && m.midia?.caminho) void carregar();
@@ -296,7 +325,7 @@ function Arquivo({ m, fundo }: { m: Mensagem; fundo: string }) {
   if (m.tipo === 'imagem' || m.tipo === 'figurinha') {
     return url ? (
       <a href={url} target="_blank" rel="noreferrer">
-        <img src={url} alt={m.texto ?? 'Imagem'} className={`max-h-72 max-w-full rounded-lg object-contain ${m.tipo === 'figurinha' ? 'max-h-32' : ''}`} loading="lazy" />
+        <img src={url} alt={m.texto ?? 'Imagem'} onError={naoCarregou} className={`max-h-72 max-w-full rounded-lg object-contain ${m.tipo === 'figurinha' ? 'max-h-32' : ''}`} loading="lazy" />
       </a>
     ) : (
       <div className="h-32 w-48 max-w-full animate-pulse rounded-lg bg-black/10" />
@@ -304,7 +333,7 @@ function Arquivo({ m, fundo }: { m: Mensagem; fundo: string }) {
   }
   if (m.tipo === 'audio') {
     return url ? (
-      <audio controls preload="metadata" src={url} className="block w-[260px] max-w-full" />
+      <audio controls preload="metadata" src={url} onError={naoCarregou} className="block w-[260px] max-w-full" />
     ) : (
       <Caixinha fundo={fundo}>
         Carregando áudio
@@ -313,7 +342,7 @@ function Arquivo({ m, fundo }: { m: Mensagem; fundo: string }) {
     );
   }
   if (m.tipo === 'video') {
-    return url ? <video controls preload="metadata" src={url} className="max-h-72 w-[320px] max-w-full rounded-lg" /> : <Caixinha fundo={fundo}>Carregando vídeo…</Caixinha>;
+    return url ? <video controls preload="metadata" src={url} onError={naoCarregou} className="max-h-72 w-[320px] max-w-full rounded-lg" /> : <Caixinha fundo={fundo}>Carregando vídeo…</Caixinha>;
   }
   // Documento
   return (
