@@ -254,6 +254,14 @@ export async function vigiarSilenciosDoAtende(agora: Date = new Date()): Promise
   if (!evolutionConfigurada()) return [];
   const caladas: Array<{ empresa: string; horas: number; estado: string }> = [];
 
+  // Conexão sem limite calculado ainda — migração recém-aplicada, ou conexão
+  // nova. Sem ele a faixa na tela não tem com o que comparar e nunca aparece.
+  // Poucas por rodada: isto roda de dez em dez minutos, não há pressa.
+  const { data: semLimite } = await supabaseServer.from('atende_conexoes').select('id, empresa_id').not('conectado_em', 'is', null).is('limite_silencio_h', null).limit(5);
+  for (const c of (semLimite || []) as Array<{ id: string; empresa_id: string }>) {
+    await guardarLimite(c.id, limiteDeSilencio(await entradasAntesDoSilencio(c.empresa_id, agora))).catch(() => undefined);
+  }
+
   const { data, error } = await supabaseServer
     .from('atende_conexoes')
     .select('id, empresa_id, ultimo_evento_em, aviso_silencio_em')

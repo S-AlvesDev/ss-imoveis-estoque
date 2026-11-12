@@ -7264,6 +7264,10 @@ async function atualizarLimitesDeSilencio(agora = /* @__PURE__ */ new Date()) {
 async function vigiarSilenciosDoAtende(agora = /* @__PURE__ */ new Date()) {
   if (!evolutionConfigurada()) return [];
   const caladas = [];
+  const { data: semLimite } = await supabaseServer.from("atende_conexoes").select("id, empresa_id").not("conectado_em", "is", null).is("limite_silencio_h", null).limit(5);
+  for (const c of semLimite || []) {
+    await guardarLimite(c.id, limiteDeSilencio(await entradasAntesDoSilencio(c.empresa_id, agora))).catch(() => void 0);
+  }
   const { data: data3, error } = await supabaseServer.from("atende_conexoes").select("id, empresa_id, ultimo_evento_em, aviso_silencio_em").not("conectado_em", "is", null).not("ultimo_evento_em", "is", null).is("aviso_silencio_em", null).lt("ultimo_evento_em", new Date(agora.getTime() - SILENCIO_MINIMO_H * 36e5).toISOString());
   if (error) {
     if (/aviso_silencio_em/.test(error.message)) return [];
