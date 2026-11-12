@@ -258,13 +258,22 @@ export interface ResultadoDoWebhook {
  * Com o carimbo em todo evento o campo passa a dizer o que promete — e é
  * dele que o vigia do silêncio depende.
  */
-async function ouvimosAEvolution(conexaoId: string): Promise<void> {
+async function ouvimosAEvolution(conexaoId: string, chegouMensagem: boolean): Promise<void> {
   const agora = new Date().toISOString();
+  // Mensagem chegando é prova de conexão viva — mais forte que o estado
+  // guardado, que envelhece. Depois de um reinício da Evolution o painel
+  // chegou a dizer "desconectado" enquanto as mensagens entravam na tela;
+  // uma faixa que mente ensina a equipe a ignorar as faixas.
+  // Só com MENSAGEM: um evento de conexão dizendo 'close' não pode ser
+  // desmentido pelo carimbo que vem logo atrás.
+  const patch: Record<string, unknown> = { ultimo_evento_em: agora, aviso_silencio_em: null };
+  if (chegouMensagem) patch.estado = 'conectada';
   // O aviso de silêncio se apaga sozinho: chegou evento, o problema passou.
-  const { error } = await supabaseServer.from('atende_conexoes').update({ ultimo_evento_em: agora, aviso_silencio_em: null }).eq('id', conexaoId);
+  const { error } = await supabaseServer.from('atende_conexoes').update(patch).eq('id', conexaoId);
   // A coluna pode ainda não existir (migração 057 não aplicada): carimba o resto.
   if (error && /aviso_silencio_em/.test(error.message)) {
-    await supabaseServer.from('atende_conexoes').update({ ultimo_evento_em: agora }).eq('id', conexaoId);
+    delete patch.aviso_silencio_em;
+    await supabaseServer.from('atende_conexoes').update(patch).eq('id', conexaoId);
   }
 }
 
@@ -280,6 +289,8 @@ export async function processarWebhook(body: any): Promise<ResultadoDoWebhook> {
   const instancia = String(body?.instance ?? '—');
   const nomeDoEvento = String(body?.event ?? '—');
   const ouvidas = new Set<string>();
+  // Quais instâncias entregaram MENSAGEM (não só evento de conexão).
+  const comMensagem = new Set<string>();
   for (const e of eventos) {
     try {
       const conexao = await conexaoPelaInstancia(e.instancia);
@@ -289,9 +300,13 @@ export async function processarWebhook(body: any): Promise<ResultadoDoWebhook> {
       }
       ouvidas.add(conexao.id);
       if (e.tipoDeEvento === 'mensagem') {
+        comMensagem.add(conexao.id);
         if (await registrarMensagem(conexao, e)) r.mensagens++;
         else r.ignorados++;
-      } else if (e.tipoDeEvento === 'status') await aplicarStatus(conexao, e);
+      } else if (e.tipoDeEvento === 'status') {
+        comMensagem.add(conexao.id);
+        await aplicarStatus(conexao, e);
+      }
       else await aplicarConexao(conexao, e);
     } catch (err: any) {
       console.error('[atende webhook]', e.tipoDeEvento, err.message);
@@ -300,7 +315,7 @@ export async function processarWebhook(body: any): Promise<ResultadoDoWebhook> {
   // Depois dos eventos: um carimbo por instância, mesmo que tudo tenha sido
   // ignorado (grupo, status de mensagem que não é nossa). O que importa aqui
   // não é o conteúdo — é que a Evolution ainda está falando conosco.
-  for (const id of ouvidas) await ouvimosAEvolution(id).catch((err: any) => console.error('[atende webhook] carimbo:', err.message));
+  for (const id of ouvidas) await ouvimosAEvolution(id, comMensagem.has(id)).catch((err: any) => console.error('[atende webhook] carimbo:', err.message));
   console.info(`[atende webhook] ${instancia} ${nomeDoEvento}: ${r.eventos} evento(s), ${r.mensagens} mensagem(ns), ${r.ignorados} ignorado(s)${ouvidas.size ? '' : ', instância desconhecida'}.`);
   return r;
 }

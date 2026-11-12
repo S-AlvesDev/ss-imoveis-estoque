@@ -5988,11 +5988,14 @@ async function conexaoPelaInstancia(instancia) {
   const { data: data3 } = await supabaseServer.from("atende_conexoes").select("id, empresa_id, instancia").eq("instancia", instancia).maybeSingle();
   return data3 ?? null;
 }
-async function ouvimosAEvolution(conexaoId) {
+async function ouvimosAEvolution(conexaoId, chegouMensagem) {
   const agora = (/* @__PURE__ */ new Date()).toISOString();
-  const { error } = await supabaseServer.from("atende_conexoes").update({ ultimo_evento_em: agora, aviso_silencio_em: null }).eq("id", conexaoId);
+  const patch = { ultimo_evento_em: agora, aviso_silencio_em: null };
+  if (chegouMensagem) patch.estado = "conectada";
+  const { error } = await supabaseServer.from("atende_conexoes").update(patch).eq("id", conexaoId);
   if (error && /aviso_silencio_em/.test(error.message)) {
-    await supabaseServer.from("atende_conexoes").update({ ultimo_evento_em: agora }).eq("id", conexaoId);
+    delete patch.aviso_silencio_em;
+    await supabaseServer.from("atende_conexoes").update(patch).eq("id", conexaoId);
   }
 }
 async function processarWebhook(body) {
@@ -6001,6 +6004,7 @@ async function processarWebhook(body) {
   const instancia = String(body?.instance ?? "\u2014");
   const nomeDoEvento = String(body?.event ?? "\u2014");
   const ouvidas = /* @__PURE__ */ new Set();
+  const comMensagem = /* @__PURE__ */ new Set();
   for (const e of eventos) {
     try {
       const conexao = await conexaoPelaInstancia(e.instancia);
@@ -6010,15 +6014,18 @@ async function processarWebhook(body) {
       }
       ouvidas.add(conexao.id);
       if (e.tipoDeEvento === "mensagem") {
+        comMensagem.add(conexao.id);
         if (await registrarMensagem(conexao, e)) r.mensagens++;
         else r.ignorados++;
-      } else if (e.tipoDeEvento === "status") await aplicarStatus(conexao, e);
-      else await aplicarConexao(conexao, e);
+      } else if (e.tipoDeEvento === "status") {
+        comMensagem.add(conexao.id);
+        await aplicarStatus(conexao, e);
+      } else await aplicarConexao(conexao, e);
     } catch (err) {
       console.error("[atende webhook]", e.tipoDeEvento, err.message);
     }
   }
-  for (const id of ouvidas) await ouvimosAEvolution(id).catch((err) => console.error("[atende webhook] carimbo:", err.message));
+  for (const id of ouvidas) await ouvimosAEvolution(id, comMensagem.has(id)).catch((err) => console.error("[atende webhook] carimbo:", err.message));
   console.info(`[atende webhook] ${instancia} ${nomeDoEvento}: ${r.eventos} evento(s), ${r.mensagens} mensagem(ns), ${r.ignorados} ignorado(s)${ouvidas.size ? "" : ", inst\xE2ncia desconhecida"}.`);
   return r;
 }

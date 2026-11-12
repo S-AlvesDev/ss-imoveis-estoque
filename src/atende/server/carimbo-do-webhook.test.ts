@@ -86,6 +86,25 @@ beforeEach(() => {
 
 const conexao = () => banco.conexoes[0];
 
+describe('mensagem chegando é prova de conexão viva', () => {
+  it('estado velho "desconectada" é corrigido quando entra mensagem', async () => {
+    banco.conexoes[0].estado = 'desconectada';
+    await processarWebhook({ event: 'messages.update', instance: INSTANCIA, data: { key: { id: 'A' }, update: { status: 'READ' } } });
+    expect(conexao().estado).toBe('conectada');
+  });
+
+  it('mas um evento de conexão dizendo que caiu NÃO é desmentido pelo carimbo', async () => {
+    await processarWebhook({ event: 'connection.update', instance: INSTANCIA, data: { state: 'close' } });
+    expect(conexao().estado).toBe('desconectada');
+  });
+
+  it('e um evento de conexão dizendo que subiu continua valendo', async () => {
+    banco.conexoes[0].estado = 'desconectada';
+    await processarWebhook({ event: 'connection.update', instance: INSTANCIA, data: { state: 'open' } });
+    expect(conexao().estado).toBe('conectada');
+  });
+});
+
 describe('o carimbo de "a Evolution falou conosco"', () => {
   it('um status de entrega carimba, mesmo não mudando mais nada', async () => {
     // A mensagem citada nem existe no banco: aplicarStatus não faz nada com ela.
