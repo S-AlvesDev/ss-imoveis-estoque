@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useCentral } from './central';
+import { inscricaoLocal } from '../notificacoes';
 
 /**
  * O relógio do sync.
@@ -31,14 +32,29 @@ const RAPIDO_MS = 4_000;
  * quem usa; esticar o relógio até doer seria cobrar da pessoa errada.
  */
 const CALMO_MS = 8_000;
-/** Aba escondida: ninguém está olhando. */
+/**
+ * Aba escondida e SEM push: ninguém está olhando, mas este relógio é a única
+ * coisa que faz a notificação aparecer (notificarDaPagina só dispara com a aba
+ * escondida). Por isso 20 s, e não mais.
+ */
 const ESCONDIDO_MS = 20_000;
+/**
+ * Aba escondida e COM push: o service worker já entrega mensagem nova e
+ * cutucada — `cutucar()`, em server/conversas.ts, manda as duas coisas. O
+ * relógio vira rede de segurança, e aí não precisa ser de 20 s.
+ *
+ * Não esticamos mais que isto porque uma cutucada vale 2 minutos
+ * (CUTUCADA_VALE_MS). Com 60 s, mesmo que o push falhe, o alarme ainda chega
+ * pelo delta dentro da validade — a trava do teste continua valendo, só que
+ * garantida por dois caminhos em vez de um.
+ */
+const ESCONDIDO_COM_PUSH_MS = 60_000;
 const TIQUES_ATE_CALMO = 8;
 /** Presença e conexão mudam devagar; não precisam vir a cada tique. */
 const COMPLETO_A_CADA_MS = 30_000;
 
-export function intervaloDoTique(vazios: number, escondido: boolean): number {
-  if (escondido) return ESCONDIDO_MS;
+export function intervaloDoTique(vazios: number, escondido: boolean, temPush = false): number {
+  if (escondido) return temPush ? ESCONDIDO_COM_PUSH_MS : ESCONDIDO_MS;
   return vazios >= TIQUES_ATE_CALMO ? CALMO_MS : RAPIDO_MS;
 }
 
@@ -55,6 +71,21 @@ export function useSincronizacao(opcoes: { carregarLista?: boolean } = {}) {
     if (comLista) void carregarLista();
     let ativo = true;
     let relogio: number | undefined;
+    // Enquanto não se sabe, trata como sem push: erra para o lado de avisar.
+    // Relido ao voltar para a aba, para quem acabou de ativar não precisar
+    // recarregar a página (inscricaoLocal guarda o estado e se atualiza ao
+    // ativar e ao cancelar).
+    let temPush = false;
+    const lerPush = () => {
+      void inscricaoLocal()
+        .then((i) => {
+          temPush = Boolean(i);
+        })
+        .catch(() => {
+          /* navegador sem suporte a push: segue sem */
+        });
+    };
+    lerPush();
 
     async function tique() {
       if (!ativo || ocupado.current) return agendar();
@@ -78,11 +109,12 @@ export function useSincronizacao(opcoes: { carregarLista?: boolean } = {}) {
     function agendar() {
       if (!ativo) return;
       window.clearTimeout(relogio);
-      relogio = window.setTimeout(tique, intervaloDoTique(vazios.current, document.hidden));
+      relogio = window.setTimeout(tique, intervaloDoTique(vazios.current, document.hidden, temPush));
     }
 
     /** Voltou para a aba: a pessoa quer ver agora, e o ritmo volta ao rápido. */
     function acordar() {
+      lerPush();
       if (document.hidden) return agendar();
       vazios.current = 0;
       window.clearTimeout(relogio);
