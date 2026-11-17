@@ -38,7 +38,8 @@ interface Central {
   setFiltro: (f: Filtro) => void;
   setBusca: (b: string) => void;
   carregarLista: () => Promise<void>;
-  sincronizar: () => Promise<void>;
+  /** Devolve se o delta trouxe alguma coisa — é o que dá o ritmo ao relógio do sync (ver ritmo.ts). */
+  sincronizar: () => Promise<boolean>;
   abrir: (id: string | null) => Promise<void>;
   carregarMaisAntigas: (id: string) => Promise<boolean>;
   aplicarConversa: (c: Conversa) => void;
@@ -131,6 +132,10 @@ export const useCentral = create<Central>((set, get) => ({
       // Na primeira carga não há o que avisar: seria alarme de coisa já lida.
       if (cursor) get().ouvinteDeCutucada?.(c);
     }
+
+    // O que faz a tela mudar de verdade. Presença de colega não conta: ela
+    // muda sozinha e seguraria o ritmo rápido num atendimento parado.
+    return d.conversas.length > 0 || d.mensagens.length > 0 || (d.cutucadas?.length ?? 0) > 0;
   },
 
   abrir: async (id) => {
